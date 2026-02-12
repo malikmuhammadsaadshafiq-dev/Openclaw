@@ -743,6 +743,12 @@ async function deployToVercel(projectPath: string, projectName: string): Promise
       framework: "nextjs"
     }, null, 2));
 
+    // Set NVIDIA_API_KEY as Vercel env var so AI features work in deployed products
+    if (CONFIG.nvidia.apiKey) {
+      await fs.writeFile(path.join(projectPath, ".env.production"), `NVIDIA_API_KEY=${CONFIG.nvidia.apiKey}\n`);
+      await logger.log("✅ Set NVIDIA_API_KEY for production deployment");
+    }
+
     const { stdout } = await execAsync(
       `cd "${projectPath}" && npx vercel --token ${CONFIG.vercel.token} --yes --prod 2>&1`,
       { timeout: 300000 }
@@ -772,7 +778,7 @@ async function pushToGithub(projectPath: string, idea: Idea, projectName: string
       body: JSON.stringify({ name: repoName, description: idea.description, private: false }),
     });
 
-    await fs.writeFile(path.join(projectPath, ".gitignore"), "node_modules/\n.next/\n.vercel/\n.env\n.env.local\n.DS_Store");
+    await fs.writeFile(path.join(projectPath, ".gitignore"), "node_modules/\n.next/\n.vercel/\n.env\n.env.*\n.DS_Store");
 
     await execAsync("rm -rf .git 2>/dev/null || true", { cwd: projectPath });
     await execAsync("git init && git add -A", { cwd: projectPath });
