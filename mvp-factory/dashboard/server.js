@@ -12,6 +12,7 @@ const PATHS = {
   skipped: "/root/mvp-projects/skipped",
   web: "/root/mvp-projects/web",
   mobile: "/root/mvp-projects/mobile",
+  signals: "/root/mvp-projects/signals",
 };
 
 function readJsonDir(dir) {
@@ -77,6 +78,25 @@ function getSystemInfo() {
   } catch { return { disk: "", memory: "", load: "" }; }
 }
 
+function readLatestSignals() {
+  try {
+    const files = fs.readdirSync(PATHS.signals).filter(f => f.startsWith("reddit-") && f.endsWith(".json"));
+    if (!files.length) return { signals: [], file: null, totalFiles: 0, totalSignals: 0 };
+    files.sort().reverse();
+    const latestFile = files[0];
+    const signals = JSON.parse(fs.readFileSync(path.join(PATHS.signals, latestFile), "utf-8"));
+    // Count total signals across all files
+    let totalSignals = 0;
+    for (const f of files) {
+      try {
+        const data = JSON.parse(fs.readFileSync(path.join(PATHS.signals, f), "utf-8"));
+        totalSignals += data.length;
+      } catch {}
+    }
+    return { signals, file: latestFile, totalFiles: files.length, totalSignals };
+  } catch { return { signals: [], file: null, totalFiles: 0, totalSignals: 0 }; }
+}
+
 function handleApi(url, res) {
   let data;
   switch (url) {
@@ -87,6 +107,7 @@ function handleApi(url, res) {
     case "/api/logs": data = readLogs(150); break;
     case "/api/current": data = getCurrentBuild(); break;
     case "/api/system": data = getSystemInfo(); break;
+    case "/api/signals": data = readLatestSignals(); break;
     default: return false;
   }
   res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
@@ -353,7 +374,7 @@ header{
 /* ========== STAT CARDS ========== */
 .stats-row{
   display:grid;
-  grid-template-columns:repeat(5, 1fr);
+  grid-template-columns:repeat(6, 1fr);
   gap:0.75rem;
   margin:1rem 0 1.25rem;
 }
@@ -373,6 +394,7 @@ header{
 .stat-card:nth-child(3) .stat-icon{background:rgba(16,185,129,0.12);box-shadow:0 0 20px rgba(16,185,129,0.1)}
 .stat-card:nth-child(4) .stat-icon{background:rgba(245,158,11,0.12);box-shadow:0 0 20px rgba(245,158,11,0.1)}
 .stat-card:nth-child(5) .stat-icon{background:rgba(236,72,153,0.12);box-shadow:0 0 20px rgba(236,72,153,0.1)}
+.stat-card:nth-child(6) .stat-icon{background:rgba(255,98,0,0.12);box-shadow:0 0 20px rgba(255,98,0,0.1)}
 
 .stat-value{
   font-size:clamp(1.75rem,3vw,2.5rem);font-weight:800;
@@ -385,6 +407,7 @@ header{
 .stat-card:nth-child(3) .stat-value{background:linear-gradient(135deg,#6ee7b7,#34d399);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
 .stat-card:nth-child(4) .stat-value{background:linear-gradient(135deg,#fcd34d,#fbbf24);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
 .stat-card:nth-child(5) .stat-value{background:linear-gradient(135deg,#f9a8d4,#ec4899);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.stat-card:nth-child(6) .stat-value{background:linear-gradient(135deg,#ff8c40,#ff6200);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
 
 .stat-label{font-size:0.7rem;color:var(--text-tertiary);font-weight:500}
 .stat-sub{font-size:0.65rem;color:var(--text-tertiary);margin-top:0.2rem;opacity:0.7}
@@ -699,12 +722,16 @@ header{
 @media(max-width:1024px){
   .stats-row{grid-template-columns:repeat(3,1fr)}
   .main-grid{grid-template-columns:1fr}
+  .signals-grid{grid-template-columns:1fr}
 }
 @media(max-width:640px){
   .stats-row{grid-template-columns:repeat(2,1fr)}
   .container{padding:1rem}
   header{flex-direction:column;align-items:flex-start}
   .header-controls{width:100%;justify-content:space-between}
+  .flow-steps{flex-direction:column;gap:0.35rem}
+  .flow-arrow{transform:rotate(90deg)}
+  .signal-stats{grid-template-columns:repeat(2,1fr)}
 }
 @media(max-width:400px){
   .stats-row{grid-template-columns:1fr}
@@ -717,6 +744,136 @@ header{
     transition-duration:0.01ms !important;
   }
 }
+
+/* ========== REDDIT SIGNALS SECTION ========== */
+.signals-section{margin-top:1.25rem}
+.signals-grid{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:1.25rem;
+}
+
+/* Signal flow visualization */
+.flow-card{margin-bottom:1.25rem}
+.flow-steps{
+  display:flex;align-items:center;justify-content:center;
+  gap:0;padding:1rem 0;flex-wrap:wrap;
+}
+.flow-step{
+  display:flex;align-items:center;gap:0.5rem;
+  padding:0.5rem 0.9rem;border-radius:var(--radius-sm);
+  background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);
+  font-size:0.72rem;font-weight:600;color:var(--text-secondary);
+}
+.flow-step.active{
+  background:rgba(255,98,0,0.08);border-color:rgba(255,98,0,0.25);
+  color:#ff6200;
+}
+.flow-step.ai{
+  background:rgba(139,92,246,0.08);border-color:rgba(139,92,246,0.25);
+  color:#a78bfa;
+}
+.flow-step.build{
+  background:rgba(16,185,129,0.08);border-color:rgba(16,185,129,0.25);
+  color:#34d399;
+}
+.flow-arrow{
+  color:var(--text-tertiary);font-size:0.8rem;padding:0 0.25rem;
+  opacity:0.4;
+}
+.flow-sub{font-size:0.6rem;color:var(--text-tertiary);text-align:center;margin-top:0.35rem}
+
+/* Signal stats row */
+.signal-stats{
+  display:grid;grid-template-columns:repeat(4,1fr);gap:0.5rem;
+  margin-bottom:1rem;
+}
+.signal-stat{
+  text-align:center;padding:0.6rem 0.4rem;
+  background:rgba(255,255,255,0.02);border-radius:var(--radius-sm);
+  border:1px solid rgba(255,255,255,0.04);
+}
+.signal-stat-val{
+  font-size:1.3rem;font-weight:800;letter-spacing:-0.02em;
+  font-variant-numeric:tabular-nums;
+}
+.signal-stat-val.reddit{color:#ff6200}
+.signal-stat-val.kw{color:#fbbf24}
+.signal-stat-val.sub{color:#60a5fa}
+.signal-stat-val.files{color:#34d399}
+.signal-stat-lbl{font-size:0.6rem;color:var(--text-tertiary);margin-top:0.1rem}
+
+/* Signal list items */
+.signal-item{
+  padding:0.6rem 0.65rem;
+  border-bottom:1px solid rgba(255,255,255,0.04);
+  border-radius:var(--radius-sm);
+  transition:background 0.2s;
+}
+.signal-item:hover{background:rgba(255,98,0,0.03)}
+.signal-item:last-child{border-bottom:none}
+
+.signal-header{
+  display:flex;align-items:center;gap:0.5rem;margin-bottom:0.3rem;
+}
+.signal-sub-badge{
+  font-size:0.58rem;font-weight:700;
+  padding:0.1rem 0.45rem;border-radius:4px;
+  background:rgba(255,98,0,0.1);color:#ff6200;
+  border:1px solid rgba(255,98,0,0.2);
+  flex-shrink:0;white-space:nowrap;
+}
+.signal-title{
+  font-size:0.76rem;font-weight:600;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  flex:1;min-width:0;
+}
+.signal-title a{color:inherit;text-decoration:none}
+.signal-title a:hover{color:var(--accent-cyan);text-decoration:underline}
+
+.signal-metrics{
+  display:flex;align-items:center;gap:0.6rem;
+  font-size:0.62rem;color:var(--text-tertiary);
+  margin-bottom:0.25rem;
+}
+.signal-metric{display:flex;align-items:center;gap:0.2rem}
+.signal-metric .up{color:#ff6200;font-weight:700}
+.signal-metric .comments{color:#60a5fa;font-weight:600}
+
+.signal-body{
+  font-size:0.65rem;color:var(--text-tertiary);
+  line-height:1.5;margin-bottom:0.3rem;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+}
+.signal-keywords{
+  display:flex;flex-wrap:wrap;gap:0.25rem;
+}
+.signal-kw{
+  font-size:0.55rem;font-weight:600;
+  padding:0.08rem 0.35rem;border-radius:3px;
+  background:rgba(251,191,36,0.08);color:#fbbf24;
+  border:1px solid rgba(251,191,36,0.15);
+}
+
+/* Source indicator on queue items */
+.source-tag{
+  font-size:0.52rem;font-weight:700;
+  padding:0.06rem 0.35rem;border-radius:3px;
+  text-transform:uppercase;letter-spacing:0.04em;
+}
+.source-reddit{background:rgba(255,98,0,0.1);color:#ff6200;border:1px solid rgba(255,98,0,0.2)}
+.source-ai{background:rgba(139,92,246,0.1);color:#a78bfa;border:1px solid rgba(139,92,246,0.2)}
+
+/* Subreddit bar chart */
+.sub-chart{display:flex;flex-direction:column;gap:0.3rem;margin-top:0.5rem}
+.sub-row{display:flex;align-items:center;gap:0.5rem}
+.sub-name{font-size:0.62rem;color:var(--text-secondary);width:100px;text-align:right;flex-shrink:0;font-family:'JetBrains Mono',monospace}
+.sub-bar-wrap{flex:1;height:14px;background:rgba(255,255,255,0.03);border-radius:3px;overflow:hidden}
+.sub-bar{height:100%;border-radius:3px;background:linear-gradient(90deg,#ff6200,#ff8c40);transition:width 0.6s var(--ease-smooth)}
+.sub-count{font-size:0.6rem;color:var(--text-tertiary);width:24px;font-variant-numeric:tabular-nums;font-family:'JetBrains Mono',monospace}
+
+/* Log line - reddit */
+.log-reddit{color:#ff6200;border-left-color:rgba(255,98,0,0.4)}
 
 /* ========== SELECTION ========== */
 ::selection{background:rgba(139,92,246,0.3);color:#fff}
@@ -792,6 +949,12 @@ header{
       <div class="stat-label">Researches</div>
       <div class="stat-sub">today</div>
     </div>
+    <div class="card stat-card ani d5">
+      <div class="stat-icon">&#128225;</div>
+      <div class="stat-value" id="vSignals">--</div>
+      <div class="stat-label">Reddit Signals</div>
+      <div class="stat-sub" id="subSignals">latest scrape</div>
+    </div>
   </div>
 
   <!-- CURRENT BUILD -->
@@ -844,6 +1007,81 @@ header{
 
   </div>
 
+  <!-- REDDIT SIGNALS SECTION -->
+  <div class="signals-section ani d7">
+
+    <!-- Flow visualization -->
+    <div class="card flow-card">
+      <div class="card-header">
+        <div class="card-title"><span>&#128256;</span> Idea Pipeline Flow</div>
+        <span class="card-count" id="flowSource">--</span>
+      </div>
+      <div class="flow-steps">
+        <div class="flow-step active">&#128225; Reddit Scrape</div>
+        <span class="flow-arrow">&#10132;</span>
+        <div class="flow-step active">&#128269; Filter &amp; Rank</div>
+        <span class="flow-arrow">&#10132;</span>
+        <div class="flow-step ai">&#129302; Kimi K2.5 Refine</div>
+        <span class="flow-arrow">&#10132;</span>
+        <div class="flow-step build">&#128296; Build MVP</div>
+      </div>
+      <div class="flow-sub">13 subreddits &#8594; keyword + engagement filter &#8594; top 30 signals &#8594; 5 buildable ideas &#8594; code, test, deploy</div>
+    </div>
+
+    <!-- Signals grid: left = signal list, right = subreddit breakdown -->
+    <div class="signals-grid">
+
+      <!-- Left: Latest Reddit Signals -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title"><span>&#128225;</span> Latest Reddit Signals</div>
+          <span class="card-count" id="sigCount">0</span>
+        </div>
+        <div class="signal-stats" id="sigStats">
+          <div class="signal-stat"><div class="signal-stat-val reddit" id="sigTotal">--</div><div class="signal-stat-lbl">Signals</div></div>
+          <div class="signal-stat"><div class="signal-stat-val kw" id="sigKw">--</div><div class="signal-stat-lbl">With Keywords</div></div>
+          <div class="signal-stat"><div class="signal-stat-val sub" id="sigSubs">--</div><div class="signal-stat-lbl">Subreddits</div></div>
+          <div class="signal-stat"><div class="signal-stat-val files" id="sigFiles">--</div><div class="signal-stat-lbl">Scrape Sessions</div></div>
+        </div>
+        <div class="list-scroll" id="signalList" style="max-height:420px">
+          <div class="empty"><div class="empty-icon">&#128225;</div>Loading signals...</div>
+        </div>
+      </div>
+
+      <!-- Right: Subreddit breakdown + how it works -->
+      <div style="display:flex;flex-direction:column;gap:1.25rem">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title"><span>&#128202;</span> Signals by Subreddit</div>
+          </div>
+          <div id="subChart" class="sub-chart">
+            <div class="empty"><div class="empty-icon">&#128202;</div>Loading...</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title"><span>&#128161;</span> How It Works</div>
+          </div>
+          <div style="font-size:0.7rem;color:var(--text-secondary);line-height:1.7">
+            <div style="margin-bottom:0.5rem"><strong style="color:var(--text-primary)">No API key needed.</strong> Reddit exposes public JSON endpoints:</div>
+            <code style="font-size:0.62rem;color:#ff6200;background:rgba(255,98,0,0.06);padding:0.2rem 0.5rem;border-radius:4px;display:block;margin-bottom:0.6rem;word-break:break-all">reddit.com/r/{sub}/top.json?t=week&amp;limit=25</code>
+            <div style="display:flex;flex-direction:column;gap:0.35rem">
+              <div>&#9312; Scrape 13 subreddits (7s delay between each)</div>
+              <div>&#9313; Filter posts by <span style="color:#fbbf24">signal keywords</span> ("i wish", "need a tool"...) + <span style="color:#ff6200">upvote score</span> (&ge;10)</div>
+              <div>&#9314; Posts with 50+ upvotes auto-included (high engagement)</div>
+              <div>&#9315; Rank by: <code style="font-size:0.6rem;color:var(--text-tertiary)">score + 2&times;comments + 5&times;keywords</code></div>
+              <div>&#9316; Top 30 signals fed to <span style="color:#a78bfa">Kimi K2.5</span> to generate 5 MVP ideas</div>
+            </div>
+            <div style="margin-top:0.6rem;padding-top:0.5rem;border-top:1px solid rgba(255,255,255,0.05);color:var(--text-tertiary);font-size:0.62rem">
+              Optional: Set REDDIT_CLIENT_ID + REDDIT_CLIENT_SECRET for OAuth (60 req/min vs 10 req/min public)
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
   <div class="footer ani d8">
     MVP Factory Command Center &bull; Auto-refreshes every 12s &bull; Powered by <a href="#">OpenClaw</a>
   </div>
@@ -874,6 +1112,7 @@ function logCls(l){
   if(l.includes("[ERROR]"))return"log-error";
   if(l.includes("[WARN]"))return"log-warn";
   if(l.includes("COMPLETE")||l.includes("SUCCESS")||l.includes("Deployed"))return"log-success";
+  if(l.includes("Reddit")||l.includes("reddit")||l.includes("r/")||l.includes("Scraping Reddit")||l.includes("signals"))return"log-reddit";
   if(l.includes("Building:")||l.includes("BUILD CYCLE")||l.includes("RESEARCH CYCLE"))return"log-build";
   if(l.includes("deploy")||l.includes("Vercel")||l.includes("GitHub"))return"log-deploy";
   return"log-info";
@@ -930,9 +1169,10 @@ async function api(path){
 /* ========== MAIN REFRESH ========== */
 let firstLoad=true;
 async function refreshAll(){
-  const [status,stats,queue,built,logs,current,sys]=await Promise.all([
+  const [status,stats,queue,built,logs,current,sys,signals]=await Promise.all([
     api("/api/status"),api("/api/stats"),api("/api/queue"),
     api("/api/built"),api("/api/logs"),api("/api/current"),api("/api/system"),
+    api("/api/signals"),
   ]);
 
   // --- Status ---
@@ -973,14 +1213,19 @@ async function refreshAll(){
     } else {
       el.innerHTML=queue.slice(0,40).map((idea,i)=>{
         const pct=Math.min(100,((idea.viabilityScore||0)/10)*100);
+        const isReddit=idea.source==="reddit";
+        const srcTag=isReddit?'<span class="source-tag source-reddit">Reddit</span>':'<span class="source-tag source-ai">AI</span>';
+        const sigCount=idea.redditSignals?idea.redditSignals.length:0;
         return '<div class="list-item" style="animation:fade-in-up 0.4s var(--ease-out-expo) '+(i*0.03)+'s both">'+
           '<span class="list-rank">'+(i+1)+'</span>'+
+          srcTag+
           '<span class="badge '+badgeCls(idea.type)+'">'+badgeLbl(idea.type)+'</span>'+
           '<div class="list-info">'+
             '<div class="list-title" title="'+esc(idea.title||"")+'">'+esc(idea.title||"Untitled")+'</div>'+
             '<div class="list-meta">'+
               '<span>'+(idea.features?idea.features.length:0)+' features</span>'+
               '<span>~'+(idea.estimatedHours||"?")+'h</span>'+
+              (sigCount?'<span style="color:#ff6200">'+sigCount+' signal'+(sigCount>1?'s':'')+'</span>':'')+
             '</div>'+
           '</div>'+
           '<div class="score-wrap">'+
@@ -1054,6 +1299,65 @@ async function refreshAll(){
     const wasAtBottom=viewer.scrollHeight-viewer.scrollTop-viewer.clientHeight<60;
     viewer.innerHTML=logs.map(l=>'<div class="log-line '+logCls(l)+'">'+esc(l)+'</div>').join("");
     if(wasAtBottom||firstLoad)viewer.scrollTop=viewer.scrollHeight;
+  }
+
+  // --- Signals ---
+  if(signals){
+    const sigs=signals.signals||[];
+    setVal("vSignals",sigs.length);
+    document.getElementById("subSignals").textContent=signals.file?signals.file.replace("reddit-","").replace(".json","").substring(0,16):"no data";
+
+    // Stats
+    const kwCount=sigs.filter(s=>s.keywords&&s.keywords.length>0).length;
+    const uniqueSubs=[...new Set(sigs.map(s=>s.subreddit))];
+    setVal("sigTotal",sigs.length);
+    setVal("sigKw",kwCount);
+    setVal("sigSubs",uniqueSubs.length);
+    setVal("sigFiles",signals.totalFiles||0);
+    document.getElementById("sigCount").textContent=sigs.length+" signals";
+    document.getElementById("flowSource").textContent=sigs.length>0?"Reddit-powered":"AI-only";
+
+    // Signal list
+    const sigEl=document.getElementById("signalList");
+    if(!sigs.length){
+      sigEl.innerHTML='<div class="empty"><div class="empty-icon">&#128225;</div>No Reddit signals yet<br><span style="font-size:0.7rem;opacity:0.6">Signals appear after the first research cycle</span></div>';
+    } else {
+      sigEl.innerHTML=sigs.slice(0,20).map((s,i)=>{
+        const engagement=s.score+2*(s.numComments||0)+5*(s.keywords?s.keywords.length:0);
+        return '<div class="signal-item" style="animation:fade-in-up 0.4s var(--ease-out-expo) '+(i*0.02)+'s both">'+
+          '<div class="signal-header">'+
+            '<span class="signal-sub-badge">r/'+esc(s.subreddit)+'</span>'+
+            '<div class="signal-title"><a href="'+esc(s.url)+'" target="_blank" title="'+esc(s.postTitle)+'">'+esc(s.postTitle)+'</a></div>'+
+          '</div>'+
+          '<div class="signal-metrics">'+
+            '<span class="signal-metric"><span class="up">&#9650; '+s.score+'</span></span>'+
+            '<span class="signal-metric"><span class="comments">&#128172; '+(s.numComments||0)+'</span></span>'+
+            '<span class="signal-metric">&#9889; '+engagement+'</span>'+
+          '</div>'+
+          (s.postBody?'<div class="signal-body">'+esc(s.postBody.substring(0,200))+'</div>':'')+
+          (s.keywords&&s.keywords.length?'<div class="signal-keywords">'+s.keywords.map(k=>'<span class="signal-kw">'+esc(k)+'</span>').join("")+'</div>':'')+
+        '</div>';
+      }).join("");
+    }
+
+    // Subreddit chart
+    const chartEl=document.getElementById("subChart");
+    if(sigs.length){
+      const subCounts={};
+      sigs.forEach(s=>{subCounts[s.subreddit]=(subCounts[s.subreddit]||0)+1});
+      const sorted=Object.entries(subCounts).sort((a,b)=>b[1]-a[1]);
+      const max=sorted[0]?sorted[0][1]:1;
+      chartEl.innerHTML=sorted.map(([name,count])=>{
+        const pct=Math.round((count/max)*100);
+        return '<div class="sub-row">'+
+          '<span class="sub-name">r/'+esc(name)+'</span>'+
+          '<div class="sub-bar-wrap"><div class="sub-bar" style="width:'+pct+'%"></div></div>'+
+          '<span class="sub-count">'+count+'</span>'+
+        '</div>';
+      }).join("");
+    } else {
+      chartEl.innerHTML='<div class="empty" style="padding:1rem"><div class="empty-icon">&#128202;</div>No data yet</div>';
+    }
   }
 
   // --- Time ---
