@@ -291,6 +291,18 @@ const [confirmed, setConfirmed] = useState(false)
 )}
 `;
 
+// ============= UTILITY TOOL CATEGORIES (steer away from AI-heavy ideas) =============
+const UTILITY_CATEGORIES = `
+PROVEN UTILITY TOOL CATEGORIES (reference these for idea generation):
+
+Document Tools: PDF merge/split/compress, image resize/convert/compress, markdown editor/previewer, invoice generator, resume builder, receipt scanner organizer
+Developer Tools: JSON formatter/validator, regex tester with explanation, cron expression builder, base64 encode/decode, diff checker, color palette generator, CSS gradient maker, SVG editor, HTML to markdown converter, JWT decoder, URL encoder/decoder
+Calculators: Mortgage/loan calculator, tip splitter, unit converter, BMI calculator, compound interest calculator, time zone converter, percentage calculator, date duration calculator, salary/hourly rate converter
+Productivity: Pomodoro timer, habit tracker, kanban board, meeting cost calculator, word/character counter, QR code generator, password generator, checklist maker, expense splitter, countdown timer
+Data Tools: CSV viewer/editor, spreadsheet to JSON converter, chart/graph maker from data, URL shortener, text compare/diff, data format converter (XML/JSON/YAML/CSV)
+Media Tools: Image background remover (canvas API), favicon generator, screenshot beautifier/mockup, open graph image maker, placeholder image generator, emoji picker, icon search
+`;
+
 // ============= FRONTEND SKILLS (v10 - concise) =============
 const FRONTEND_SKILLS_PROMPT = `
 FRONTEND TECHNIQUES — use these patterns:
@@ -312,6 +324,11 @@ FRONTEND TECHNIQUES — use these patterns:
 
 // ============= AI INTEGRATION =============
 function needsAI(idea: Idea): boolean {
+  // If Kimi explicitly declared needsAI in the research response, respect that
+  if (idea.needsAI === false) return false;
+  if (idea.needsAI === true) return true;
+
+  // Fallback: keyword-based detection for backward compatibility
   const text = `${idea.title} ${idea.description} ${idea.features.join(" ")}`.toLowerCase();
   const aiKeywords = [
     "ai", "chatbot", "generate", "analyze", "smart", "predict",
@@ -396,6 +413,7 @@ interface Idea {
   viabilityScore: number;
   discoveredAt: string;
   type: "web" | "mobile" | "saas" | "api" | "extension";
+  needsAI?: boolean;
   redditSignals?: RedditSignal[];
 }
 
@@ -1715,10 +1733,19 @@ async function researchIdeas(redditSignals?: RedditSignal[]): Promise<Idea[]> {
       `${i + 1}. [r/${s.subreddit}] "${s.postTitle}" (⬆${s.score}, 💬${s.numComments})${s.postBody ? `\n   "${s.postBody.substring(0, 200)}..."` : ""}${s.keywords.length ? `\n   Keywords: ${s.keywords.join(", ")}` : ""}`
     ).join("\n");
 
-    prompt = `You are an MVP idea generator. Below are REAL Reddit posts where people express needs, frustrations, or requests for tools/apps.
+    prompt = `You are an MVP idea generator focused on UTILITY-FIRST tools. Below are REAL Reddit posts where people express needs, frustrations, or requests for tools/apps.
 
 REDDIT SIGNALS:
 ${signalSummary}
+
+CRITICAL RULES:
+- At least 3 of 5 ideas MUST be pure UTILITY tools (NO AI/LLM calls needed). Set "needsAI": false for these.
+- The other 2 can be AI-powered if the Reddit signal genuinely calls for AI. Set "needsAI": true for those.
+- Think ilovepdf.com, tinypng.com, jsonformatter.org — tools with ONE clear function that works instantly.
+- Utility tools should work 100% client-side or with simple math/logic — no external API calls needed.
+- DO NOT slap "AI-powered" onto simple tools. A budget tracker needs math, not an LLM. A unit converter needs formulas, not AI.
+
+${UTILITY_CATEGORIES}
 
 Based on these REAL user needs, generate 5 UNIQUE, BUILDABLE app ideas. Each idea should:
 - Directly address a pain point or request from the Reddit posts above
@@ -1730,21 +1757,30 @@ For each idea, include "sourcePostIndices" — an array of 1-based indices from 
 Mix types: "web", "mobile", "saas", "extension"
 
 Return ONLY JSON:
-[{"title":"Name","description":"One line","problem":"Problem from Reddit","targetUsers":"Users","features":["Interactive feature 1","Interactive feature 2"],"techStack":"Stack","type":"web|mobile|saas|extension","estimatedHours":12,"viabilityScore":8,"sourcePostIndices":[1,5]}]`;
+[{"title":"Name","description":"One line","problem":"Problem from Reddit","targetUsers":"Users","features":["Interactive feature 1","Interactive feature 2"],"techStack":"Stack","type":"web|mobile|saas|extension","estimatedHours":12,"viabilityScore":8,"needsAI":false,"sourcePostIndices":[1,5]}]`;
   } else {
-    prompt = `Generate 5 UNIQUE app ideas that MUST have clear user interactions.
+    prompt = `Generate 5 UNIQUE app ideas — prioritize UTILITY tools that people use daily.
+
+CRITICAL RULES:
+- At least 3 of 5 ideas MUST be pure UTILITY tools (NO AI/LLM calls needed). Set "needsAI": false for these.
+- The other 2 can be AI-powered if the idea genuinely requires AI. Set "needsAI": true for those.
+- Think ilovepdf.com, tinypng.com, jsonformatter.org — tools with ONE clear function that works instantly.
+- Utility tools should work 100% client-side or with simple math/logic — no external API calls needed.
+- DO NOT slap "AI-powered" onto simple tools. A budget tracker needs math, not an LLM. A unit converter needs formulas, not AI.
+
+${UTILITY_CATEGORIES}
 
 Each app MUST allow users to DO something specific:
-- Add/edit/delete items
-- Submit forms
-- Track progress
-- Calculate values
-- Filter/search data
+- Convert, transform, or format data
+- Calculate or compute values
+- Generate documents, codes, or images client-side
+- Track, organize, or manage items
+- Edit, merge, split, or compress files
 
 Mix types: "web", "mobile", "saas", "extension"
 
 Return ONLY JSON:
-[{"title":"Name","description":"One line","problem":"Problem","targetUsers":"Users","features":["Interactive feature 1","Interactive feature 2"],"techStack":"Stack","type":"web|mobile|saas|extension","estimatedHours":12,"viabilityScore":8}]`;
+[{"title":"Name","description":"One line","problem":"Problem","targetUsers":"Users","features":["Interactive feature 1","Interactive feature 2"],"techStack":"Stack","type":"web|mobile|saas|extension","estimatedHours":12,"viabilityScore":8,"needsAI":false}]`;
   }
 
   try {
@@ -1779,6 +1815,7 @@ Return ONLY JSON:
         viabilityScore: Number(idea.viabilityScore) || 8,
         discoveredAt: new Date().toISOString(),
         type: idea.type || "web",
+        needsAI: typeof idea.needsAI === "boolean" ? idea.needsAI : undefined,
         redditSignals: linkedSignals,
       };
     });
