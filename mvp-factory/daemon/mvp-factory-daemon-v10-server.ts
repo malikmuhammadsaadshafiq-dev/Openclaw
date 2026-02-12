@@ -52,6 +52,27 @@ const CONFIG = {
     research: 6 * 60 * 60 * 1000,
     build: 20 * 60 * 1000,
   },
+  reddit: {
+    subreddits: [
+      "SideProject", "startups", "SaaS", "AppIdeas", "indiehackers",
+      "Entrepreneur", "webdev", "reactnative", "nextjs", "opensource",
+      "SomebodyMakeThis", "Lightbulb", "slavelabour",
+    ],
+    signalKeywords: [
+      "i wish", "someone should build", "looking for", "need a tool",
+      "frustrated with", "would pay for", "why isn't there", "alternative to",
+      "is there a", "how do i", "tired of", "can't find", "help me find",
+      "recommendation for", "suggest a", "built this", "just launched",
+      "side project", "weekend project", "what if there was",
+    ],
+    minScore: 10,
+    postsPerSubreddit: 25,
+    sortBy: "top" as const,
+    timeRange: "week",
+    fetchDelayMs: 7000,
+    clientId: process.env.REDDIT_CLIENT_ID || "",
+    clientSecret: process.env.REDDIT_CLIENT_SECRET || "",
+  },
 };
 
 // ============= DESIGN SYSTEM (v10 - 12 unique styles) =============
@@ -350,6 +371,17 @@ export async function askAI(prompt: string, systemPrompt?: string): Promise<stri
 4. IMPORTANT: The .env.local file with the real NVIDIA_API_KEY will be auto-created.
 `;
 
+interface RedditSignal {
+  subreddit: string;
+  postTitle: string;
+  postBody: string;
+  score: number;
+  numComments: number;
+  url: string;
+  createdUtc: number;
+  keywords: string[];
+}
+
 interface Idea {
   id: string;
   source: "x" | "reddit";
@@ -364,6 +396,7 @@ interface Idea {
   viabilityScore: number;
   discoveredAt: string;
   type: "web" | "mobile" | "saas" | "api" | "extension";
+  redditSignals?: RedditSignal[];
 }
 
 interface TestResult {
@@ -411,6 +444,121 @@ async function sendTelegram(message: string): Promise<void> {
       body: JSON.stringify({ chat_id: CONFIG.telegram.chatId, text: message, parse_mode: "Markdown" }),
     });
   } catch {}
+}
+
+// ============= REDDIT SCRAPING =============
+
+let redditTokenCache: { token: string; expiresAt: number } | null = null;
+
+async function getRedditAccessToken(): Promise<string | null> {
+  if (!CONFIG.reddit.clientId || !CONFIG.reddit.clientSecret) return null;
+
+  if (redditTokenCache && Date.now() < redditTokenCache.expiresAt) {
+    return redditTokenCache.token;
+  }
+
+  try {
+    const credentials = Buffer.from(`${CONFIG.reddit.clientId}:${CONFIG.reddit.clientSecret}`).toString("base64");
+    const response = await fetch("https://www.reddit.com/api/v1/access_token", {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${credentials}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent": "MVPFactory/1.0",
+      },
+      body: "grant_type=client_credentials",
+    });
+
+    if (!response.ok) throw new Error(`Reddit OAuth ${response.status}`);
+    const data = await response.json() as { access_token: string; expires_in: number };
+    redditTokenCache = {
+      token: data.access_token,
+      expiresAt: Date.now() + (data.expires_in - 60) * 1000,
+    };
+    await logger.log("Reddit OAuth token acquired (60 req/min)");
+    return redditTokenCache.token;
+  } catch (error) {
+    await logger.log(`Reddit OAuth failed, using public API: ${error}`, "WARN");
+    return null;
+  }
+}
+
+async function scrapeReddit(): Promise<RedditSignal[]> {
+  await logger.log("Scraping Reddit for market signals...");
+  const signals: RedditSignal[] = [];
+  const token = await getRedditAccessToken();
+
+  for (const subreddit of CONFIG.reddit.subreddits) {
+    try {
+      let url: string;
+      const headers: Record<string, string> = { "User-Agent": "MVPFactory/1.0" };
+
+      if (token) {
+        url = `https://oauth.reddit.com/r/${subreddit}/${CONFIG.reddit.sortBy}?t=${CONFIG.reddit.timeRange}&limit=${CONFIG.reddit.postsPerSubreddit}`;
+        headers["Authorization"] = `Bearer ${token}`;
+      } else {
+        url = `https://www.reddit.com/r/${subreddit}/${CONFIG.reddit.sortBy}.json?t=${CONFIG.reddit.timeRange}&limit=${CONFIG.reddit.postsPerSubreddit}`;
+      }
+
+      const response = await fetch(url, { headers });
+
+      if (response.status === 429) {
+        await logger.log(`Rate limited on r/${subreddit}, backing off 60s...`, "WARN");
+        await sleep(60000);
+        continue;
+      }
+      if (!response.ok) {
+        await logger.log(`r/${subreddit}: HTTP ${response.status}`, "WARN");
+        continue;
+      }
+
+      const data = await response.json() as any;
+      const posts = data?.data?.children || [];
+
+      for (const child of posts) {
+        const post = child?.data;
+        if (!post) continue;
+
+        const title = (post.title || "").toLowerCase();
+        const body = (post.selftext || "").substring(0, 500).toLowerCase();
+        const combined = `${title} ${body}`;
+
+        const matchedKeywords = CONFIG.reddit.signalKeywords.filter(kw => combined.includes(kw));
+        const meetsScoreThreshold = (post.score || 0) >= CONFIG.reddit.minScore;
+        const highEngagement = (post.score || 0) >= 50;
+
+        if ((meetsScoreThreshold && matchedKeywords.length > 0) || highEngagement) {
+          signals.push({
+            subreddit,
+            postTitle: post.title || "",
+            postBody: (post.selftext || "").substring(0, 500),
+            score: post.score || 0,
+            numComments: post.num_comments || 0,
+            url: `https://reddit.com${post.permalink || ""}`,
+            createdUtc: post.created_utc || 0,
+            keywords: matchedKeywords,
+          });
+        }
+      }
+
+      await logger.log(`r/${subreddit}: ${posts.length} posts scanned, ${signals.length} signals total`);
+      await sleep(CONFIG.reddit.fetchDelayMs);
+    } catch (error) {
+      await logger.log(`r/${subreddit} error: ${error}`, "WARN");
+    }
+  }
+
+  // Sort by engagement score: upvotes + 2*comments + 5*keyword_matches
+  signals.sort((a, b) => {
+    const scoreA = a.score + 2 * a.numComments + 5 * a.keywords.length;
+    const scoreB = b.score + 2 * b.numComments + 5 * b.keywords.length;
+    return scoreB - scoreA;
+  });
+
+  // Return top 30 to avoid overloading the Kimi prompt
+  const topSignals = signals.slice(0, 30);
+  await logger.log(`Reddit scraping complete: ${signals.length} total signals, using top ${topSignals.length}`);
+  return topSignals;
 }
 
 async function getStats(): Promise<DailyStats> {
@@ -1548,16 +1696,43 @@ npm run dev
 
 // ============= RESEARCH =============
 
-async function researchIdeas(): Promise<Idea[]> {
+async function researchIdeas(redditSignals?: RedditSignal[]): Promise<Idea[]> {
   const stats = await getStats();
   if (stats.researchesToday >= CONFIG.limits.researchPerDay) {
     await logger.log(`Research limit reached`);
     return [];
   }
 
-  await logger.log("🔍 Researching trending ideas...");
+  const hasSignals = redditSignals && redditSignals.length > 0;
+  await logger.log(hasSignals
+    ? `🔍 Generating ideas from ${redditSignals!.length} Reddit signals...`
+    : "🔍 Researching trending ideas (AI-generated)...");
 
-  const prompt = `Generate 5 UNIQUE app ideas that MUST have clear user interactions.
+  let prompt: string;
+
+  if (hasSignals) {
+    const signalSummary = redditSignals!.slice(0, 20).map((s, i) =>
+      `${i + 1}. [r/${s.subreddit}] "${s.postTitle}" (⬆${s.score}, 💬${s.numComments})${s.postBody ? `\n   "${s.postBody.substring(0, 200)}..."` : ""}${s.keywords.length ? `\n   Keywords: ${s.keywords.join(", ")}` : ""}`
+    ).join("\n");
+
+    prompt = `You are an MVP idea generator. Below are REAL Reddit posts where people express needs, frustrations, or requests for tools/apps.
+
+REDDIT SIGNALS:
+${signalSummary}
+
+Based on these REAL user needs, generate 5 UNIQUE, BUILDABLE app ideas. Each idea should:
+- Directly address a pain point or request from the Reddit posts above
+- Be buildable as an MVP in 8-16 hours
+- Have clear interactive features users can use immediately
+
+For each idea, include "sourcePostIndices" — an array of 1-based indices from the signals list above that inspired it.
+
+Mix types: "web", "mobile", "saas", "extension"
+
+Return ONLY JSON:
+[{"title":"Name","description":"One line","problem":"Problem from Reddit","targetUsers":"Users","features":["Interactive feature 1","Interactive feature 2"],"techStack":"Stack","type":"web|mobile|saas|extension","estimatedHours":12,"viabilityScore":8,"sourcePostIndices":[1,5]}]`;
+  } else {
+    prompt = `Generate 5 UNIQUE app ideas that MUST have clear user interactions.
 
 Each app MUST allow users to DO something specific:
 - Add/edit/delete items
@@ -1570,6 +1745,7 @@ Mix types: "web", "mobile", "saas", "extension"
 
 Return ONLY JSON:
 [{"title":"Name","description":"One line","problem":"Problem","targetUsers":"Users","features":["Interactive feature 1","Interactive feature 2"],"techStack":"Stack","type":"web|mobile|saas|extension","estimatedHours":12,"viabilityScore":8}]`;
+  }
 
   try {
     const response = await kimiComplete(prompt, 6000);
@@ -1580,21 +1756,32 @@ Return ONLY JSON:
     stats.lastResearchAt = new Date().toISOString();
     await saveStats(stats);
 
-    return ideas.map((idea: any) => ({
-      id: crypto.randomUUID(),
-      source: "x" as const,
-      title: String(idea.title || "App"),
-      description: String(idea.description || ""),
-      problem: String(idea.problem || ""),
-      targetUsers: String(idea.targetUsers || ""),
-      features: (idea.features || []).slice(0, 4),
-      techStack: String(idea.techStack || "Next.js"),
-      complexity: "medium" as const,
-      estimatedHours: 12,
-      viabilityScore: Number(idea.viabilityScore) || 8,
-      discoveredAt: new Date().toISOString(),
-      type: idea.type || "web",
-    }));
+    return ideas.map((idea: any) => {
+      // Map sourcePostIndices back to actual RedditSignal objects
+      let linkedSignals: RedditSignal[] | undefined;
+      if (hasSignals && idea.sourcePostIndices) {
+        linkedSignals = (idea.sourcePostIndices as number[])
+          .filter((idx: number) => idx >= 1 && idx <= redditSignals!.length)
+          .map((idx: number) => redditSignals![idx - 1]);
+      }
+
+      return {
+        id: crypto.randomUUID(),
+        source: (hasSignals ? "reddit" : "x") as "reddit" | "x",
+        title: String(idea.title || "App"),
+        description: String(idea.description || ""),
+        problem: String(idea.problem || ""),
+        targetUsers: String(idea.targetUsers || ""),
+        features: (idea.features || []).slice(0, 4),
+        techStack: String(idea.techStack || "Next.js"),
+        complexity: "medium" as const,
+        estimatedHours: 12,
+        viabilityScore: Number(idea.viabilityScore) || 8,
+        discoveredAt: new Date().toISOString(),
+        type: idea.type || "web",
+        redditSignals: linkedSignals,
+      };
+    });
   } catch (error) {
     await logger.log(`Research error: ${error}`, "ERROR");
     return [];
@@ -1624,10 +1811,32 @@ async function getNextIdea(): Promise<Idea | null> {
 
 async function runResearchCycle() {
   await logger.log("\n📡 RESEARCH CYCLE");
-  const ideas = await researchIdeas();
+
+  // Step 1: Scrape Reddit for market signals
+  let redditSignals: RedditSignal[] = [];
+  try {
+    redditSignals = await scrapeReddit();
+    if (redditSignals.length > 0) {
+      // Save raw signals for auditing
+      const signalsDir = path.join(CONFIG.paths.output, "signals");
+      await fs.mkdir(signalsDir, { recursive: true });
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      await fs.writeFile(
+        path.join(signalsDir, `reddit-${timestamp}.json`),
+        JSON.stringify(redditSignals, null, 2)
+      );
+      await logger.log(`Saved ${redditSignals.length} Reddit signals to signals/reddit-${timestamp}.json`);
+    }
+  } catch (error) {
+    await logger.log(`Reddit scraping failed, falling back to AI-only: ${error}`, "WARN");
+  }
+
+  // Step 2: Generate ideas (from Reddit signals or pure AI)
+  const ideas = await researchIdeas(redditSignals.length > 0 ? redditSignals : undefined);
   if (ideas.length > 0) {
     await saveIdeas(ideas);
-    await sendTelegram(`📡 Discovered ${ideas.length} ideas:\n${ideas.map(i => `• ${i.title} (${i.type})`).join('\n')}`);
+    const sourceLabel = redditSignals.length > 0 ? "(from Reddit signals)" : "(AI-generated)";
+    await sendTelegram(`📡 Discovered ${ideas.length} ideas ${sourceLabel}:\n${ideas.map(i => `• ${i.title} (${i.type})`).join('\n')}`);
   }
 }
 
@@ -1669,6 +1878,8 @@ async function main() {
   await logger.log("🚀 MVP Factory v10 Starting...");
   await logger.log(`GitHub: ${CONFIG.github.username}`);
   await logger.log(`Vercel: ${CONFIG.vercel.token ? "✅" : "❌"}`);
+  await logger.log(`Reddit: ${CONFIG.reddit.clientId ? "✅ OAuth (60 req/min)" : "✅ Public API (10 req/min)"}`);
+  await logger.log(`Reddit Subreddits: ${CONFIG.reddit.subreddits.length} configured`);
   await logger.log(`Testing: ✅ Frontend + Backend + FUNCTIONALITY`);
   await logger.log(`Design: ✅ 12 unique premium styles`);
   await logger.log(`Frontend: ✅ Aurora, glassmorphism, micro-interactions`);
@@ -1680,6 +1891,7 @@ async function main() {
   await fs.mkdir(path.join(CONFIG.paths.output, "web"), { recursive: true });
   await fs.mkdir(path.join(CONFIG.paths.output, "mobile"), { recursive: true });
   await fs.mkdir(path.join(CONFIG.paths.output, "extensions"), { recursive: true });
+  await fs.mkdir(path.join(CONFIG.paths.output, "signals"), { recursive: true });
 
   await showStats();
   await sendTelegram("🚀 *MVP Factory v9* started!\n• Launch-ready products\n• Aurora + glassmorphism\n• AI integration\n• Max 15/day");
