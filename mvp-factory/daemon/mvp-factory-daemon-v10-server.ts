@@ -1182,7 +1182,7 @@ async function buildMobileApp(idea: Idea, projectPath: string): Promise<string> 
 
   if (hasAI) await logger.log("🤖 AI features detected for mobile app");
 
-  const prompt = `Build a COMPLETE React Native (Expo) mobile app. Output ONLY a JSON array of file objects: [{"path":"...","content":"..."},...]. No explanations.
+  const prompt = `Build a COMPLETE React Native (Expo SDK 50) mobile app. Output ONLY a JSON array of file objects: [{"path":"...","content":"..."},...]. No explanations.
 
 PROJECT: ${idea.title}
 DESCRIPTION: ${idea.description}
@@ -1190,14 +1190,26 @@ FEATURES: ${idea.features.join("; ")}
 
 ${designToPrompt(design)}
 
+CRITICAL — EXPO ONLY:
+- This MUST be a React Native + Expo project. DO NOT use Flutter, Dart, Swift, Kotlin, or Firebase.
+- package.json MUST have "main": "node_modules/expo/AppEntry.js"
+- package.json scripts: { "start": "expo start", "android": "expo start --android", "ios": "expo start --ios" }
+- DO NOT include "next", "react-dom", or any web-only dependencies
+- Use Expo SDK 50: "expo": "~50.0.0"
+- Use compatible versions: "react-native": "^0.73.0", "react": "^18.3.1"
+- app.json MUST have expo.slug, expo.version, expo.platforms: ["ios", "android"]
+- Store data with @react-native-async-storage/async-storage (NOT SQLite, NOT Firebase)
+- Navigation: @react-navigation/native + @react-navigation/native-stack
+
 REQUIREMENTS:
-- Files: package.json, app.json, App.tsx, 3+ screen components, navigation setup
-- Every screen: working forms/buttons, state management, loading states
+- Files: package.json, app.json, App.tsx, 3+ screen components in src/screens/, navigation in src/navigation/
+- Every screen: working forms/buttons, useState state management, loading states
 - Pre-populate 8-12 REALISTIC demo items (NOT placeholders)
-- Working CRUD operations
+- Working CRUD operations with AsyncStorage persistence
 - Animations with react-native-reanimated patterns
 - StyleSheet matching the design style
 - Must look like a real published app
+${hasAI ? "\nAI INTEGRATION: Include src/api/ai.ts that calls /api/ai endpoint for AI features." : ""}
 
 Return ONLY the JSON array. Start with [ and end with ].`;
 
@@ -1576,8 +1588,8 @@ async function buildMVP(idea: Idea): Promise<boolean> {
 
     await logger.log("✅ Code generated");
 
-    // Sanitize package.json to fix invalid dependency versions
-    if (idea.type !== "extension") {
+    // Sanitize package.json to fix invalid dependency versions (skip mobile — they use Expo, not Next.js)
+    if (idea.type !== "extension" && idea.type !== "mobile") {
       await sanitizePackageJson(projectPath);
     }
 
@@ -1648,7 +1660,7 @@ ${idea.features.map(f => `- ✅ ${f}`).join('\n')}
 ## 🚀 Quick Start
 \`\`\`bash
 npm install
-npm run dev
+${idea.type === "mobile" ? "npx expo start" : "npm run dev"}
 \`\`\`
 
 ---
