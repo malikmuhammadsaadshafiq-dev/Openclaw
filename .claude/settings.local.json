@@ -5,7 +5,26 @@
       "Bash(python3:*)",
       "Bash(scp:*)",
       "Bash(gh auth status:*)",
-      "Bash(git --version:*)"
+      "Bash(git --version:*)",
+      "Bash(\"/c/Program Files/GitHub CLI/gh.exe\" api repos/malikmuhammadsaadshafiq-dev/mvp-clauseguard/contents/src/app/page.tsx --jq '.content')",
+      "Bash(\"/c/Program Files/GitHub CLI/gh.exe\" api repos/malikmuhammadsaadshafiq-dev/mvp-freelanceforge/contents/src/app/page.tsx --jq '.content')",
+      "Bash(\"/c/Program Files/GitHub CLI/gh.exe\" api repos/malikmuhammadsaadshafiq-dev/mvp-quotecraft/contents/src/app/page.tsx --jq '.content')",
+      "Bash(\"/c/Program Files/GitHub CLI/gh.exe\" api repos/malikmuhammadsaadshafiq-dev/mvp-habitalchemy/git/trees/main?recursive=1 --jq '.tree[].path')",
+      "Bash(\"/c/Program Files/GitHub CLI/gh.exe\" api repos/malikmuhammadsaadshafiq-dev/mvp-doselogic/git/trees/main?recursive=1 --jq '.tree[].path')",
+      "Bash(\"/c/Program Files/GitHub CLI/gh.exe\" api repos/malikmuhammadsaadshafiq-dev/mvp-clauseguard/contents/package.json --jq '.content')",
+      "Bash(\"/c/Program Files/GitHub CLI/gh.exe\" api repos/malikmuhammadsaadshafiq-dev/mvp-scopecraft/contents/package.json --jq '.content')",
+      "Bash(\"/c/Program Files/GitHub CLI/gh.exe\" api repos/malikmuhammadsaadshafiq-dev/mvp-bodydouble/contents/package.json --jq '.content')",
+      "Bash(\"/c/Program Files/GitHub CLI/gh.exe\" api repos/malikmuhammadsaadshafiq-dev/mvp-freelanceforge/contents/package.json --jq '.content')",
+      "Bash(\"/c/Program Files/GitHub CLI/gh.exe\" api repos/malikmuhammadsaadshafiq-dev/mvp-quotecraft/contents/package.json --jq '.content')",
+      "Bash(\"/c/Program Files/GitHub CLI/gh.exe\" api repos/malikmuhammadsaadshafiq-dev/mvp-clauseguard/contents/README.md --jq '.content')",
+      "Bash(\"/c/Program Files/GitHub CLI/gh.exe\" api repos/malikmuhammadsaadshafiq-dev/mvp-quotecraft/contents/README.md --jq '.content')",
+      "Bash(\"/c/Program Files/GitHub CLI/gh.exe\" api repos/malikmuhammadsaadshafiq-dev/mvp-clauseguard/contents/.env.local --jq '.content')",
+      "Bash(\"/c/Program Files/GitHub CLI/gh.exe\" api repos/malikmuhammadsaadshafiq-dev/mvp-scopecraft/contents/.env.local --jq '.content')",
+      "Bash(\"/c/Program Files/GitHub CLI/gh.exe\" api repos/malikmuhammadsaadshafiq-dev/mvp-bodydouble/contents/.env.local --jq '.content')",
+      "Bash(curl:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
     ]
   }
 }
