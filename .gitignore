@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+.next/
+.vercel/
+
+# Environment & Secrets
+.env
+.env.*
+*.env
+config/.env
+**/config/.env
+squadron-credentials.json
+*credentials*.json
+
+# OS
+.DS_Store
+Thumbs.db
+nul
+
+# Logs
+logs/
+*.log
+
+# Build
+dist/
+build/

@@ -1,0 +1,23 @@
+{
+  "name": "mvp-factory",
+  "version": "1.0.0",
+  "description": "Autonomous MVP Factory - Discovers ideas and builds complete MVPs",
+  "type": "module",
+  "main": "daemon/mvp-factory-daemon.ts",
+  "scripts": {
+    "start": "npx tsx daemon/mvp-factory-daemon.ts",
+    "dev": "npx tsx watch daemon/mvp-factory-daemon.ts",
+    "build": "tsc",
+    "research": "npx tsx -e \"import('./daemon/mvp-factory-daemon.ts').then(m => m.runResearchCycle())\"",
+    "build-next": "npx tsx -e \"import('./daemon/mvp-factory-daemon.ts').then(m => m.buildNextIdea())\""
+  },
+  "dependencies": {
+    "typescript": "^5.3.0",
+    "tsx": "^4.7.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "author": "MVP Factory",
+  "license": "MIT"
+}

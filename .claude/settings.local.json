@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ssh:*)",
+      "Bash(python3:*)",
+      "Bash(scp:*)",
+      "Bash(gh auth status:*)",
+      "Bash(git --version:*)"
+    ]
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "llm": {
+    "provider": "openai-compatible",
+    "baseUrl": "https://integrate.api.nvidia.com/v1",
+    "model": "moonshotai/kimi-k2.5",
+    "apiKey": "${NVIDIA_API_KEY}",
+    "maxTokens": 32768,
+    "temperature": 0.7
+  },
+  "memory": {
+    "enabled": true,
+    "persistPath": "/root/.openclaw/memory"
+  },
+  "skills": {
+    "directory": "/root/.openclaw/skills",
+    "autoload": true
+  },
+  "github": {
+    "enabled": true,
+    "autoCommit": true,
+    "autoPush": true
+  },
+  "expo": {
+    "enabled": true,
+    "autoPublish": true
+  },
+  "daemon": {
+    "enabled": true,
+    "researchInterval": 3600000,
+    "buildInterval": 1800000
+  }
+}
