@@ -45,12 +45,12 @@ const CONFIG = {
     stats: "/root/mvp-projects/stats.json",
   },
   limits: {
-    maxBuildsPerDay: 15,
-    researchPerDay: 4,
+    maxBuildsPerDay: 50,
+    researchPerDay: 6,
   },
   intervals: {
-    research: 6 * 60 * 60 * 1000,
-    build: 20 * 60 * 1000,
+    research: 4 * 60 * 60 * 1000,
+    build: 15 * 60 * 1000,
   },
   reddit: {
     subreddits: [
@@ -320,6 +320,74 @@ FRONTEND TECHNIQUES — use these patterns:
 - Color shadows matching button colors
 - Dark mode with CSS variables and data-theme
 - Reduced motion: @media(prefers-reduced-motion:reduce) { *{animation-duration:.01ms!important} }
+`;
+
+// ============= UX QUALITY SYSTEM =============
+const UX_QUALITY_PROMPT = `
+UX QUALITY RULES — every app MUST follow these:
+
+LAYOUT & SPACING:
+- Use consistent 8px spacing grid (p-2, p-4, p-6, p-8 in Tailwind)
+- Max content width: max-w-6xl mx-auto with px-4 padding on sides
+- Cards must have consistent padding (p-6) and gap between them (gap-6)
+- Section spacing: py-12 or py-16 between major sections
+- Never let content touch the edges of the screen
+
+VISUAL HIERARCHY:
+- One clear hero/header section with the app name + one-line description
+- Primary action button must be visually dominant (larger, brighter color, prominent placement)
+- Secondary actions are subtler (outline or ghost buttons)
+- Destructive actions (delete) use red/danger color, placed away from primary actions
+- Group related items visually with cards or bordered sections
+- Use consistent heading sizes: h1 for page title, h2 for sections, h3 for card titles
+
+RESPONSIVE DESIGN:
+- Mobile-first: default layout is single column
+- sm: 2 columns for card grids
+- lg: 3-4 columns for card grids
+- Navigation collapses to hamburger on mobile (or use bottom tab bar)
+- Forms stack vertically on mobile, can go horizontal on desktop
+- Font sizes scale: text-sm on mobile, text-base on desktop
+
+EMPTY STATES:
+- When a list has zero items, show a friendly empty state with an icon, message, and CTA button
+- Example: "No invoices yet" with a + Create Invoice button
+- Never show a blank white page or just a header with nothing below
+
+FORM UX:
+- Labels above every input field (not just placeholders)
+- Placeholder text shows example format (e.g., "e.g., john@example.com")
+- Inline validation: red border + error message below field on invalid input
+- Green checkmark or border on valid input
+- Submit button disabled until form is valid
+- After successful submit: clear form, show success toast, add item to list
+
+NAVIGATION:
+- Sticky top navbar or sidebar with app logo/name and main nav links
+- Active page/tab highlighted visually
+- Back buttons where appropriate (detail pages)
+- Breadcrumbs for nested views (optional but nice)
+
+MICRO-INTERACTIONS:
+- Buttons: scale down slightly on click (active:scale-95), lift on hover
+- Cards: subtle shadow increase on hover (hover:shadow-lg)
+- List items: slide in with staggered animation on load
+- Delete: item fades/slides out before removal
+- New items: fade/slide in at top of list
+- Transitions: all interactive elements have transition-all duration-200
+
+LOADING & FEEDBACK:
+- Show skeleton loader (not spinner) for initial page content
+- Show inline spinner on buttons during async actions
+- Disable buttons during loading to prevent double-submit
+- Toast notifications: slide in from bottom-right, auto-dismiss after 3s
+- Use optimistic UI: update the list immediately, revert on error
+
+COLOR & CONTRAST:
+- Text must have WCAG AA contrast ratio against background
+- Don't use light gray text on white backgrounds
+- Use the accent color consistently for all primary actions
+- Error: red-500, Success: green-500, Warning: amber-500, Info: blue-500
 `;
 
 // ============= AI INTEGRATION =============
@@ -917,8 +985,24 @@ async function runFunctionalityTests(projectPath: string, generatedCode: string)
     details: hasCRUD ? "\u2713 Add/delete works" : "\u2717 Static list",
   });
 
+  // Test 9: Has empty states
+  const hasEmptyState = allFileContents.includes("length === 0") || allFileContents.includes("length==0") || allFileContents.includes(".length < 1") || allFileContents.includes("no items") || allFileContents.includes("No items") || allFileContents.includes("empty") || allFileContents.includes("nothing");
+  tests.push({
+    name: "Has empty states",
+    passed: hasEmptyState,
+    details: hasEmptyState ? "\u2713 Handles empty lists" : "\u2717 No empty state UI",
+  });
+
+  // Test 10: Has responsive layout
+  const hasResponsive = isExtension ? true : (allFileContents.includes("sm:") || allFileContents.includes("md:") || allFileContents.includes("lg:") || allFileContents.includes("grid-cols") || allFileContents.includes("flex-wrap") || allFileContents.includes("@media"));
+  tests.push({
+    name: "Has responsive layout",
+    passed: hasResponsive,
+    details: hasResponsive ? "\u2713 Responsive design" : "\u2717 Not responsive",
+  });
+
   const passedCount = tests.filter(t => t.passed).length;
-  return { passed: passedCount >= 5, tests };
+  return { passed: passedCount >= 6, tests };
 }
 
 
@@ -1067,6 +1151,8 @@ ${designToPrompt(design)}
 
 ${FRONTEND_SKILLS_PROMPT}
 
+${UX_QUALITY_PROMPT}
+
 ${hasAI ? AI_INTEGRATION_PROMPT : ""}
 
 MANDATORY PATTERNS (code MUST contain ALL of these):
@@ -1080,6 +1166,10 @@ MANDATORY PATTERNS (code MUST contain ALL of these):
 8. NEVER use "Lorem ipsum", "placeholder", "TODO:", "example text", "Item 1", "Item 2"
 9. Every button MUST have an onClick that does something real (not empty)
 10. All components must have 'use client' directive
+11. MUST have an empty state component: when items.length === 0, show a friendly message + icon + "Add your first..." CTA button
+12. MUST be responsive: use grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 for card layouts
+13. MUST have a sticky top navbar with the app name and navigation
+14. Forms MUST have labels above inputs, placeholder examples, and inline validation
 
 FILES: package.json, tsconfig.json, tailwind.config.ts, postcss.config.js, next.config.js, src/app/globals.css, src/app/layout.tsx, src/app/page.tsx, 3+ component files, utils.ts${hasAI ? ", src/app/api/ai/route.ts, src/lib/ai.ts" : ""}
 DESIGN: Tailwind CSS + Google Font "${design.font}" + animations (fade-in, hover-lift, button press, skeleton loading)
@@ -1139,6 +1229,19 @@ FEATURES: ${idea.features.join("; ")}
 
 ${designToPrompt(design)}
 
+EXTENSION UX QUALITY:
+- Popup width: 380px, max-height: 520px with overflow-y auto scroll
+- Consistent 12px padding on all sides, 8px gap between items
+- Clear header with app icon + name + settings gear icon
+- Primary action button full-width at top or bottom, visually dominant
+- List items with hover highlight, smooth transitions
+- Empty state: when no items, show a centered icon + "No items yet" + action prompt
+- Form: labels or clear placeholders, submit on Enter key, clear form after adding
+- Delete: red icon/button with fade-out animation on item removal
+- Toast/status bar at bottom of popup for feedback ("Saved!", "Deleted!")
+- Smooth animations on all state changes (150-300ms transitions)
+- Consistent border-radius (8px) on all cards, inputs, buttons
+
 MANDATORY PATTERNS (code MUST contain ALL of these):
 1. popup.js MUST use: let items = JSON.parse(localStorage.getItem('items') || '[...]') with 6+ realistic pre-populated items
 2. popup.js MUST have 3+ addEventListener('click', ...) handlers
@@ -1150,6 +1253,7 @@ MANDATORY PATTERNS (code MUST contain ALL of these):
 8. popup.css MUST have animations (@keyframes), hover effects, transitions
 9. Use REAL data: real names, real dates, real URLs - NEVER "Item 1" or "Lorem ipsum" or "placeholder"
 10. Show loading states and success/error feedback messages
+11. MUST have an empty state: when items list is empty, show a friendly message and CTA
 
 FILES REQUIRED: manifest.json (v3), popup.html, popup.css, popup.js, background.js
 DESIGN: beautiful UI matching the design style, premium feel, smooth animations
@@ -1200,6 +1304,21 @@ CRITICAL — EXPO ONLY:
 - app.json MUST have expo.slug, expo.version, expo.platforms: ["ios", "android"]
 - Store data with @react-native-async-storage/async-storage (NOT SQLite, NOT Firebase)
 - Navigation: @react-navigation/native + @react-navigation/native-stack
+
+MOBILE UX QUALITY:
+- Consistent spacing: use 16px padding on screens, 12px gaps between items
+- Clear visual hierarchy: large bold title at top, section headers, card layouts
+- Bottom tab navigation or stack navigation with clear back buttons and headers
+- Empty states: when a list is empty, show a friendly icon + message + "Add your first..." button
+- Form UX: labels above inputs, placeholder examples, inline validation with red/green borders
+- Loading: show ActivityIndicator centered on screen or inline during async operations
+- Toast/snackbar feedback on all CRUD actions (added, deleted, updated)
+- Pull-to-refresh on list screens
+- Smooth transitions between screens
+- Cards with consistent borderRadius (12-16), subtle shadows, and padding
+- Primary action as a floating action button (FAB) or prominent bottom button
+- Delete actions: swipe-to-delete or red trash icon with confirmation alert
+- MUST be responsive to different screen sizes (use flex, not fixed widths)
 
 REQUIREMENTS:
 - Files: package.json, app.json, App.tsx, 3+ screen components in src/screens/, navigation in src/navigation/
@@ -1600,7 +1719,7 @@ async function buildMVP(idea: Idea): Promise<boolean> {
     await logger.log("\n🧪 TESTING PHASE");
     await logger.log("-".repeat(30));
 
-    stats.testsRun = (stats.testsRun || 0) + 4;
+    stats.testsRun = (stats.testsRun || 0) + 5;
 
     let frontendResults: TestResult = { passed: true, tests: [] };
     let backendResults: TestResult = { passed: true, tests: [] };
@@ -1629,7 +1748,7 @@ async function buildMVP(idea: Idea): Promise<boolean> {
     }
 
     const allPassed = frontendResults.passed && backendResults.passed && funcResults.passed;
-    if (allPassed) stats.testsPassed = (stats.testsPassed || 0) + 4;
+    if (allPassed) stats.testsPassed = (stats.testsPassed || 0) + 5;
 
     await logger.log("-".repeat(30));
 
