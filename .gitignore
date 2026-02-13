@@ -24,3 +24,13 @@ logs/
 # Build
 dist/
 build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Runtime output
+mvp-projects/
+package-lock.json
