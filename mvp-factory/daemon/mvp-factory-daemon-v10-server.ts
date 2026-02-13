@@ -391,11 +391,15 @@ FORM UX:
 - Submit button disabled until form is valid
 - After successful submit: clear form, show success toast, add item to list
 
-NAVIGATION:
-- Sticky top navbar or sidebar with app logo/name and main nav links
-- Active page/tab highlighted visually
-- Back buttons where appropriate (detail pages)
-- Breadcrumbs for nested views (optional but nice)
+NAVIGATION (CRITICAL — must be functional, NOT dead links):
+- Sticky top navbar with app logo/name and 3-4 tab navigation links
+- Navigation MUST use React state (useState) to switch views — NOT href links to other pages
+- Pattern: const [activeTab, setActiveTab] = useState("home") with onClick={() => setActiveTab("dashboard")}
+- Each tab renders a different section/view within the SAME page.tsx — no separate route files needed
+- Active tab MUST be visually highlighted (bold text, underline, accent color, or bg highlight)
+- Navbar links MUST use <button> or <a onClick={...}> with e.preventDefault() — NEVER href="#" or href="/dashboard"
+- Minimum tabs: Home (main content), Dashboard (stats/overview), Profile/Settings (user prefs)
+- Each tab view must have real, meaningful content — not empty placeholder pages
 
 MICRO-INTERACTIONS:
 - Buttons: scale down slightly on click (active:scale-95), lift on hover
@@ -1197,7 +1201,7 @@ MANDATORY PATTERNS (code MUST contain ALL of these):
 10. All components must have 'use client' directive
 11. MUST have an empty state component: when items.length === 0, show a friendly message + icon + "Add your first..." CTA button
 12. MUST be responsive: use grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 for card layouts
-13. MUST have a sticky top navbar with the app name and navigation
+13. MUST have a sticky top navbar with the app name and FUNCTIONAL tab navigation using useState (e.g., const [activeTab, setActiveTab] = useState("home")). Navbar links switch views via onClick — NEVER use href="#" or href="/page". Include at least 3 tabs: Home, Dashboard, Profile/Settings — each rendering different content within page.tsx
 14. Forms MUST have labels above inputs, placeholder examples, and inline validation
 
 FILES: package.json, tsconfig.json, tailwind.config.ts, postcss.config.js, next.config.js, src/app/globals.css, src/app/layout.tsx, src/app/page.tsx, 3+ component files, utils.ts${hasAI ? ", src/app/api/ai/route.ts, src/lib/ai.ts" : ""}
