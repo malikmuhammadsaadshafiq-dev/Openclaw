@@ -84,7 +84,7 @@ const DESIGN_STYLES = [
     accent: "#8b5cf6",
     text: "text-white",
     btn: "bg-gradient-to-r from-violet-500 to-fuchsia-500 hover:from-violet-600 hover:to-fuchsia-600 text-white shadow-lg shadow-violet-500/25",
-    font: "Inter",
+    font: "Sora",
     css: `.aurora-bg{position:fixed;inset:0;overflow:hidden;z-index:0}.aurora-blob{position:absolute;border-radius:50%;filter:blur(80px);opacity:.4;animation:aurora 12s ease-in-out infinite}.aurora-blob:nth-child(1){width:500px;height:500px;background:#7c3aed;top:-10%;left:20%}.aurora-blob:nth-child(2){width:400px;height:400px;background:#06b6d4;bottom:10%;right:10%;animation-delay:-4s}.aurora-blob:nth-child(3){width:350px;height:350px;background:#f43f5e;top:40%;left:50%;animation-delay:-8s}@keyframes aurora{0%,100%{transform:translate(0,0) scale(1)}33%{transform:translate(30px,-50px) scale(1.1)}66%{transform:translate(-20px,30px) scale(.9)}}`,
   },
   {
@@ -94,7 +94,7 @@ const DESIGN_STYLES = [
     accent: "#FF6B6B",
     text: "text-black",
     btn: "bg-[#FF6B6B] border-4 border-black font-bold uppercase shadow-[4px_4px_0_0_#000] hover:translate-x-1 hover:-translate-y-1 active:shadow-none active:translate-x-0 active:translate-y-0 transition-all",
-    font: "Space Grotesk",
+    font: "Archivo",
     css: ``,
   },
   {
@@ -164,7 +164,7 @@ const DESIGN_STYLES = [
     accent: "#f472b6",
     text: "text-white",
     btn: "bg-gradient-to-r from-pink-500 to-violet-500 text-white font-medium shadow-lg shadow-pink-500/25 hover:shadow-pink-500/40 hover:-translate-y-0.5 transition-all",
-    font: "Inter",
+    font: "Manrope",
     css: `.mesh-bg{background:radial-gradient(at 0% 0%,#7c3aed 0%,transparent 50%),radial-gradient(at 100% 0%,#06b6d4 0%,transparent 50%),radial-gradient(at 100% 100%,#f472b6 0%,transparent 50%),radial-gradient(at 0% 100%,#fbbf24 0%,transparent 50%),#0f172a}`,
   },
   {
@@ -303,23 +303,52 @@ Data Tools: CSV viewer/editor, spreadsheet to JSON converter, chart/graph maker 
 Media Tools: Image background remover (canvas API), favicon generator, screenshot beautifier/mockup, open graph image maker, placeholder image generator, emoji picker, icon search
 `;
 
-// ============= FRONTEND SKILLS (v10 - concise) =============
+// ============= FRONTEND DESIGN EXCELLENCE (ClawhHub-inspired) =============
 const FRONTEND_SKILLS_PROMPT = `
-FRONTEND TECHNIQUES — use these patterns:
-- Staggered fade-in-up: .fade-in-up { opacity:0;transform:translateY(20px);animation:fadeInUp .6s cubic-bezier(.22,1,.36,1) forwards;animation-delay:var(--delay,0s) }
-- Hover lift: .hover-lift:hover { transform:translateY(-4px);box-shadow:0 20px 40px -12px rgba(0,0,0,.15) }
-- Button press: .btn:active { transform:scale(.97) }
-- Skeleton shimmer for loading states
-- Toast notifications (fixed bottom-right, slide-in animation)
-- Glass cards with backdrop-blur
-- Gradient text with background-clip
+DESIGN EXCELLENCE — create distinctive, production-grade UI (NOT generic AI slop):
+
+TYPOGRAPHY:
+- NEVER use Inter, Roboto, Arial, or system-ui as the only font
+- Pair a distinctive DISPLAY font with a refined BODY font from Google Fonts
 - Fluid typography: h1 { font-size:clamp(2rem,5vw,3.5rem) }
-- Scroll reveal with IntersectionObserver
-- Smooth spring easing: cubic-bezier(.22,1,.36,1)
-- Dot grid or noise texture backgrounds
-- Color shadows matching button colors
-- Dark mode with CSS variables and data-theme
-- Reduced motion: @media(prefers-reduced-motion:reduce) { *{animation-duration:.01ms!important} }
+- Clear hierarchy: display (hero) > h1 > h2 > h3 > body > caption
+- Letter-spacing: tighter on headings (-0.02em), normal on body
+
+COLOR & THEME:
+- Commit to a BOLD cohesive palette — dominant color + sharp accent
+- Use CSS variables: --primary, --accent, --bg, --text, --muted
+- NEVER use generic purple-on-white gradients
+- WCAG AA contrast (4.5:1 ratio) on all text
+- Semantic: --success green, --error red, --warning amber
+
+MOTION & MICRO-INTERACTIONS:
+- Orchestrated page load: staggered fade-in-up with animation-delay
+  .fade-in-up { opacity:0;transform:translateY(20px);animation:fadeInUp .6s cubic-bezier(.22,1,.36,1) forwards;animation-delay:var(--delay,0s) }
+- Hover lift on cards: translateY(-4px) + shadow increase
+- Button press: active:scale-95 transition
+- Skeleton shimmer for loading content (not spinners)
+- Toast: slide-in bottom-right, auto-dismiss 3s
+- Delete: fade-out + slide-left before removal
+- New item: fade-in + slide-down at top of list
+
+SPATIAL COMPOSITION:
+- Generous negative space — don't cram content
+- max-w-6xl mx-auto px-4 for containers
+- Card grids: gap-6, consistent p-6 padding
+- Section spacing: py-16 between major sections
+- Bento grid for dashboards: mix 1x1, 2x1, 1x2 card sizes
+
+ATMOSPHERE & DEPTH:
+- Subtle background texture (noise, dots, grid) — not flat solid colors
+- Layered shadows for depth (shadow-sm inputs, shadow-lg modals)
+- Gradient meshes or radial gradients for hero backgrounds
+- Frosted glass (backdrop-blur) on floating elements
+- Colored shadows matching accent (shadow-violet-500/25)
+
+ACCESSIBILITY:
+- @media(prefers-reduced-motion:reduce) { *{animation-duration:.01ms!important} }
+- Focus-visible outlines on interactive elements
+- Semantic HTML: main, nav, section, article
 `;
 
 // ============= UX QUALITY SYSTEM =============
@@ -1666,6 +1695,143 @@ async function validateGeneratedCode(projectPath: string): Promise<void> {
 }
 
 
+function generateProductReadme(idea: Idea, projectName: string, funcResults: TestResult, funcTestScore: string): string {
+  const isAI = needsAI(idea);
+  const typeLabel = idea.type === "web" ? "Web App" : idea.type === "mobile" ? "Mobile App" : idea.type === "saas" ? "SaaS Platform" : idea.type === "extension" ? "Browser Extension" : "Application";
+  const stackParts = idea.techStack.split(/[,+&]/).map(s => s.trim()).filter(Boolean);
+  const stackBadges = stackParts.slice(0, 5).map(s => "![" + s + "](https://img.shields.io/badge/" + encodeURIComponent(s).replace(/-/g, "--") + "-333?style=flat-square)").join(" ");
+  const ghUser = CONFIG.github.username;
+  const repoName = "mvp-" + projectName;
+  const bt = "`"; // backtick helper
+  const codeBlock = bt + bt + bt; // triple backtick
+
+  // Type-specific sections
+  let prereqs = "";
+  let runCmd = "";
+  let installSteps = "";
+  let projectStructure = "";
+
+  if (idea.type === "mobile") {
+    prereqs = "- [Node.js](https://nodejs.org/) v18+\n- [Expo CLI](https://docs.expo.dev/get-started/installation/) (" + bt + "npm install -g expo-cli" + bt + ")\n- Expo Go app on your phone ([iOS](https://apps.apple.com/app/expo-go/id982107779) / [Android](https://play.google.com/store/apps/details?id=host.exp.exponent))";
+    runCmd = "npx expo start";
+    installSteps = "1. Clone the repository\n" + codeBlock + "bash\ngit clone https://github.com/" + ghUser + "/" + repoName + ".git\ncd " + repoName + "\n" + codeBlock + "\n\n2. Install dependencies\n" + codeBlock + "bash\nnpm install\n" + codeBlock + "\n\n3. Start the development server\n" + codeBlock + "bash\nnpx expo start\n" + codeBlock + "\n\n4. Scan the QR code with Expo Go (Android) or Camera app (iOS)";
+    projectStructure = codeBlock + "\n\u251c\u2500\u2500 App.tsx                # Entry point\n\u251c\u2500\u2500 app.json              # Expo configuration\n\u251c\u2500\u2500 package.json          # Dependencies\n\u251c\u2500\u2500 assets/               # Images & fonts\n\u2514\u2500\u2500 src/\n    \u251c\u2500\u2500 components/       # Reusable UI components\n    \u251c\u2500\u2500 screens/          # App screens\n    \u2514\u2500\u2500 utils/            # Helper functions\n" + codeBlock;
+  } else if (idea.type === "extension") {
+    prereqs = "- Google Chrome or any Chromium-based browser\n- Developer mode enabled in chrome://extensions";
+    runCmd = "# Load unpacked extension in chrome://extensions";
+    installSteps = "1. Clone the repository\n" + codeBlock + "bash\ngit clone https://github.com/" + ghUser + "/" + repoName + ".git\ncd " + repoName + "\n" + codeBlock + "\n\n2. Open Chrome and navigate to " + bt + "chrome://extensions" + bt + "\n3. Enable **Developer mode** (toggle in top-right)\n4. Click **Load unpacked** and select the project folder\n5. The extension icon will appear in your toolbar";
+    projectStructure = codeBlock + "\n\u251c\u2500\u2500 manifest.json         # Extension manifest (V3)\n\u251c\u2500\u2500 popup.html            # Extension popup UI\n\u251c\u2500\u2500 popup.js              # Popup logic\n\u251c\u2500\u2500 popup.css             # Popup styles\n\u251c\u2500\u2500 background.js         # Service worker\n\u2514\u2500\u2500 icons/                # Extension icons\n" + codeBlock;
+  } else {
+    prereqs = "- [Node.js](https://nodejs.org/) v18+\n- npm or yarn";
+    runCmd = "npm run dev";
+    installSteps = "1. Clone the repository\n" + codeBlock + "bash\ngit clone https://github.com/" + ghUser + "/" + repoName + ".git\ncd " + repoName + "\n" + codeBlock + "\n\n2. Install dependencies\n" + codeBlock + "bash\nnpm install\n" + codeBlock + "\n\n3. Start the development server\n" + codeBlock + "bash\nnpm run dev\n" + codeBlock + "\n\n4. Open [http://localhost:3000](http://localhost:3000) in your browser";
+    projectStructure = codeBlock + "\n\u251c\u2500\u2500 src/\n\u2502   \u251c\u2500\u2500 app/\n\u2502   \u2502   \u251c\u2500\u2500 layout.tsx    # Root layout\n\u2502   \u2502   \u251c\u2500\u2500 page.tsx      # Homepage\n\u2502   \u2502   \u2514\u2500\u2500 globals.css   # Global styles\n\u2502   \u2514\u2500\u2500 components/       # Reusable UI components\n\u251c\u2500\u2500 public/               # Static assets\n\u251c\u2500\u2500 package.json          # Dependencies\n\u251c\u2500\u2500 next.config.js        # Next.js configuration\n\u251c\u2500\u2500 tailwind.config.ts    # Tailwind CSS config\n\u2514\u2500\u2500 tsconfig.json         # TypeScript config\n" + codeBlock;
+  }
+
+  // Build features list
+  const featuresList = idea.features.map(f => "- **" + f + "**").join("\n");
+
+  // Build tech stack table
+  const stackRows = stackParts.map(s => "| " + s + " | Core dependency |").join("\n");
+  const aiRow = isAI ? "\n| Kimi K2.5 (NVIDIA) | AI/LLM integration |" : "";
+
+  // Build test results table
+  const testRows = funcResults.tests.map(t => "| " + t.name + " | " + (t.passed ? "\u2705 Pass" : "\u26a0\ufe0f Needs attention") + " |").join("\n");
+
+  // Build usage guide
+  const workflows = idea.features.slice(0, 3).map((f, i) => "**" + (i + 1) + ". " + f + "**\n   - Navigate to the relevant section in the app\n   - Follow the on-screen prompts to complete the action\n   - Results are displayed in real-time").join("\n\n");
+
+  // AI section
+  const aiSection = isAI ? "\n### AI Features\n\nThis app uses **Kimi K2.5** via NVIDIA API for intelligent processing.\n\nTo use AI features, add your NVIDIA API key:\n" + codeBlock + "bash\n# Create .env.local file\necho \"NVIDIA_API_KEY=nvapi-your-key\" > .env.local\n" + codeBlock + "\n\nGet a free API key at [build.nvidia.com](https://build.nvidia.com)\n" : "";
+
+  const lines = [
+    '<div align="center">',
+    "",
+    "# " + idea.title,
+    "",
+    "**" + idea.description + "**",
+    "",
+    stackBadges,
+    isAI ? "![AI Powered](https://img.shields.io/badge/AI-Powered-blueviolet?style=flat-square)" : "![Utility Tool](https://img.shields.io/badge/Utility-Tool-success?style=flat-square)",
+    "![Type](https://img.shields.io/badge/Type-" + encodeURIComponent(typeLabel) + "-blue?style=flat-square)",
+    "![Tests](https://img.shields.io/badge/Tests-" + encodeURIComponent(funcTestScore) + "-brightgreen?style=flat-square)",
+    "",
+    "</div>",
+    "",
+    "---",
+    "",
+    "## Problem",
+    "",
+    idea.problem,
+    "",
+    "## Who Is This For?",
+    "",
+    idea.targetUsers,
+    "",
+    "## Features",
+    "",
+    featuresList,
+    "",
+    "## Tech Stack",
+    "",
+    "| Technology | Purpose |",
+    "|-----------|---------|",
+    stackRows + aiRow,
+    "",
+    "## Getting Started",
+    "",
+    "### Prerequisites",
+    "",
+    prereqs,
+    "",
+    "### Installation",
+    "",
+    installSteps,
+    "",
+    "## Usage Guide",
+    "",
+    "### Core Workflows",
+    "",
+    workflows,
+    aiSection,
+    "",
+    "## Quality Assurance",
+    "",
+    "| Test | Status |",
+    "|------|--------|",
+    testRows,
+    "",
+    "**Overall Score: " + funcTestScore + "**",
+    "",
+    "## Project Structure",
+    "",
+    projectStructure,
+    "",
+    "## Contributing",
+    "",
+    "1. Fork the repository",
+    "2. Create your feature branch (" + bt + "git checkout -b feature/amazing-feature" + bt + ")",
+    "3. Commit your changes (" + bt + "git commit -m 'Add amazing feature'" + bt + ")",
+    "4. Push to the branch (" + bt + "git push origin feature/amazing-feature" + bt + ")",
+    "5. Open a Pull Request",
+    "",
+    "## License",
+    "",
+    "MIT License \u2014 use freely for personal and commercial projects.",
+    "",
+    "---",
+    "",
+    '<div align="center">',
+    "",
+    "**Built autonomously by [Openclaw MVP Factory](https://github.com/" + ghUser + "/Openclaw)** \u2014 an AI-powered system that discovers real user needs and ships working software.",
+    "",
+    "</div>",
+    "",
+  ];
+
+  return lines.join("\n");
+}
+
 async function buildMVP(idea: Idea): Promise<boolean> {
   const stats = await getStats();
 
@@ -1760,31 +1926,9 @@ async function buildMVP(idea: Idea): Promise<boolean> {
       } catch {}
     }
 
-    // Create README
-    const funcTestScore = `${funcResults.tests.filter(t => t.passed).length}/${funcResults.tests.length}`;
-    const readme = `# ${idea.title}
-
-> ${idea.description}
-
-## 🎯 What Users Can Do
-${idea.features.map(f => `- ✅ ${f}`).join('\n')}
-
-## 🧪 Functionality Score: ${funcTestScore}
-- ✅ Interactive state management
-- ✅ Working forms with validation
-- ✅ Clickable buttons with actions
-- ✅ Demo data pre-loaded
-- ✅ Loading & success feedback
-
-## 🚀 Quick Start
-\`\`\`bash
-npm install
-${idea.type === "mobile" ? "npx expo start" : "npm run dev"}
-\`\`\`
-
----
-*Built with ❤️ by MVP Factory v9 (Launch-Ready Products)*
-`;
+    // Create comprehensive README
+    const funcTestScore = funcResults.tests.filter(t => t.passed).length + "/" + funcResults.tests.length;
+    const readme = generateProductReadme(idea, projectName, funcResults, funcTestScore);
     await fs.writeFile(path.join(projectPath, "README.md"), readme);
 
     // Push & Deploy
