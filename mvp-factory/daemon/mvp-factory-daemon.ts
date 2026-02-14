@@ -55,7 +55,7 @@ interface Idea {
   viabilityScore: number;
   sourceUrl: string;
   discoveredAt: string;
-  type: 'web' | 'mobile' | 'saas' | 'api';
+  type: 'web' | 'mobile' | 'saas' | 'extension' | 'api';
 }
 
 interface BuildResult {
@@ -513,7 +513,7 @@ Return ONLY a valid JSON array:
     "targetUsers": "Who would use it and why",
     "features": ["REAL feature with server-side logic", "actual data processing capability", "concrete AI/utility function"],
     "techStack": "Next.js + API Routes" or "Expo + NativeWind",
-    "type": "web|mobile|saas|api",
+    "type": "web|mobile|saas|extension|api",
     "estimatedHours": 8-24,
     "viabilityScore": 7-10
   }
@@ -1509,16 +1509,16 @@ function ensureVercelCompatibility(files: Array<{ path: string; content: string 
         const allImports = new Set<string>();
         for (const f of result) {
           if (f.path.endsWith('.tsx') || f.path.endsWith('.ts') || f.path.endsWith('.jsx') || f.path.endsWith('.js')) {
-            const importMatches = f.content.matchAll(/from\s+['"]([^.@/][^'"]*?)(?:\/[^'"]*)?['"]/g);
+            const importMatches = Array.from(f.content.matchAll(/from\s+['"]([^.@/][^'"]*?)(?:\/[^'"]*)?['"]/g));
             for (const m of importMatches) {
               allImports.add(m[1]);
             }
-            const requireMatches = f.content.matchAll(/require\(['"]([^.@/][^'"]*?)(?:\/[^'"]*)?['"]\)/g);
+            const requireMatches = Array.from(f.content.matchAll(/require\(['"]([^.@/][^'"]*?)(?:\/[^'"]*)?['"]\)/g));
             for (const m of requireMatches) {
               allImports.add(m[1]);
             }
             // Also catch @scoped packages
-            const scopedMatches = f.content.matchAll(/from\s+['"]((@[^/'"]+\/[^/'"]+)(?:\/[^'"]*)?)['"]/g);
+            const scopedMatches = Array.from(f.content.matchAll(/from\s+['"]((@[^/'"]+\/[^/'"]+)(?:\/[^'"]*)?)['"]/g));
             for (const m of scopedMatches) {
               allImports.add(m[2]);
             }
@@ -1527,7 +1527,7 @@ function ensureVercelCompatibility(files: Array<{ path: string; content: string 
 
         // Add missing packages with known versions
         const builtins = new Set(['react', 'react-dom', 'next', 'fs', 'path', 'crypto', 'url', 'http', 'https', 'stream', 'util', 'events', 'os', 'child_process', 'buffer', 'querystring']);
-        for (const imp of allImports) {
+        for (const imp of Array.from(allImports)) {
           if (builtins.has(imp)) continue;
           if (!pkg.dependencies[imp] && !pkg.devDependencies[imp]) {
             if (KNOWN_PACKAGES[imp]) {
@@ -1837,7 +1837,7 @@ async function buildNextIdea(): Promise<BuildResult> {
 
     // Deploy to Vercel (non-fatal - continue even if deploy fails)
     let liveUrl = '';
-    if (idea.type === 'web' || idea.type === 'saas') {
+    if (idea.type === 'web' || idea.type === 'saas' || idea.type === 'extension' || idea.type === 'api') {
       try {
         liveUrl = await deployToVercel(projectPath, idea);
       } catch (vercelErr) {

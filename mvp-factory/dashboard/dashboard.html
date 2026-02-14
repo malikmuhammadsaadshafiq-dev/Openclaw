@@ -223,7 +223,7 @@ body{
 .card-count{font-size:0.7rem;color:var(--text-tertiary);font-variant-numeric:tabular-nums;padding:0.15rem 0.5rem;border-radius:6px;background:rgba(255,255,255,0.04)}
 
 /* ========== STAT CARDS ========== */
-.stats-row{display:grid;grid-template-columns:repeat(6,1fr);gap:0.75rem;margin-bottom:1.25rem}
+.stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:0.75rem;margin-bottom:1.25rem}
 .stat-card{text-align:center;padding:1.25rem 0.75rem 1rem;position:relative}
 .stat-card .stat-icon{width:40px;height:40px;border-radius:12px;display:inline-flex;align-items:center;justify-content:center;font-size:1.1rem;margin-bottom:0.6rem;position:relative}
 .stat-card:nth-child(1) .stat-icon{background:rgba(139,92,246,0.12);box-shadow:0 0 20px rgba(139,92,246,0.1)}
@@ -232,6 +232,8 @@ body{
 .stat-card:nth-child(4) .stat-icon{background:rgba(245,158,11,0.12);box-shadow:0 0 20px rgba(245,158,11,0.1)}
 .stat-card:nth-child(5) .stat-icon{background:rgba(236,72,153,0.12);box-shadow:0 0 20px rgba(236,72,153,0.1)}
 .stat-card:nth-child(6) .stat-icon{background:rgba(255,98,0,0.12);box-shadow:0 0 20px rgba(255,98,0,0.1)}
+.stat-card:nth-child(7) .stat-icon{background:rgba(6,182,212,0.12);box-shadow:0 0 20px rgba(6,182,212,0.1)}
+.stat-card:nth-child(8) .stat-icon{background:rgba(168,85,247,0.12);box-shadow:0 0 20px rgba(168,85,247,0.1)}
 .stat-value{font-size:clamp(1.75rem,3vw,2.5rem);font-weight:800;line-height:1.1;letter-spacing:-0.03em;margin-bottom:0.25rem;font-variant-numeric:tabular-nums}
 .stat-card:nth-child(1) .stat-value{background:linear-gradient(135deg,#c4b5fd,#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
 .stat-card:nth-child(2) .stat-value{background:linear-gradient(135deg,#93c5fd,#60a5fa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
@@ -239,6 +241,8 @@ body{
 .stat-card:nth-child(4) .stat-value{background:linear-gradient(135deg,#fcd34d,#fbbf24);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
 .stat-card:nth-child(5) .stat-value{background:linear-gradient(135deg,#f9a8d4,#ec4899);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
 .stat-card:nth-child(6) .stat-value{background:linear-gradient(135deg,#ff8c40,#ff6200);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.stat-card:nth-child(7) .stat-value{background:linear-gradient(135deg,#67e8f9,#06b6d4);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.stat-card:nth-child(8) .stat-value{background:linear-gradient(135deg,#c4b5fd,#a855f7);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
 .stat-label{font-size:0.7rem;color:var(--text-tertiary);font-weight:500}
 .stat-sub{font-size:0.65rem;color:var(--text-tertiary);margin-top:0.2rem;opacity:0.7}
 /* Sparkline in stat cards */
@@ -511,7 +515,7 @@ body{
 .btn-refresh.spinning svg{animation:spin 0.6s linear}
 
 /* ========== RESPONSIVE ========== */
-@media(max-width:1200px){.stats-row{grid-template-columns:repeat(3,1fr)}.squadron-grid{grid-template-columns:repeat(2,1fr)}.skills-grid{grid-template-columns:1fr}.featured-grid{grid-template-columns:1fr}}
+@media(max-width:1200px){.stats-row{grid-template-columns:repeat(4,1fr)}.squadron-grid{grid-template-columns:repeat(2,1fr)}.skills-grid{grid-template-columns:1fr}.featured-grid{grid-template-columns:1fr}}
 @media(max-width:1024px){.main-grid{grid-template-columns:1fr}.signals-grid{grid-template-columns:1fr}.sidebar{transform:translateX(-100%)}.sidebar.mobile-open{transform:translateX(0)}.main-content{margin-left:0 !important}.skills-top-row{flex-direction:column;align-items:stretch}.skills-search-wrap{max-width:none}.skills-sort{justify-content:center}}
 @media(max-width:640px){.stats-row{grid-template-columns:repeat(2,1fr)}.page{padding:1rem}.topbar{padding:0 1rem}.squadron-grid{grid-template-columns:1fr 1fr}.flow-steps{flex-direction:column;gap:0.35rem}.flow-arrow{transform:rotate(90deg)}.signal-stats{grid-template-columns:repeat(2,1fr)}.cmd-trigger{display:none}.skills-stats-row{gap:0.5rem;font-size:0.65rem}.skills-sort{flex-wrap:wrap}}
 @media(max-width:400px){.stats-row{grid-template-columns:1fr}}
@@ -673,12 +677,30 @@ body{
           <div class="stat-sub" id="subWeb">Next.js projects</div>
         </div>
         <div class="card stat-card ani d3">
+          <div class="stat-icon">&#9729;&#65039;</div>
+          <div class="stat-value" id="vSaas">--</div>
+          <div class="stat-label">SaaS Products</div>
+          <div class="stat-sub">cloud platforms</div>
+        </div>
+        <div class="card stat-card ani d4">
           <div class="stat-icon">&#128241;</div>
           <div class="stat-value" id="vMobile">--</div>
           <div class="stat-label">Mobile Apps</div>
           <div class="stat-sub" id="subMobile">Expo projects</div>
         </div>
-        <div class="card stat-card ani d4">
+        <div class="card stat-card ani d5">
+          <div class="stat-icon">&#128268;</div>
+          <div class="stat-value" id="vExtension">--</div>
+          <div class="stat-label">Extensions</div>
+          <div class="stat-sub">browser plugins</div>
+        </div>
+        <div class="card stat-card ani d5">
+          <div class="stat-icon">&#128279;</div>
+          <div class="stat-value" id="vApi">--</div>
+          <div class="stat-label">API Services</div>
+          <div class="stat-sub">REST endpoints</div>
+        </div>
+        <div class="card stat-card ani d5">
           <div class="stat-icon">&#9889;</div>
           <div class="stat-value" id="vLive">--</div>
           <div class="stat-label">Live on Vercel</div>
@@ -689,12 +711,6 @@ body{
           <div class="stat-value" id="vQueue">--</div>
           <div class="stat-label">In Queue</div>
           <div class="stat-sub">ideas waiting</div>
-        </div>
-        <div class="card stat-card ani d5">
-          <div class="stat-icon">&#128225;</div>
-          <div class="stat-value" id="vSignals">--</div>
-          <div class="stat-label">Reddit Signals</div>
-          <div class="stat-sub" id="subSignals">latest scrape</div>
         </div>
       </div>
 
@@ -1128,7 +1144,10 @@ async function refreshAll(){
   if(stats){
     setVal("vTotal",stats.totalBuilt||0);
     setVal("vWeb",stats.webCount||0);
+    setVal("vSaas",stats.saasCount||0);
     setVal("vMobile",stats.mobileCount||0);
+    setVal("vExtension",stats.extensionCount||0);
+    setVal("vApi",stats.apiCount||0);
     setVal("vLive",stats.liveCount||0);
     document.getElementById("subTotal").textContent=stats.githubCount?(stats.githubCount+" on GitHub"):"unique products";
     document.getElementById("subWeb").textContent=stats.buildsToday?(stats.buildsToday+" built today"):"Next.js projects";
@@ -1194,8 +1213,8 @@ async function refreshAll(){
   // Signals
   if(signals){
     const sigs=signals.signals||[];
-    setVal("vSignals",sigs.length);
-    document.getElementById("subSignals").textContent=signals.file?signals.file.replace("reddit-","").replace(".json","").substring(0,16):"no data";
+    if(document.getElementById("vSignals"))setVal("vSignals",sigs.length);
+    if(document.getElementById("subSignals"))document.getElementById("subSignals").textContent=signals.file?signals.file.replace("reddit-","").replace(".json","").substring(0,16):"no data";
     const kwCount=sigs.filter(s=>s.keywords&&s.keywords.length>0).length;
     const uniqueSubs=[...new Set(sigs.map(s=>s.subreddit))];
     setVal("sigTotal",sigs.length);setVal("sigKw",kwCount);setVal("sigSubs",uniqueSubs.length);setVal("sigFiles",signals.totalFiles||0);

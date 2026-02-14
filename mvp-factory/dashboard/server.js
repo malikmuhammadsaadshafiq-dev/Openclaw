@@ -37,10 +37,22 @@ function readStats() {
   const liveCount = builtItems.filter(b => b.liveUrl).length;
   const githubCount = builtItems.filter(b => b.githubUrl).length;
 
-  // Count web and mobile projects from output dirs
-  let webCount = 0, mobileCount = 0;
-  try { webCount = fs.readdirSync(PATHS.web).filter(f => fs.statSync(path.join(PATHS.web, f)).isDirectory()).length; } catch {}
-  try { mobileCount = fs.readdirSync(PATHS.mobile).filter(f => fs.statSync(path.join(PATHS.mobile, f)).isDirectory()).length; } catch {}
+  // Count products by type from built metadata
+  const typeCounts = { web: 0, saas: 0, mobile: 0, extension: 0, api: 0 };
+  for (const b of builtItems) {
+    const t = (b.type || "web").toLowerCase();
+    if (typeCounts.hasOwnProperty(t)) typeCounts[t]++;
+    else typeCounts.web++; // default unknown types to web
+  }
+
+  // Also count from output dirs as fallback for items without metadata
+  let dirWebCount = 0, dirMobileCount = 0;
+  try { dirWebCount = fs.readdirSync(PATHS.web).filter(f => fs.statSync(path.join(PATHS.web, f)).isDirectory()).length; } catch {}
+  try { dirMobileCount = fs.readdirSync(PATHS.mobile).filter(f => fs.statSync(path.join(PATHS.mobile, f)).isDirectory()).length; } catch {}
+
+  // Use the larger of metadata count vs directory count (metadata is more accurate for types)
+  const webCount = Math.max(typeCounts.web, dirWebCount - typeCounts.saas - typeCounts.extension - typeCounts.api);
+  const mobileCount = Math.max(typeCounts.mobile, dirMobileCount);
 
   // Recalculate functionality score from actual built items
   let functionalityScore = 0;
@@ -56,7 +68,10 @@ function readStats() {
     ...fileStats,
     totalBuilt,
     webCount,
+    saasCount: typeCounts.saas,
     mobileCount,
+    extensionCount: typeCounts.extension,
+    apiCount: typeCounts.api,
     liveCount,
     githubCount,
     queueCount,
