@@ -349,6 +349,41 @@ body{
 .agent-wallet{font-size:0.58rem;color:var(--text-tertiary);font-family:'JetBrains Mono',monospace;margin-top:0.3rem;opacity:0.6}
 
 /* ========== CLAWHUB SKILLS ========== */
+.skills-page-header{margin-bottom:1.5rem}
+.skills-top-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;gap:1rem;flex-wrap:wrap}
+.skills-top-row h3{font-size:1.15rem;font-weight:800;display:flex;align-items:center;gap:0.5rem;white-space:nowrap}
+.skills-top-row h3 span{font-size:1.2rem}
+.skills-search-wrap{
+  display:flex;align-items:center;gap:0.5rem;flex:1;max-width:400px;
+  padding:0.45rem 0.85rem;border-radius:var(--radius-sm);
+  background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);
+  transition:all 0.2s;
+}
+.skills-search-wrap:focus-within{border-color:rgba(139,92,246,0.3);background:rgba(255,255,255,0.06);box-shadow:0 0 20px rgba(139,92,246,0.08)}
+.skills-search-wrap svg{width:14px;height:14px;color:var(--text-tertiary);flex-shrink:0}
+.skills-search{flex:1;background:none;border:none;color:var(--text-primary);font-size:0.78rem;font-family:inherit;outline:none}
+.skills-search::placeholder{color:var(--text-tertiary)}
+.skills-sort{display:flex;align-items:center;gap:0.35rem}
+.sort-btn{padding:0.35rem 0.65rem;border:none;background:rgba(255,255,255,0.03);color:var(--text-tertiary);font-size:0.65rem;font-weight:600;font-family:inherit;cursor:pointer;border-radius:7px;transition:all 0.2s;border:1px solid transparent}
+.sort-btn.active{background:rgba(139,92,246,0.1);color:#c4b5fd;border-color:rgba(139,92,246,0.2)}
+.sort-btn:hover:not(.active){color:var(--text-secondary);background:rgba(255,255,255,0.05)}
+.skills-categories{display:flex;gap:0.3rem;overflow-x:auto;padding-bottom:0.5rem;scrollbar-width:none;-webkit-overflow-scrolling:touch;margin-bottom:0.25rem}
+.skills-categories::-webkit-scrollbar{display:none}
+.cat-pill{
+  padding:0.35rem 0.75rem;border-radius:9999px;border:none;
+  background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.06);
+  color:var(--text-tertiary);font-size:0.65rem;font-weight:600;font-family:inherit;
+  cursor:pointer;transition:all 0.2s;white-space:nowrap;flex-shrink:0;
+}
+.cat-pill.active{background:rgba(139,92,246,0.12);color:#c4b5fd;border-color:rgba(139,92,246,0.25)}
+.cat-pill:hover:not(.active){background:rgba(255,255,255,0.06);color:var(--text-secondary)}
+.cat-pill .cat-count{font-size:0.55rem;margin-left:0.25rem;opacity:0.6}
+.skills-stats-row{display:flex;gap:1rem;margin-bottom:1.25rem;flex-wrap:wrap}
+.skills-stat{display:flex;align-items:center;gap:0.4rem;font-size:0.7rem;color:var(--text-tertiary)}
+.skills-stat strong{color:var(--text-primary);font-weight:700;font-variant-numeric:tabular-nums}
+.skills-featured{margin-bottom:1.5rem}
+.skills-featured-title{font-size:0.72rem;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:0.75rem;display:flex;align-items:center;gap:0.4rem}
+.featured-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:0.75rem}
 .skills-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem}
 .skills-header h3{font-size:1rem;font-weight:700;display:flex;align-items:center;gap:0.5rem}
 .skills-header h3 span{font-size:1.1rem}
@@ -358,23 +393,38 @@ body{
 .filter-btn:hover:not(.active){color:var(--text-secondary)}
 .skills-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:0.75rem}
 .skill-card{
-  display:flex;align-items:center;gap:0.85rem;
+  display:flex;align-items:flex-start;gap:0.85rem;
   padding:1rem;cursor:pointer;
 }
 .skill-card:hover{transform:translateY(-2px)}
+.skill-card.featured-card{border-color:rgba(139,92,246,0.15);background:linear-gradient(135deg,rgba(139,92,246,0.05),rgba(6,182,212,0.03))}
+.skill-card.featured-card:hover{border-color:rgba(139,92,246,0.25)}
 .skill-icon{
-  width:42px;height:42px;border-radius:12px;flex-shrink:0;
+  width:44px;height:44px;border-radius:14px;flex-shrink:0;
   display:flex;align-items:center;justify-content:center;
   font-size:1.15rem;font-weight:800;letter-spacing:-0.02em;
+  position:relative;
+}
+.skill-icon .verified-badge{
+  position:absolute;bottom:-2px;right:-2px;width:14px;height:14px;
+  border-radius:50%;background:#3b82f6;border:2px solid var(--bg-deep);
+  display:flex;align-items:center;justify-content:center;
+  font-size:0.45rem;color:#fff;line-height:1;
 }
 .skill-info{flex:1;min-width:0}
-.skill-name{font-size:0.82rem;font-weight:700;display:flex;align-items:center;gap:0.4rem}
-.skill-desc{font-size:0.68rem;color:var(--text-tertiary);margin-top:0.15rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.skill-meta{display:flex;align-items:center;gap:0.6rem;margin-top:0.3rem;font-size:0.6rem;color:var(--text-tertiary)}
+.skill-name{font-size:0.82rem;font-weight:700;display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap}
+.skill-desc{font-size:0.68rem;color:var(--text-tertiary);margin-top:0.2rem;line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.skill-meta{display:flex;align-items:center;gap:0.6rem;margin-top:0.35rem;font-size:0.6rem;color:var(--text-tertiary);flex-wrap:wrap}
 .skill-downloads{display:flex;align-items:center;gap:0.2rem}
-.skill-installed{font-size:0.55rem;font-weight:700;padding:0.1rem 0.4rem;border-radius:4px;background:rgba(16,185,129,0.12);color:#34d399;border:1px solid rgba(16,185,129,0.2)}
-.skill-install-btn{font-size:0.58rem;font-weight:700;padding:0.2rem 0.55rem;border-radius:6px;background:rgba(139,92,246,0.12);color:#a78bfa;border:1px solid rgba(139,92,246,0.2);cursor:pointer;transition:all 0.2s}
-.skill-install-btn:hover{background:rgba(139,92,246,0.25);transform:scale(1.05)}
+.skill-rating{display:flex;align-items:center;gap:0.15rem;color:#fbbf24}
+.skill-rating .stars{letter-spacing:1px;font-size:0.55rem}
+.skill-rating .rating-num{color:var(--text-tertiary);margin-left:0.15rem}
+.skill-version{font-family:'JetBrains Mono',monospace;font-size:0.55rem;opacity:0.6}
+.skill-author{opacity:0.7}
+.skill-cat-badge{font-size:0.52rem;font-weight:700;padding:0.08rem 0.4rem;border-radius:4px;text-transform:uppercase;letter-spacing:0.04em}
+.skill-installed{font-size:0.55rem;font-weight:700;padding:0.15rem 0.5rem;border-radius:5px;background:rgba(16,185,129,0.12);color:#34d399;border:1px solid rgba(16,185,129,0.2);display:inline-flex;align-items:center;gap:0.25rem}
+.skill-install-btn{font-size:0.6rem;font-weight:700;padding:0.25rem 0.65rem;border-radius:7px;background:rgba(139,92,246,0.12);color:#a78bfa;border:1px solid rgba(139,92,246,0.2);cursor:pointer;transition:all 0.2s;display:inline-flex;align-items:center;gap:0.25rem}
+.skill-install-btn:hover{background:rgba(139,92,246,0.25);transform:scale(1.05);box-shadow:0 4px 12px rgba(139,92,246,0.2)}
 
 /* ========== SIGNALS ========== */
 .signals-section{margin-top:1.25rem}
@@ -461,9 +511,9 @@ body{
 .btn-refresh.spinning svg{animation:spin 0.6s linear}
 
 /* ========== RESPONSIVE ========== */
-@media(max-width:1200px){.stats-row{grid-template-columns:repeat(3,1fr)}.squadron-grid{grid-template-columns:repeat(2,1fr)}.skills-grid{grid-template-columns:1fr}}
-@media(max-width:1024px){.main-grid{grid-template-columns:1fr}.signals-grid{grid-template-columns:1fr}.sidebar{transform:translateX(-100%)}.sidebar.mobile-open{transform:translateX(0)}.main-content{margin-left:0 !important}}
-@media(max-width:640px){.stats-row{grid-template-columns:repeat(2,1fr)}.page{padding:1rem}.topbar{padding:0 1rem}.squadron-grid{grid-template-columns:1fr 1fr}.flow-steps{flex-direction:column;gap:0.35rem}.flow-arrow{transform:rotate(90deg)}.signal-stats{grid-template-columns:repeat(2,1fr)}.cmd-trigger{display:none}}
+@media(max-width:1200px){.stats-row{grid-template-columns:repeat(3,1fr)}.squadron-grid{grid-template-columns:repeat(2,1fr)}.skills-grid{grid-template-columns:1fr}.featured-grid{grid-template-columns:1fr}}
+@media(max-width:1024px){.main-grid{grid-template-columns:1fr}.signals-grid{grid-template-columns:1fr}.sidebar{transform:translateX(-100%)}.sidebar.mobile-open{transform:translateX(0)}.main-content{margin-left:0 !important}.skills-top-row{flex-direction:column;align-items:stretch}.skills-search-wrap{max-width:none}.skills-sort{justify-content:center}}
+@media(max-width:640px){.stats-row{grid-template-columns:repeat(2,1fr)}.page{padding:1rem}.topbar{padding:0 1rem}.squadron-grid{grid-template-columns:1fr 1fr}.flow-steps{flex-direction:column;gap:0.35rem}.flow-arrow{transform:rotate(90deg)}.signal-stats{grid-template-columns:repeat(2,1fr)}.cmd-trigger{display:none}.skills-stats-row{gap:0.5rem;font-size:0.65rem}.skills-sort{flex-wrap:wrap}}
 @media(max-width:400px){.stats-row{grid-template-columns:1fr}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:0.01ms !important;transition-duration:0.01ms !important}}
 
@@ -521,7 +571,7 @@ body{
       <div class="nav-item" data-page="skills" onclick="navigateTo('skills')">
         <span class="nav-icon">&#9889;</span>
         <span class="nav-text">ClawHub Skills</span>
-        <span class="nav-badge" id="navSkillCount">16</span>
+        <span class="nav-badge" id="navSkillCount">34</span>
       </div>
     </div>
     <div class="nav-section">
@@ -694,15 +744,32 @@ body{
 
     <!-- ===== SKILLS PAGE ===== -->
     <div class="page-section" id="page-skills">
-      <div class="skills-header ani">
-        <h3><span>&#9889;</span> ClawHub Skills Marketplace</h3>
-        <div class="skills-filter" id="skillsFilter">
-          <button class="filter-btn active" data-filter="all" onclick="filterSkills('all')">All</button>
-          <button class="filter-btn" data-filter="installed" onclick="filterSkills('installed')">Installed</button>
-          <button class="filter-btn" data-filter="search" onclick="filterSkills('search')">Search</button>
-          <button class="filter-btn" data-filter="ai" onclick="filterSkills('ai')">AI</button>
+      <div class="skills-page-header ani">
+        <div class="skills-top-row">
+          <h3><span>&#9889;</span> ClawHub Skills Marketplace</h3>
+          <div class="skills-search-wrap">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            <input class="skills-search" id="skillsSearch" placeholder="Search 5,705+ skills..." autocomplete="off" spellcheck="false" oninput="onSkillSearch(this.value)">
+          </div>
+          <div class="skills-sort">
+            <button class="sort-btn active" data-sort="downloads" onclick="sortSkills('downloads')">&#11206; Downloads</button>
+            <button class="sort-btn" data-sort="rating" onclick="sortSkills('rating')">&#11088; Rating</button>
+            <button class="sort-btn" data-sort="name" onclick="sortSkills('name')">A-Z</button>
+          </div>
         </div>
+        <div class="skills-stats-row" id="skillsStatsRow">
+          <div class="skills-stat"><strong id="skillsTotalCount">0</strong> skills</div>
+          <div class="skills-stat"><strong id="skillsInstalledCount">0</strong> installed</div>
+          <div class="skills-stat"><strong id="skillsVerifiedCount">0</strong> verified</div>
+          <div class="skills-stat">&#9889; <strong id="skillsTotalDownloads">0</strong> total downloads</div>
+        </div>
+        <div class="skills-categories" id="skillsCategories"></div>
       </div>
+      <div class="skills-featured" id="skillsFeatured">
+        <div class="skills-featured-title">&#11088; Featured Skills</div>
+        <div class="featured-grid" id="featuredGrid"></div>
+      </div>
+      <div class="skills-featured-title" style="margin-top:0.5rem">&#128230; All Skills</div>
       <div class="skills-grid ani d1" id="skillsGrid"></div>
     </div>
 
@@ -919,20 +986,103 @@ renderSparkline("spark1",sparkData,"rgba(139,92,246,0.4)");
 /* ========== SKILLS ========== */
 let skillsData=[];
 let skillFilter="all";
+let skillSort="downloads";
+let skillSearch="";
+const catColors={search:"#f59e0b",ai:"#8b5cf6",comms:"#10b981",browser:"#3b82f6",dev:"#f0f2f5",coding:"#d4a574",productivity:"#f43f5e",media:"#a78bfa",notes:"#34d399",business:"#635bff",devops:"#2496ed",cli:"#a3e635",social:"#e879f9",marketing:"#1d9bf0"};
 async function loadSkills(){try{skillsData=await api("/api/skills")||[]}catch{skillsData=[]}}
-function filterSkills(f){
-  skillFilter=f;
-  document.querySelectorAll("#skillsFilter .filter-btn").forEach(b=>b.classList.toggle("active",b.dataset.filter===f));
+
+function onSkillSearch(q){skillSearch=q.toLowerCase();renderSkills()}
+
+function sortSkills(s){
+  skillSort=s;
+  document.querySelectorAll(".sort-btn").forEach(b=>b.classList.toggle("active",b.dataset.sort===s));
   renderSkills();
 }
+
+function filterSkillsCat(cat){
+  skillFilter=cat;
+  document.querySelectorAll(".cat-pill").forEach(b=>b.classList.toggle("active",b.dataset.cat===cat));
+  renderSkills();
+}
+
+function renderStars(rating){
+  const full=Math.floor(rating);const half=rating%1>=0.5?1:0;const empty=5-full-half;
+  return '<span class="stars">'+"&#9733;".repeat(full)+(half?"&#9734;":"")+"&#9734;".repeat(empty)+'</span><span class="rating-num">'+rating.toFixed(1)+'</span>';
+}
+
+function renderSkillCard(s,i,isFeatured){
+  const verifiedBadge=s.verified?'<span class="verified-badge">&#10003;</span>':'';
+  const catColor=catColors[s.category]||"#8892a4";
+  return '<div class="card skill-card'+(isFeatured?' featured-card':'')+'" style="animation:fade-in-up 0.4s var(--ease-out-expo) '+(i*0.035)+'s both" onclick="toast(\'Opening '+esc(s.name)+' details...\')">'+
+    '<div class="skill-icon" style="background:'+s.color+'18;color:'+s.color+'">'+s.name.charAt(0)+verifiedBadge+'</div>'+
+    '<div class="skill-info">'+
+      '<div class="skill-name">'+esc(s.name)+' '+
+        (s.installed?'<span class="skill-installed">&#10003; Installed</span>':'<button class="skill-install-btn" onclick="event.stopPropagation();installSkill(\''+esc(s.name)+'\')">&#43; Install</button>')+
+      '</div>'+
+      '<div class="skill-desc">'+esc(s.desc)+'</div>'+
+      '<div class="skill-meta">'+
+        '<span class="skill-downloads">&#11206; '+fmtNum(s.downloads)+'</span>'+
+        '<span class="skill-rating">'+renderStars(s.rating||0)+'</span>'+
+        '<span class="skill-cat-badge" style="background:'+catColor+'15;color:'+catColor+';border:1px solid '+catColor+'30">'+s.category+'</span>'+
+        '<span class="skill-version">v'+esc(s.version||"1.0")+'</span>'+
+        '<span class="skill-author">by '+esc(s.author||"unknown")+'</span>'+
+      '</div>'+
+    '</div>'+
+  '</div>';
+}
+
+function installSkill(name){
+  toast('Installing '+name+'...');
+  setTimeout(()=>toast(name+' installed successfully!'),1500);
+}
+
 function renderSkills(){
+  // Filter
   let filtered=skillsData;
   if(skillFilter==="installed")filtered=skillsData.filter(s=>s.installed);
-  else if(skillFilter==="search")filtered=skillsData.filter(s=>s.category==="search");
-  else if(skillFilter==="ai")filtered=skillsData.filter(s=>s.category==="ai");
+  else if(skillFilter!=="all")filtered=skillsData.filter(s=>s.category===skillFilter);
+  // Search
+  if(skillSearch)filtered=filtered.filter(s=>s.name.toLowerCase().includes(skillSearch)||s.desc.toLowerCase().includes(skillSearch)||s.category.toLowerCase().includes(skillSearch)||(s.author||"").toLowerCase().includes(skillSearch));
+  // Sort
+  filtered=[...filtered].sort((a,b)=>{
+    if(skillSort==="downloads")return(b.downloads||0)-(a.downloads||0);
+    if(skillSort==="rating")return(b.rating||0)-(a.rating||0);
+    return a.name.localeCompare(b.name);
+  });
+
+  // Stats
+  document.getElementById("skillsTotalCount").textContent=skillsData.length;
+  document.getElementById("skillsInstalledCount").textContent=skillsData.filter(s=>s.installed).length;
+  document.getElementById("skillsVerifiedCount").textContent=skillsData.filter(s=>s.verified).length;
+  const totalDl=skillsData.reduce((a,s)=>a+(s.downloads||0),0);
+  document.getElementById("skillsTotalDownloads").textContent=fmtNum(totalDl);
+
+  // Categories
+  const cats={};skillsData.forEach(s=>{cats[s.category]=(cats[s.category]||0)+1});
+  const catEl=document.getElementById("skillsCategories");
+  catEl.innerHTML='<button class="cat-pill'+(skillFilter==="all"?" active":"")+'" data-cat="all" onclick="filterSkillsCat(\'all\')">All <span class="cat-count">'+skillsData.length+'</span></button>'+
+    '<button class="cat-pill'+(skillFilter==="installed"?" active":"")+'" data-cat="installed" onclick="filterSkillsCat(\'installed\')">Installed <span class="cat-count">'+skillsData.filter(s=>s.installed).length+'</span></button>'+
+    Object.entries(cats).sort((a,b)=>b[1]-a[1]).map(([cat,count])=>{
+      const color=catColors[cat]||"#8892a4";
+      return '<button class="cat-pill'+(skillFilter===cat?" active":"")+'" data-cat="'+cat+'" onclick="filterSkillsCat(\''+cat+'\')" style="'+(skillFilter===cat?"background:"+color+"15;color:"+color+";border-color:"+color+"30":"")+'">'+cat.charAt(0).toUpperCase()+cat.slice(1)+' <span class="cat-count">'+count+'</span></button>'
+    }).join("");
+
+  // Featured
+  const featuredEl=document.getElementById("skillsFeatured");
+  const featuredGrid=document.getElementById("featuredGrid");
+  if(!skillSearch&&(skillFilter==="all"||skillFilter==="installed")){
+    const featured=skillsData.filter(s=>s.featured);
+    if(featured.length){
+      featuredEl.style.display="block";
+      featuredGrid.innerHTML=featured.map((s,i)=>renderSkillCard(s,i,true)).join("");
+    }else featuredEl.style.display="none";
+  }else featuredEl.style.display="none";
+
+  // Main grid
   const el=document.getElementById("skillsGrid");
   if(!el)return;
-  el.innerHTML=filtered.map((s,i)=>'<div class="card skill-card" style="animation:fade-in-up 0.4s var(--ease-out-expo) '+(i*0.04)+'s both"><div class="skill-icon" style="background:'+s.color+'20;color:'+s.color+'">'+s.name.charAt(0)+'</div><div class="skill-info"><div class="skill-name">'+esc(s.name)+' '+(s.installed?'<span class="skill-installed">Installed</span>':'<button class="skill-install-btn" onclick="event.stopPropagation();toast(\'Installing '+esc(s.name)+'...\')">Install</button>')+'</div><div class="skill-desc">'+esc(s.desc)+'</div><div class="skill-meta"><span class="skill-downloads">&#11206; '+fmtNum(s.downloads)+'</span><span>'+s.category+'</span></div></div></div>').join("")
+  if(!filtered.length){el.innerHTML='<div class="empty" style="grid-column:1/-1"><div class="empty-icon">&#128269;</div>No skills found matching "'+esc(skillSearch||skillFilter)+'"</div>';return}
+  el.innerHTML=filtered.map((s,i)=>renderSkillCard(s,i,false)).join("");
 }
 
 /* ========== AGENTS PAGE ========== */
@@ -1060,7 +1210,7 @@ async function refreshAll(){
   }
 
   document.getElementById("lastUpdate").textContent=new Date().toLocaleTimeString();
-  if(firstLoad){firstLoad=false;toast("Dashboard connected");loadSkills().then(renderSkills)}
+  if(firstLoad){firstLoad=false;toast("Dashboard connected");loadSkills().then(()=>{renderSkills();document.getElementById("navSkillCount").textContent=skillsData.length})}
 }
 
 function doRefresh(){

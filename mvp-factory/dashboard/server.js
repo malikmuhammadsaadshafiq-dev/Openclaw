@@ -132,22 +132,51 @@ function readLatestSignals() {
 
 function getClawHubSkills() {
   return [
-    { name: "ATXP", desc: "Web search, AI image generation, music creation", downloads: 22836, category: "search", color: "#8b5cf6", installed: true },
-    { name: "Self-Improving Agent", desc: "Continuous learning framework for agents", downloads: 20480, category: "ai", color: "#06b6d4", installed: true },
-    { name: "Wacli", desc: "WhatsApp messaging and history search", downloads: 19289, category: "comms", color: "#10b981", installed: false },
-    { name: "Agent Browser", desc: "Headless browser automation", downloads: 17607, category: "automation", color: "#3b82f6", installed: true },
-    { name: "Tavily Web Search", desc: "AI-optimized search via Tavily API", downloads: 17431, category: "search", color: "#f59e0b", installed: false },
-    { name: "GitHub", desc: "Repository and CI/CD management", downloads: 16090, category: "dev", color: "#f0f2f5", installed: true },
-    { name: "Summarize", desc: "URL and file summarization", downloads: 16359, category: "ai", color: "#ec4899", installed: true },
-    { name: "Gog", desc: "Google Workspace - Gmail, Calendar, Drive", downloads: 21450, category: "productivity", color: "#f43f5e", installed: false },
-    { name: "Nano Banana Pro", desc: "AI image generation and editing", downloads: 8339, category: "media", color: "#a78bfa", installed: false },
-    { name: "Nano Pdf", desc: "PDF editing with natural language", downloads: 8322, category: "media", color: "#60a5fa", installed: false },
-    { name: "Obsidian", desc: "Markdown note vault automation", downloads: 8307, category: "productivity", color: "#34d399", installed: false },
-    { name: "Notion", desc: "Page and database management", downloads: 8110, category: "productivity", color: "#fbbf24", installed: false },
-    { name: "Stripe", desc: "Payment processing and subscriptions", downloads: 7563, category: "business", color: "#635bff", installed: false },
-    { name: "Xero", desc: "Accounting and financial reporting", downloads: 7387, category: "business", color: "#13b5ea", installed: false },
-    { name: "Salesforce", desc: "CRM data and sObject management", downloads: 7369, category: "business", color: "#00a1e0", installed: false },
-    { name: "Brave Search", desc: "Web search without browser requirement", downloads: 6700, category: "search", color: "#fb542b", installed: false },
+    // Featured / Top Skills
+    { name: "ATXP", desc: "Web search, AI image generation, music creation", downloads: 22836, category: "search", color: "#8b5cf6", installed: true, verified: true, rating: 4.8, version: "3.2.1", author: "ATXP Labs", featured: true },
+    { name: "Gog", desc: "Google Workspace - Gmail, Calendar, Drive integration", downloads: 21450, category: "productivity", color: "#f43f5e", installed: false, verified: true, rating: 4.7, version: "2.8.0", author: "Gog Team", featured: true },
+    { name: "Self-Improving Agent", desc: "Continuous learning framework for autonomous agents", downloads: 20480, category: "ai", color: "#06b6d4", installed: true, verified: true, rating: 4.9, version: "1.5.0", author: "VoltAgent", featured: true },
+    { name: "Wacli", desc: "WhatsApp messaging and history search", downloads: 19289, category: "comms", color: "#10b981", installed: false, verified: true, rating: 4.5, version: "2.1.4", author: "Wacli Dev" },
+    { name: "Agent Browser", desc: "Headless browser automation and web scraping", downloads: 17607, category: "browser", color: "#3b82f6", installed: true, verified: true, rating: 4.6, version: "4.0.2", author: "BrowserAgent" },
+    { name: "Tavily Web Search", desc: "AI-optimized search via Tavily API", downloads: 17431, category: "search", color: "#f59e0b", installed: false, verified: true, rating: 4.4, version: "1.9.0", author: "Tavily" },
+    { name: "GitHub", desc: "Repository management, CI/CD, issues and PRs", downloads: 16090, category: "dev", color: "#f0f2f5", installed: true, verified: true, rating: 4.8, version: "5.1.0", author: "OpenClaw Core" },
+    { name: "Summarize", desc: "URL and file summarization with AI", downloads: 16359, category: "ai", color: "#ec4899", installed: true, verified: true, rating: 4.3, version: "2.4.1", author: "SummarizeAI" },
+    // Coding & Dev Tools
+    { name: "Claude Team", desc: "Orchestrate multiple Claude Code workers via iTerm2", downloads: 14200, category: "coding", color: "#d4a574", installed: false, verified: true, rating: 4.7, version: "1.2.0", author: "Anthropic Community" },
+    { name: "MCP Builder", desc: "Guide for creating high-quality MCP servers", downloads: 13800, category: "dev", color: "#22d3ee", installed: true, verified: true, rating: 4.6, version: "2.0.3", author: "MCP Labs" },
+    { name: "Git Essentials", desc: "Essential Git commands and workflows for version control", downloads: 12540, category: "dev", color: "#f97316", installed: true, verified: false, rating: 4.5, version: "3.1.0", author: "GitMaster" },
+    // Browser & Automation
+    { name: "Puppeteer Pro", desc: "Advanced browser automation with Puppeteer", downloads: 11200, category: "browser", color: "#22c55e", installed: false, verified: true, rating: 4.4, version: "2.3.1", author: "PuppeteerTeam" },
+    { name: "Playwright Agent", desc: "Cross-browser testing and automation", downloads: 10800, category: "browser", color: "#6366f1", installed: false, verified: true, rating: 4.5, version: "1.8.0", author: "PlaywrightAI" },
+    // AI & LLM Skills
+    { name: "RAG Pipeline", desc: "Retrieval-augmented generation for knowledge bases", downloads: 15200, category: "ai", color: "#a855f7", installed: false, verified: true, rating: 4.7, version: "2.1.0", author: "RAG Labs", featured: true },
+    { name: "Vision Analyzer", desc: "Image analysis and OCR with multimodal AI", downloads: 9800, category: "ai", color: "#14b8a6", installed: false, verified: true, rating: 4.3, version: "1.4.2", author: "VisionAI" },
+    { name: "Code Reviewer", desc: "AI-powered code review with security scanning", downloads: 11500, category: "coding", color: "#f472b6", installed: true, verified: true, rating: 4.6, version: "3.0.1", author: "CodeSafe" },
+    // Productivity
+    { name: "Nano Banana Pro", desc: "AI image generation and editing with DALL-E", downloads: 8339, category: "media", color: "#a78bfa", installed: false, verified: false, rating: 4.1, version: "1.6.0", author: "NanoBanana" },
+    { name: "Nano Pdf", desc: "PDF editing, merging, and extraction with natural language", downloads: 8322, category: "media", color: "#60a5fa", installed: false, verified: false, rating: 4.0, version: "1.3.2", author: "NanoPDF" },
+    { name: "Obsidian", desc: "Markdown note vault automation and linking", downloads: 8307, category: "notes", color: "#34d399", installed: false, verified: true, rating: 4.5, version: "2.2.0", author: "Obsidian Community" },
+    { name: "Notion", desc: "Page and database management for Notion", downloads: 8110, category: "productivity", color: "#fbbf24", installed: false, verified: true, rating: 4.4, version: "2.0.1", author: "Notion Labs" },
+    // Business
+    { name: "Stripe", desc: "Payment processing, subscriptions, and invoicing", downloads: 7563, category: "business", color: "#635bff", installed: false, verified: true, rating: 4.6, version: "3.5.0", author: "Stripe" },
+    { name: "Xero", desc: "Accounting, invoicing, and financial reporting", downloads: 7387, category: "business", color: "#13b5ea", installed: false, verified: true, rating: 4.2, version: "1.7.0", author: "Xero Dev" },
+    { name: "Salesforce", desc: "CRM data, sObject management, and automation", downloads: 7369, category: "business", color: "#00a1e0", installed: false, verified: true, rating: 4.3, version: "2.4.0", author: "SF Community" },
+    // Search
+    { name: "Brave Search", desc: "Privacy-focused web search without browser", downloads: 6700, category: "search", color: "#fb542b", installed: false, verified: true, rating: 4.2, version: "1.5.3", author: "Brave" },
+    { name: "Perplexity", desc: "AI-powered research and citation search", downloads: 9200, category: "search", color: "#20b2aa", installed: false, verified: true, rating: 4.6, version: "1.3.0", author: "Perplexity AI" },
+    // DevOps & Cloud
+    { name: "Docker Agent", desc: "Container management, builds, and orchestration", downloads: 8900, category: "devops", color: "#2496ed", installed: false, verified: true, rating: 4.4, version: "2.1.0", author: "DockerAI" },
+    { name: "Vercel Deploy", desc: "Seamless Vercel deployment and project management", downloads: 7800, category: "devops", color: "#f0f2f5", installed: true, verified: true, rating: 4.5, version: "1.9.2", author: "Vercel Community" },
+    { name: "AWS CLI Agent", desc: "AWS resource management via natural language", downloads: 6500, category: "devops", color: "#ff9900", installed: false, verified: true, rating: 4.3, version: "1.6.0", author: "AWS Community" },
+    // Communication
+    { name: "Slack", desc: "Channel messaging, threads, and workspace management", downloads: 10200, category: "comms", color: "#4a154b", installed: false, verified: true, rating: 4.5, version: "2.3.0", author: "Slack Dev" },
+    { name: "Discord Bot", desc: "Server management, messaging, and moderation", downloads: 7100, category: "comms", color: "#5865f2", installed: false, verified: false, rating: 4.2, version: "1.4.1", author: "DiscordBot" },
+    // CLI & Utilities
+    { name: "Shell Master", desc: "Advanced shell scripting and system automation", downloads: 6200, category: "cli", color: "#a3e635", installed: false, verified: false, rating: 4.1, version: "1.2.0", author: "ShellDev" },
+    { name: "Cron Manager", desc: "Scheduled task creation and monitoring", downloads: 5800, category: "cli", color: "#38bdf8", installed: false, verified: false, rating: 4.0, version: "1.1.0", author: "CronMgr" },
+    // Social & Marketing
+    { name: "MoltBook", desc: "The social network for AI agents - post and interact", downloads: 8600, category: "social", color: "#e879f9", installed: false, verified: true, rating: 4.4, version: "1.7.0", author: "VoltAgent", featured: true },
+    { name: "Twitter/X Agent", desc: "Tweet posting, search, and engagement automation", downloads: 7400, category: "marketing", color: "#1d9bf0", installed: false, verified: true, rating: 4.3, version: "2.0.0", author: "XAgent" },
   ];
 }
 
