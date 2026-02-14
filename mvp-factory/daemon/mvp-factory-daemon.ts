@@ -88,9 +88,16 @@ class Logger {
 
 const logger = new Logger();
 
-// LLM Client for Kimi K2.5
+// LLM Client for Kimi K2.5 with retry, timeout, and error resilience
 class KimiClient {
-  async complete(prompt: string, options: { maxTokens?: number; temperature?: number } = {}): Promise<string> {
+  private maxRetries = 3;
+
+  // Streaming API call - prevents timeout for large responses
+  private async streamComplete(prompt: string, maxTokens: number, temperature: number): Promise<string> {
+    const controller = new AbortController();
+    // 10 minute hard timeout for streaming
+    const timer = setTimeout(() => controller.abort(), 600000);
+
     const response = await fetch(`${CONFIG.nvidia.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -100,21 +107,208 @@ class KimiClient {
       body: JSON.stringify({
         model: CONFIG.nvidia.model,
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: options.maxTokens || 16384,
-        temperature: options.temperature || 0.7,
+        max_tokens: maxTokens,
+        temperature,
+        stream: true,
       }),
+      signal: controller.signal,
     });
 
+    clearTimeout(timer);
+
     if (!response.ok) {
-      throw new Error(`Kimi API error: ${response.statusText}`);
+      const errBody = await response.text().catch(() => '');
+      throw new Error(`Kimi API ${response.status}: ${response.statusText} - ${errBody.slice(0, 200)}`);
+    }
+
+    // Read SSE stream
+    let content = '';
+    let reasoning = '';
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('No response body reader');
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const data = line.slice(6).trim();
+        if (data === '[DONE]') continue;
+
+        try {
+          const parsed = JSON.parse(data);
+          const delta = parsed?.choices?.[0]?.delta;
+          if (delta?.content) content += delta.content;
+          if (delta?.reasoning_content) reasoning += delta.reasoning_content;
+        } catch {}
+      }
+    }
+
+    // Kimi K2.5: prefer content, fallback to reasoning_content
+    const result = content || reasoning;
+    if (!result || result.trim().length === 0) {
+      throw new Error('Empty streaming response from Kimi API');
+    }
+    return result;
+  }
+
+  // Non-streaming fallback
+  private async nonStreamComplete(prompt: string, maxTokens: number, temperature: number): Promise<string> {
+    const timeout = 300000 + Math.ceil(maxTokens / 10000) * 120000; // 5min + 2min/10k tokens
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeout);
+
+    const response = await fetch(`${CONFIG.nvidia.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${CONFIG.nvidia.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: CONFIG.nvidia.model,
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: maxTokens,
+        temperature,
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timer);
+
+    if (!response.ok) {
+      const errBody = await response.text().catch(() => '');
+      throw new Error(`Kimi API ${response.status}: ${response.statusText} - ${errBody.slice(0, 200)}`);
     }
 
     const data = await response.json();
-    return data.choices[0].message.content;
+    const msg = data?.choices?.[0]?.message;
+    const content = msg?.content || msg?.reasoning_content || '';
+    if (!content || typeof content !== 'string' || content.trim().length === 0) {
+      throw new Error(`Empty response (finish_reason: ${data?.choices?.[0]?.finish_reason || 'unknown'})`);
+    }
+    return content;
+  }
+
+  async complete(prompt: string, options: { maxTokens?: number; temperature?: number } = {}): Promise<string> {
+    const maxTokens = options.maxTokens || 16384;
+    const temperature = options.temperature || 0.7;
+
+    for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
+      try {
+        await logger.log(`API attempt ${attempt}/${this.maxRetries} (streaming)...`);
+        // Try streaming first (better for large responses, no timeout issues)
+        return await this.streamComplete(prompt, maxTokens, temperature);
+      } catch (error: any) {
+        const errMsg = error?.name === 'AbortError' ? 'Timeout' : String(error).slice(0, 200);
+
+        // On last attempt, try non-streaming as final fallback
+        if (attempt === this.maxRetries) {
+          try {
+            await logger.log(`Streaming failed ${this.maxRetries}x, trying non-streaming fallback...`, 'WARN');
+            return await this.nonStreamComplete(prompt, maxTokens, temperature);
+          } catch (fallbackErr) {
+            throw new Error(`Kimi API failed after ${this.maxRetries}+1 attempts: ${errMsg}`);
+          }
+        }
+
+        // Exponential backoff: 10s, 30s, 90s
+        const backoff = 10000 * Math.pow(3, attempt - 1);
+        await logger.log(`API attempt ${attempt}/${this.maxRetries} failed: ${errMsg}. Retrying in ${backoff / 1000}s...`, 'WARN');
+        await new Promise(r => setTimeout(r, backoff));
+      }
+    }
+    throw new Error('Unreachable');
   }
 }
 
 const kimi = new KimiClient();
+
+// ============================================================
+// Fail Tracking - prevents stuck build loops
+// ============================================================
+const FAIL_TRACKER_PATH = path.join(CONFIG.paths.output, 'fail-tracker.json');
+
+interface FailTracker {
+  [ideaId: string]: { count: number; lastFail: string; error: string };
+}
+
+async function loadFailTracker(): Promise<FailTracker> {
+  try {
+    const data = await fs.readFile(FAIL_TRACKER_PATH, 'utf-8');
+    return JSON.parse(data);
+  } catch { return {}; }
+}
+
+async function saveFailTracker(tracker: FailTracker): Promise<void> {
+  await fs.writeFile(FAIL_TRACKER_PATH, JSON.stringify(tracker, null, 2));
+}
+
+async function recordFailure(ideaId: string, error: string): Promise<number> {
+  const tracker = await loadFailTracker();
+  const entry = tracker[ideaId] || { count: 0, lastFail: '', error: '' };
+  entry.count++;
+  entry.lastFail = new Date().toISOString();
+  entry.error = error.slice(0, 200);
+  tracker[ideaId] = entry;
+  await saveFailTracker(tracker);
+  return entry.count;
+}
+
+async function getFailCount(ideaId: string): Promise<number> {
+  const tracker = await loadFailTracker();
+  return tracker[ideaId]?.count || 0;
+}
+
+async function clearFailure(ideaId: string): Promise<void> {
+  const tracker = await loadFailTracker();
+  delete tracker[ideaId];
+  await saveFailTracker(tracker);
+}
+
+// Safe JSON extraction - handles malformed LLM responses
+function extractJSON(text: string, type: 'object' | 'array' = 'object'): any | null {
+  if (!text || typeof text !== 'string') return null;
+
+  // Try direct parse first
+  try { return JSON.parse(text); } catch {}
+
+  // Extract JSON block
+  const pattern = type === 'array' ? /\[[\s\S]*\]/ : /\{[\s\S]*\}/;
+  const match = text.match(pattern);
+  if (!match) return null;
+
+  // Try parsing the extracted block
+  try { return JSON.parse(match[0]); } catch {}
+
+  // Attempt basic JSON repair
+  let json = match[0];
+  // Fix trailing commas
+  json = json.replace(/,\s*([\]}])/g, '$1');
+  // Fix unquoted keys
+  json = json.replace(/(\{|,)\s*([a-zA-Z_]\w*)\s*:/g, '$1"$2":');
+  // Fix single quotes
+  json = json.replace(/'/g, '"');
+  // Fix truncated strings - close any unclosed strings at end
+  const quoteCount = (json.match(/(?<!\\)"/g) || []).length;
+  if (quoteCount % 2 !== 0) json = json.slice(0, json.lastIndexOf('"')) + '"';
+  // Ensure proper closing
+  const openBraces = (json.match(/\{/g) || []).length;
+  const closeBraces = (json.match(/\}/g) || []).length;
+  const openBrackets = (json.match(/\[/g) || []).length;
+  const closeBrackets = (json.match(/\]/g) || []).length;
+  json += '}'.repeat(Math.max(0, openBraces - closeBraces));
+  json += ']'.repeat(Math.max(0, openBrackets - closeBrackets));
+
+  try { return JSON.parse(json); } catch { return null; }
+}
 
 // ============================================================
 // Duplicate Detection System
@@ -328,14 +522,12 @@ Return ONLY a valid JSON array:
   try {
     const response = await kimi.complete(prompt, { maxTokens: 8000, temperature: 0.8 });
 
-    // Extract JSON array from response
-    const jsonMatch = response.match(/\[[\s\S]*?\]/);
-    if (!jsonMatch) {
-      await logger.log('No valid JSON in research response', 'WARN');
+    // Extract JSON array with repair logic
+    const rawIdeas: any[] = extractJSON(response, 'array');
+    if (!rawIdeas || !Array.isArray(rawIdeas) || rawIdeas.length === 0) {
+      await logger.log('No valid JSON array in research response', 'WARN');
       return [];
     }
-
-    const rawIdeas: any[] = JSON.parse(jsonMatch[0]);
 
     const ideas: Idea[] = rawIdeas.map(idea => ({
       ...idea,
@@ -413,6 +605,8 @@ async function saveIdeas(ideas: Idea[]): Promise<void> {
 }
 
 // Get next idea to build
+const MAX_FAIL_COUNT = 3; // Skip idea after 3 consecutive failures
+
 async function getNextIdea(): Promise<Idea | null> {
   try {
     const files = await fs.readdir(CONFIG.paths.ideas);
@@ -423,12 +617,50 @@ async function getNextIdea(): Promise<Idea | null> {
     // Sort by viability score (read all and sort)
     const ideas: Idea[] = [];
     for (const file of jsonFiles) {
-      const content = await fs.readFile(path.join(CONFIG.paths.ideas, file), 'utf-8');
-      ideas.push(JSON.parse(content));
+      try {
+        const content = await fs.readFile(path.join(CONFIG.paths.ideas, file), 'utf-8');
+        ideas.push(JSON.parse(content));
+      } catch { /* skip corrupt files */ }
     }
 
     ideas.sort((a, b) => b.viabilityScore - a.viabilityScore);
-    return ideas[0];
+
+    // Skip ideas that have failed too many times
+    const failTracker = await loadFailTracker();
+    for (const idea of ideas) {
+      const fails = failTracker[idea.id]?.count || 0;
+      if (fails < MAX_FAIL_COUNT) {
+        return idea;
+      }
+    }
+
+    // All ideas have failed too many times - move worst offenders to skipped
+    const skippedDir = path.join(CONFIG.paths.output, 'skipped');
+    await fs.mkdir(skippedDir, { recursive: true });
+    let skippedCount = 0;
+    for (const idea of ideas) {
+      const fails = failTracker[idea.id]?.count || 0;
+      if (fails >= MAX_FAIL_COUNT) {
+        try {
+          const src = path.join(CONFIG.paths.ideas, `${idea.id}.json`);
+          const dst = path.join(skippedDir, `${idea.id}.json`);
+          // Add skip reason to the idea data
+          const data = JSON.parse(await fs.readFile(src, 'utf-8'));
+          data.skippedAt = new Date().toISOString();
+          data.skipReason = failTracker[idea.id]?.error || 'Max retries exceeded';
+          data.failCount = fails;
+          await fs.writeFile(dst, JSON.stringify(data, null, 2));
+          await fs.unlink(src);
+          await clearFailure(idea.id);
+          skippedCount++;
+        } catch {}
+      }
+    }
+    if (skippedCount > 0) {
+      await logger.log(`Moved ${skippedCount} permanently-failing ideas to skipped/`, 'WARN');
+    }
+
+    return null;
   } catch {
     return null;
   }
@@ -602,16 +834,17 @@ Return ONLY valid JSON:
 
   try {
     const response = await kimi.complete(prompt, { maxTokens: 2000, temperature: 0.3 });
-    const jsonMatch = response.match(/\{[\s\S]*?\}/);
-    if (jsonMatch) {
-      return JSON.parse(jsonMatch[0]);
+    const parsed = extractJSON(response, 'object');
+    if (parsed && parsed.category) {
+      return parsed as ProductBlueprint;
     }
+    await logger.log('Blueprint classification returned invalid JSON, using fallback', 'WARN');
   } catch (error) {
     await logger.log(`Blueprint classification failed: ${error}`, 'WARN');
   }
 
-  // Fallback: auto-classify based on keywords
-  const titleLower = idea.title.toLowerCase() + ' ' + idea.description.toLowerCase();
+  // Fallback: auto-classify based on keywords (always works, no API needed)
+  const titleLower = (idea.title + ' ' + idea.description).toLowerCase();
   const isAI = /\b(ai|ml|generat|summar|analyz|predict|classif|detect|recommend|chatbot|assistant|nlp|gpt|llm)\b/.test(titleLower);
 
   return {
@@ -857,12 +1090,16 @@ async function generateProject(idea: Idea): Promise<{ files: Array<{ path: strin
 
   const response = await kimi.complete(prompt, { maxTokens: 30000, temperature: 0.3 });
 
-  const jsonMatch = response.match(/\[[\s\S]*\]/);
-  if (!jsonMatch) {
-    throw new Error('No valid JSON in generation response');
+  let files: Array<{ path: string; content: string }> = extractJSON(response, 'array');
+  if (!files || !Array.isArray(files) || files.length === 0) {
+    throw new Error('No valid JSON array in generation response');
   }
 
-  let files: Array<{ path: string; content: string }> = JSON.parse(jsonMatch[0]);
+  // Validate file structure
+  files = files.filter(f => f && typeof f.path === 'string' && typeof f.content === 'string');
+  if (files.length === 0) {
+    throw new Error('Generated files have invalid structure');
+  }
 
   // Step 3: Inject REAL API routes based on blueprint
   if (isWeb) {
@@ -876,19 +1113,22 @@ async function generateProject(idea: Idea): Promise<{ files: Array<{ path: strin
 
   if (quality.score < 6) {
     await logger.log(`Quality too low (${quality.score}/14), regenerating with stricter prompt...`, 'WARN');
-    // Retry with even stricter prompt
-    const retryPrompt = isWeb
-      ? buildStrictWebPrompt(idea, blueprint, quality.issues)
-      : buildMobileGenerationPrompt(idea, blueprint);
+    try {
+      const retryPrompt = isWeb
+        ? buildStrictWebPrompt(idea, blueprint, quality.issues)
+        : buildMobileGenerationPrompt(idea, blueprint);
 
-    const retryResponse = await kimi.complete(retryPrompt, { maxTokens: 30000, temperature: 0.2 });
-    const retryMatch = retryResponse.match(/\[[\s\S]*\]/);
-    if (retryMatch) {
-      files = JSON.parse(retryMatch[0]);
-      if (isWeb) {
-        files = injectRealApiRoutes(files, blueprint, idea);
-        files = ensureVercelCompatibility(files);
+      const retryResponse = await kimi.complete(retryPrompt, { maxTokens: 30000, temperature: 0.2 });
+      const retryFiles = extractJSON(retryResponse, 'array');
+      if (retryFiles && Array.isArray(retryFiles) && retryFiles.length > 0) {
+        files = retryFiles.filter((f: any) => f && typeof f.path === 'string' && typeof f.content === 'string');
+        if (isWeb) {
+          files = injectRealApiRoutes(files, blueprint, idea);
+          files = ensureVercelCompatibility(files);
+        }
       }
+    } catch (retryError) {
+      await logger.log(`Quality retry also failed: ${retryError}. Using original generation.`, 'WARN');
     }
   }
 
@@ -1367,12 +1607,14 @@ async function pushToGithub(projectPath: string, idea: Idea): Promise<string> {
     return '';
   }
 
-  const projectName = idea.title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+  const projectName = idea.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 80);
   const suffix = idea.type === 'mobile' ? '-mobile' : '';
   const repoName = `${projectName}${suffix}`;
 
   try {
-    // Create repo
+    // Create repo (422 = already exists, which is OK)
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30000);
     const createResp = await fetch('https://api.github.com/user/repos', {
       method: 'POST',
       headers: {
@@ -1381,33 +1623,50 @@ async function pushToGithub(projectPath: string, idea: Idea): Promise<string> {
       },
       body: JSON.stringify({
         name: repoName,
-        description: `${idea.title} - ${idea.description}`,
+        description: `${idea.title} - ${idea.description}`.slice(0, 350),
         private: false,
         auto_init: false,
       }),
+      signal: controller.signal,
     });
+    clearTimeout(timer);
 
     if (!createResp.ok && createResp.status !== 422) {
-      throw new Error(`GitHub API error: ${createResp.status}`);
+      const errBody = await createResp.text().catch(() => '');
+      await logger.log(`GitHub repo create ${createResp.status}: ${errBody.slice(0, 200)}`, 'WARN');
+      // Don't throw - try to push anyway if repo exists
     }
 
     const repoUrl = `https://github.com/${CONFIG.github.username}/${repoName}`;
 
-    // Git operations
-    await execAsync('git init', { cwd: projectPath });
-    await execAsync('git add .', { cwd: projectPath });
-    await execAsync(`git commit -m "Initial MVP: ${idea.title}\n\nBuilt by MVP Factory with Kimi K2.5"`, { cwd: projectPath });
-    await execAsync('git branch -M main', { cwd: projectPath });
+    // Git operations with timeout
+    const gitOpts = { cwd: projectPath, timeout: 60000 };
+    await execAsync('git init', gitOpts);
+    await execAsync('git config user.email "mvp-factory@neurafinity.ai"', gitOpts);
+    await execAsync('git config user.name "MVP Factory"', gitOpts);
+    await execAsync('git add .', gitOpts);
+    await execAsync(`git commit -m "Initial MVP: ${idea.title}" --allow-empty`, gitOpts);
+    await execAsync('git branch -M main', gitOpts);
+
+    // Remove existing remote if present (re-builds)
+    try { await execAsync('git remote remove origin', gitOpts); } catch {}
     await execAsync(
       `git remote add origin https://${CONFIG.github.token}@github.com/${CONFIG.github.username}/${repoName}.git`,
-      { cwd: projectPath }
+      gitOpts
     );
-    await execAsync('git push -u origin main', { cwd: projectPath });
+
+    // Try normal push first, force push as fallback for existing repos
+    try {
+      await execAsync('git push -u origin main', { ...gitOpts, timeout: 120000 });
+    } catch {
+      await logger.log('Normal push failed, trying force push...', 'WARN');
+      await execAsync('git push -u origin main --force', { ...gitOpts, timeout: 120000 });
+    }
 
     await logger.log(`Pushed to GitHub: ${repoUrl}`);
     return repoUrl;
   } catch (error) {
-    await logger.log(`GitHub error: ${error}`, 'ERROR');
+    await logger.log(`GitHub error: ${error}`, 'WARN');
     return '';
   }
 }
@@ -1469,48 +1728,65 @@ async function markBuilt(idea: Idea, liveUrl?: string, qualityScore?: number, ca
 // Deploy to Vercel
 async function deployToVercel(projectPath: string, idea: Idea): Promise<string> {
   const vercelToken = process.env.VERCEL_TOKEN || '';
+  const vercelTeam = process.env.VERCEL_TEAM_ID || 'team_DN6tO3CT5AwBW6JyiBJ5sItw';
   if (!vercelToken) {
     await logger.log('Vercel token not configured, skipping deployment', 'WARN');
     return '';
   }
 
   try {
+    // Ensure npm install ran (prevents missing dependency errors)
+    await logger.log('Installing dependencies before deploy...');
+    try {
+      await execAsync('npm install --legacy-peer-deps 2>/dev/null || npm install 2>/dev/null || true', { cwd: projectPath, timeout: 120000 });
+    } catch {}
+
     // Run local build check first
     await logger.log('Running pre-deploy build check...');
     try {
       await execAsync('npx next build', { cwd: projectPath, timeout: 300000 });
       await logger.log('Local build check passed');
     } catch (buildError) {
-      await logger.log(`Local build failed, deploying anyway (ignoreBuildErrors is set): ${buildError}`, 'WARN');
+      await logger.log(`Local build failed, will try Vercel deploy anyway: ${String(buildError).slice(0, 200)}`, 'WARN');
     }
 
-    // Deploy to Vercel
+    // Set env vars for Vercel deployment
+    const envFlag = process.env.NVIDIA_API_KEY
+      ? ` -e NVIDIA_API_KEY="${process.env.NVIDIA_API_KEY}"`
+      : '';
+
+    // Deploy to Vercel with team flag
     await logger.log('Deploying to Vercel...');
-    const { stdout, stderr } = await execAsync(
-      `npx vercel --token ${vercelToken} --yes --prod`,
-      { cwd: projectPath, timeout: 600000 }
-    );
+    const deployCmd = `npx vercel --token ${vercelToken} --scope ${vercelTeam} --yes --prod${envFlag}`;
+    const { stdout, stderr } = await execAsync(deployCmd, {
+      cwd: projectPath,
+      timeout: 600000,
+      env: { ...process.env, VERCEL_ORG_ID: vercelTeam },
+    });
 
     const output = stdout + stderr;
 
-    // Extract the live URL
-    const urlMatch = output.match(/https:\/\/[^\s]+\.vercel\.app/);
-    if (urlMatch) {
-      await logger.log(`Deployed to Vercel: ${urlMatch[0]}`);
-      return urlMatch[0];
+    // Extract the live URL (multiple patterns)
+    const urlPatterns = [
+      /https:\/\/[^\s]+\.vercel\.app/,
+      /Aliased:\s*(https:\/\/[^\s]+)/,
+      /Production:\s*(https:\/\/[^\s]+)/,
+      /https:\/\/[a-z0-9-]+\.vercel\.app/,
+    ];
+
+    for (const pattern of urlPatterns) {
+      const match = output.match(pattern);
+      if (match) {
+        const url = match[1] || match[0];
+        await logger.log(`Deployed to Vercel: ${url}`);
+        return url;
+      }
     }
 
-    // Try to find aliased URL
-    const aliasMatch = output.match(/Aliased:\s*(https:\/\/[^\s]+)/);
-    if (aliasMatch) {
-      await logger.log(`Deployed to Vercel: ${aliasMatch[1]}`);
-      return aliasMatch[1];
-    }
-
-    await logger.log(`Vercel deploy output (no URL found): ${output.slice(-500)}`, 'WARN');
+    await logger.log(`Vercel deploy completed but no URL found in output`, 'WARN');
     return '';
   } catch (error) {
-    await logger.log(`Vercel deploy error: ${error}`, 'ERROR');
+    await logger.log(`Vercel deploy error: ${String(error).slice(0, 300)}`, 'WARN');
     return '';
   }
 }
@@ -1520,32 +1796,30 @@ async function buildNextIdea(): Promise<BuildResult> {
   const idea = await getNextIdea();
 
   if (!idea) {
-    await logger.log('No ideas in queue');
+    await logger.log('Queue empty - no buildable ideas (all may be skipped or queue is empty)');
     return { success: false, projectPath: '', githubUrl: '', error: 'No ideas' };
   }
 
-  await logger.log(`Building MVP: ${idea.title} (${idea.type})`);
+  const failCount = await getFailCount(idea.id);
+  await logger.log(`Building MVP: ${idea.title} (${idea.type})${failCount > 0 ? ` [attempt ${failCount + 1}/${MAX_FAIL_COUNT}]` : ''}`);
 
   // Pre-build duplicate check against built products and web output folders
   const existingProducts = await loadExistingProducts();
-  // Only check against built/web products (not ideas queue, since this idea IS from the queue)
   const builtProducts = existingProducts.filter(p => p.source === 'built' || p.source === 'web' || p.source === 'github');
   const dupCheck = isDuplicate(idea, builtProducts);
   if (dupCheck.duplicate) {
     await logger.log(`BUILD DEDUP: Skipping "${idea.title}" - already built as "${dupCheck.matchedWith}" (${dupCheck.reason})`, 'WARN');
-    // Remove from ideas queue so it doesn't block future builds
-    try {
-      await fs.unlink(path.join(CONFIG.paths.ideas, `${idea.id}.json`));
-    } catch {}
+    try { await fs.unlink(path.join(CONFIG.paths.ideas, `${idea.id}.json`)); } catch {}
+    await clearFailure(idea.id);
     return { success: false, projectPath: '', githubUrl: '', error: `Duplicate of ${dupCheck.matchedWith}` };
   }
 
   try {
-    // Generate project (now includes ideation validation + quality gate)
+    // Generate project (includes ideation validation + quality gate)
     const { files } = await generateProject(idea);
     await logger.log(`Generated ${files.length} files`);
 
-    // Get the blueprint category for metadata
+    // Get the blueprint category for metadata (use cached classification from generateProject)
     const blueprint = await validateAndClassifyIdea(idea);
     const quality = assessCodeQuality(files, blueprint);
 
@@ -1553,30 +1827,51 @@ async function buildNextIdea(): Promise<BuildResult> {
     const projectPath = await writeProject(idea, files);
     await logger.log(`Project created at: ${projectPath}`);
 
-    // Push to GitHub
-    const githubUrl = await pushToGithub(projectPath, idea);
-
-    // Deploy to Vercel (for web/saas apps)
-    let liveUrl = '';
-    if (idea.type === 'web' || idea.type === 'saas') {
-      liveUrl = await deployToVercel(projectPath, idea);
+    // Push to GitHub (non-fatal - continue even if push fails)
+    let githubUrl = '';
+    try {
+      githubUrl = await pushToGithub(projectPath, idea);
+    } catch (ghErr) {
+      await logger.log(`GitHub push failed (non-fatal): ${ghErr}`, 'WARN');
     }
 
-    // Publish to Expo if mobile
+    // Deploy to Vercel (non-fatal - continue even if deploy fails)
+    let liveUrl = '';
+    if (idea.type === 'web' || idea.type === 'saas') {
+      try {
+        liveUrl = await deployToVercel(projectPath, idea);
+      } catch (vercelErr) {
+        await logger.log(`Vercel deploy failed (non-fatal): ${vercelErr}`, 'WARN');
+      }
+    }
+
+    // Publish to Expo if mobile (non-fatal)
     let expoUrl = '';
     if (idea.type === 'mobile') {
-      expoUrl = await publishToExpo(projectPath, idea);
+      try {
+        expoUrl = await publishToExpo(projectPath, idea);
+      } catch (expoErr) {
+        await logger.log(`Expo publish failed (non-fatal): ${expoErr}`, 'WARN');
+      }
     }
 
     // Mark as built with quality score and category
     await markBuilt(idea, liveUrl, quality.score, blueprint.category);
+    await clearFailure(idea.id); // Clear any previous failures
 
-    await logger.log(`✅ MVP Complete: ${idea.title} | Quality: ${quality.score}/14 | Category: ${blueprint.category}${liveUrl ? ` | Live: ${liveUrl}` : ''}`);
+    await logger.log(`✅ MVP Complete: ${idea.title} | Quality: ${quality.score}/14 | Category: ${blueprint.category}${liveUrl ? ` | Live: ${liveUrl}` : ''}${githubUrl ? ` | GH: ${githubUrl}` : ''}`);
 
     return { success: true, projectPath, githubUrl, expoUrl };
   } catch (error) {
-    await logger.log(`Build failed: ${error}`, 'ERROR');
-    return { success: false, projectPath: '', githubUrl: '', error: String(error) };
+    const errStr = String(error);
+    const newFailCount = await recordFailure(idea.id, errStr);
+    await logger.log(`Build failed (${newFailCount}/${MAX_FAIL_COUNT}): ${errStr}`, 'ERROR');
+
+    if (newFailCount >= MAX_FAIL_COUNT) {
+      await logger.log(`"${idea.title}" has failed ${MAX_FAIL_COUNT} times - will be skipped next cycle`, 'WARN');
+    }
+
+    return { success: false, projectPath: '', githubUrl: '', error: errStr };
   }
 }
 
@@ -1603,34 +1898,85 @@ async function runResearchCycle(): Promise<void> {
   await logger.log('=== Research Cycle Complete ===');
 }
 
-// Build cycle
+// Build cycle - tries to build one idea, with full error containment
 async function runBuildCycle(): Promise<void> {
-  await logger.log('=== Build Cycle Start ===');
+  try {
+    await logger.log('=== Build Cycle Start ===');
 
-  const result = await buildNextIdea();
+    const result = await buildNextIdea();
 
-  if (result.success) {
-    await logger.log(`Built: ${result.projectPath}`);
-    if (result.githubUrl) await logger.log(`GitHub: ${result.githubUrl}`);
-    if (result.expoUrl) await logger.log(`Expo: ${result.expoUrl}`);
+    if (result.success) {
+      await logger.log(`Built: ${result.projectPath}`);
+      if (result.githubUrl) await logger.log(`GitHub: ${result.githubUrl}`);
+      if (result.expoUrl) await logger.log(`Expo: ${result.expoUrl}`);
+    }
+
+    // Log stats
+    try {
+      const queueFiles = (await fs.readdir(CONFIG.paths.ideas)).filter(f => f.endsWith('.json'));
+      const builtFiles = (await fs.readdir(CONFIG.paths.built)).filter(f => f.endsWith('.json'));
+      const failTracker = await loadFailTracker();
+      const failingCount = Object.values(failTracker).filter(f => f.count > 0).length;
+      await logger.log(`📊 Queue: ${queueFiles.length} | Built: ${builtFiles.length} | Failing: ${failingCount}`);
+    } catch {}
+
+    await logger.log('=== Build Cycle Complete ===');
+  } catch (error) {
+    await logger.log(`Build cycle crashed (contained): ${error}`, 'ERROR');
   }
-
-  await logger.log('=== Build Cycle Complete ===');
 }
 
-// Health check
-async function healthCheck(): Promise<void> {
-  const stats = {
-    uptime: process.uptime(),
-    memory: process.memoryUsage(),
-    timestamp: new Date().toISOString(),
-  };
+// Research cycle with error containment
+async function safeRunResearch(): Promise<void> {
+  try {
+    await runResearchCycle();
+  } catch (error) {
+    await logger.log(`Research cycle crashed (contained): ${error}`, 'ERROR');
+  }
+}
 
-  await fs.mkdir(CONFIG.paths.logs, { recursive: true });
-  await fs.writeFile(
-    path.join(CONFIG.paths.logs, 'health.json'),
-    JSON.stringify(stats, null, 2)
-  );
+// Health check with comprehensive stats
+async function healthCheck(): Promise<void> {
+  try {
+    const queueFiles = (await fs.readdir(CONFIG.paths.ideas)).filter(f => f.endsWith('.json'));
+    const builtFiles = (await fs.readdir(CONFIG.paths.built)).filter(f => f.endsWith('.json'));
+    const failTracker = await loadFailTracker();
+
+    const stats = {
+      uptime: process.uptime(),
+      memory: process.memoryUsage(),
+      timestamp: new Date().toISOString(),
+      queueSize: queueFiles.length,
+      totalBuilt: builtFiles.length,
+      failingIdeas: Object.keys(failTracker).length,
+      failDetails: Object.entries(failTracker).map(([id, f]) => ({
+        id: id.slice(0, 8),
+        fails: f.count,
+        lastError: f.error.slice(0, 100),
+      })),
+    };
+
+    await fs.mkdir(CONFIG.paths.logs, { recursive: true });
+    await fs.writeFile(
+      path.join(CONFIG.paths.logs, 'health.json'),
+      JSON.stringify(stats, null, 2)
+    );
+  } catch {}
+}
+
+// Log rotation - prevent log files from growing forever
+async function rotateLogsIfNeeded(): Promise<void> {
+  try {
+    const logFile = path.join(CONFIG.paths.logs, 'daemon.log');
+    const stat = await fs.stat(logFile);
+    // Rotate at 10MB
+    if (stat.size > 10 * 1024 * 1024) {
+      const rotated = logFile + '.1';
+      try { await fs.unlink(rotated); } catch {}
+      await fs.rename(logFile, rotated);
+      await logger.log('Log file rotated (exceeded 10MB)');
+    }
+  } catch {}
 }
 
 // Main daemon loop
@@ -1640,19 +1986,21 @@ async function main(): Promise<void> {
   await logger.log(`Output: ${CONFIG.paths.output}`);
 
   // Create directories
-  await fs.mkdir(CONFIG.paths.output, { recursive: true });
-  await fs.mkdir(CONFIG.paths.ideas, { recursive: true });
-  await fs.mkdir(CONFIG.paths.built, { recursive: true });
-  await fs.mkdir(CONFIG.paths.logs, { recursive: true });
+  const dirs = [CONFIG.paths.output, CONFIG.paths.ideas, CONFIG.paths.built, CONFIG.paths.logs,
+    path.join(CONFIG.paths.output, 'skipped'), path.join(CONFIG.paths.output, 'web'), path.join(CONFIG.paths.output, 'mobile')];
+  for (const dir of dirs) {
+    await fs.mkdir(dir, { recursive: true });
+  }
 
-  // Initial run
-  await runResearchCycle();
+  // Initial run (with error containment)
+  await safeRunResearch();
   await runBuildCycle();
 
-  // Set up intervals
-  setInterval(runResearchCycle, CONFIG.intervals.research);
+  // Set up intervals - all with error containment
+  setInterval(safeRunResearch, CONFIG.intervals.research);
   setInterval(runBuildCycle, CONFIG.intervals.build);
   setInterval(healthCheck, CONFIG.intervals.healthCheck);
+  setInterval(rotateLogsIfNeeded, 60 * 60 * 1000); // Check every hour
 
   await logger.log('🚀 Daemon running. Research every 1h, Build every 30m');
 
