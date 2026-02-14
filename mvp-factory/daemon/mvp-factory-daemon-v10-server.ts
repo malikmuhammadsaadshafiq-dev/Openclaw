@@ -338,124 +338,254 @@ Data Tools: CSV viewer/editor, spreadsheet to JSON converter, chart/graph maker 
 Media Tools: Image background remover (canvas API), favicon generator, screenshot beautifier/mockup, open graph image maker, placeholder image generator, emoji picker, icon search
 `;
 
-// ============= FRONTEND DESIGN EXCELLENCE (ClawhHub-inspired) =============
-const FRONTEND_SKILLS_PROMPT = `
-DESIGN EXCELLENCE — create distinctive, production-grade UI (NOT generic AI slop):
+// ============= PRODUCT ARCHETYPE CLASSIFICATION (from Frontend UX Mastery) =============
+function getProductArchetype(idea: Idea): { archetype: string; label: string; motionLevel: number; density: string } {
+  const text = `${idea.title} ${idea.description} ${idea.features.join(" ")}`.toLowerCase();
+  const type = idea.type;
 
-TYPOGRAPHY:
-- NEVER use Inter, Roboto, Arial, or system-ui as the only font
-- Pair a distinctive DISPLAY font with a refined BODY font from Google Fonts
-- Fluid typography: h1 { font-size:clamp(2rem,5vw,3.5rem) }
-- Clear hierarchy: display (hero) > h1 > h2 > h3 > body > caption
-- Letter-spacing: tighter on headings (-0.02em), normal on body
+  // D — Chrome Extension / Widget / Compact UI
+  if (type === "extension") {
+    return { archetype: "D", label: "Chrome Extension / Compact UI", motionLevel: 1, density: "compact" };
+  }
+  // E — Mobile-First / PWA
+  if (type === "mobile") {
+    return { archetype: "E", label: "Mobile-First / PWA", motionLevel: 2, density: "app" };
+  }
+  // B — Marketing / Landing Page (SaaS landing pages, waitlists)
+  const marketingKeywords = ["landing", "waitlist", "launch", "conversion", "signup page"];
+  if (marketingKeywords.some(kw => text.includes(kw))) {
+    return { archetype: "B", label: "Marketing / Landing Page", motionLevel: 4, density: "spacious" };
+  }
+  // C — Consumer App (social, content, marketplace, fintech)
+  const consumerKeywords = ["social", "marketplace", "fintech", "content", "community", "chat", "messaging", "feed", "profile", "sharing", "dating", "fitness", "health", "recipe", "music", "video", "photo"];
+  if (consumerKeywords.some(kw => text.includes(kw))) {
+    return { archetype: "C", label: "Consumer App", motionLevel: 2, density: "app" };
+  }
+  // A — Dense Tool (default: dashboards, admin panels, dev tools, utilities)
+  return { archetype: "A", label: "Dense Tool / Dashboard", motionLevel: 1, density: "tool" };
+}
 
-COLOR & THEME:
-- Commit to a BOLD cohesive palette — dominant color + sharp accent
-- Use CSS variables: --primary, --accent, --bg, --text, --muted
-- NEVER use generic purple-on-white gradients
-- WCAG AA contrast (4.5:1 ratio) on all text
-- Semantic: --success green, --error red, --warning amber
+// ============= FRONTEND UX MASTERY (anti-slop, archetype-aware design system) =============
+function getFrontendUXPrompt(idea: Idea): string {
+  const arch = getProductArchetype(idea);
 
-MOTION & MICRO-INTERACTIONS:
-- Orchestrated page load: staggered fade-in-up with animation-delay
-  .fade-in-up { opacity:0;transform:translateY(20px);animation:fadeInUp .6s cubic-bezier(.22,1,.36,1) forwards;animation-delay:var(--delay,0s) }
-- Hover lift on cards: translateY(-4px) + shadow increase
-- Button press: active:scale-95 transition
-- Skeleton shimmer for loading content (not spinners)
-- Toast: slide-in bottom-right, auto-dismiss 3s
-- Delete: fade-out + slide-left before removal
-- New item: fade-in + slide-down at top of list
+  // Archetype-specific guidelines
+  const archetypeRules: Record<string, string> = {
+    A: `ARCHETYPE A — DENSE TOOL (think Linear, GitHub, Notion, Raycast):
+- Dark mode first. 14px base font. Tight spacing. Minimal decoration.
+- Users spend hours here. Reduce visual fatigue. No gradients, minimal shadows.
+- Information density matters. Fit more, not less.
+- Every pixel of chrome (borders, shadows, colors) competes with actual content.
+- Font: Inter, Geist, SF Pro (system), or any high-x-height sans-serif legible at 13px.
+- Sidebar: 220-240px wide, collapsible to icon-only (48px).
+- Top bar height: 48px. Content max-width: 1200px. Card border-radius: 8px.
+- Button: 28-32px height, 13px font, 8-12px horizontal padding.
+- Input height: 32px. Button height: 32px.`,
 
-SPATIAL COMPOSITION:
-- Generous negative space — don't cram content
-- max-w-6xl mx-auto px-4 for containers
-- Card grids: gap-6, consistent p-6 padding
-- Section spacing: py-16 between major sections
-- Bento grid for dashboards: mix 1x1, 2x1, 1x2 card sizes
+    B: `ARCHETYPE B — MARKETING / LANDING PAGE (think Stripe, Vercel homepage, Framer sites):
+- Light mode usually. 16-18px base. Generous whitespace. One dramatic visual moment.
+- Users spend 30 seconds here. Every section must earn its existence.
+- Big typography. Clear hierarchy. One CTA above the fold.
+- Gradients, large type, and scroll animations are appropriate HERE — nowhere else.
+- Font: Plus Jakarta Sans, General Sans, Cabinet Grotesk, or a serif like Instrument Serif for headlines.
+- Top bar height: 64px. Content max-width: 1280px. Card border-radius: 16px.
+- Button: 40-44px height, 15-16px font, 20-24px horizontal padding.`,
 
-ATMOSPHERE & DEPTH:
-- Subtle background texture (noise, dots, grid) — not flat solid colors
-- Layered shadows for depth (shadow-sm inputs, shadow-lg modals)
-- Gradient meshes or radial gradients for hero backgrounds
-- Frosted glass (backdrop-blur) on floating elements
-- Colored shadows matching accent (shadow-violet-500/25)
+    C: `ARCHETYPE C — CONSUMER APP (think Airbnb, Spotify, Duolingo):
+- Warm, approachable. Rounded shapes. Friendly but not childish.
+- Slightly larger touch targets. More whitespace between interactive elements.
+- Brand color can be more prominent (but still not on everything).
+- Illustrations and imagery play a bigger role.
+- Font: DM Sans, Outfit, Nunito Sans — slightly rounded, warmer geometry.
+- Sidebar: 260-280px. Top bar: 56px. Content max-width: 1080px. Card border-radius: 12px.
+- Button: 34-36px height, 14px font, 12-16px horizontal padding.
+- Input height: 36px. Button height: 36px.`,
 
-ACCESSIBILITY:
-- @media(prefers-reduced-motion:reduce) { *{animation-duration:.01ms!important} }
-- Focus-visible outlines on interactive elements
-- Semantic HTML: main, nav, section, article
+    D: `ARCHETYPE D — CHROME EXTENSION / COMPACT UI (think Raycast, 1Password popup):
+- Extremely tight. 12-13px base. Minimal padding. No wasted space.
+- 350-400px max width. Fixed heights. Every element justified.
+- Speed is the entire UX. One-action-per-screen philosophy.
+- System-native feel. Match the OS aesthetic where possible.
+- Font: System font stack for fastest load and native feel.
+- Button: 28-32px height, 13px font, 8-12px horizontal padding.`,
+
+    E: `ARCHETYPE E — MOBILE-FIRST / PWA (phone-native experience):
+- 16px minimum base (iOS requirement). 44px minimum touch targets.
+- Bottom navigation, not sidebar. Thumb-zone awareness.
+- Full-width elements. Edge-to-edge cards.
+- Momentum scrolling. Pull-to-refresh patterns. Haptic-friendly transitions.
+- Font: DM Sans, Outfit, or system font stack.
+- Button: 40px min height (44px on mobile). Input: 36px height.`,
+  };
+
+  // Motion level guidelines
+  const motionRules: Record<number, string> = {
+    1: `MOTION LEVEL 1 — FUNCTIONAL ONLY:
+- What moves: State transitions (hover/focus/active). Dropdowns/modals appearing/disappearing.
+- What doesn't: Nothing on page load. No scroll animations. No staggered entrances.
+- Feeling: Instant. Crisp. "This app respects my time."
+- CSS: .interactive { transition-property: color, background-color, border-color, opacity; transition-duration: 150ms; transition-timing-function: ease; }
+- Easing: ease-out cubic-bezier(0.16, 1, 0.3, 1) for most things. ease-in cubic-bezier(0.55, 0, 1, 0.45) for exits only.`,
+
+    2: `MOTION LEVEL 2 — POLISHED:
+- Everything from Level 1, plus: staggered list entrances, smooth page/route transitions, layout animations (accordion expand, reorder), toast slide-ins.
+- What doesn't: No scroll-linked effects. No parallax. No cinematic reveals.
+- Feeling: Smooth. Considered. "Someone cared about this."
+- Stagger max 5 items with 50ms delay each. Page transitions: 200ms fade with ease-out.
+- Toast: slide-in 300ms with ease-spring cubic-bezier(0.34, 1.56, 0.64, 1). Toast exit: 200ms with ease-in.`,
+
+    3: `MOTION LEVEL 3 — EXPRESSIVE:
+- Everything from Level 2, plus: spring physics on interactions, drag gestures with momentum, confetti/celebration moments, micro-interactions on every touchpoint (toggle switches bounce, checkboxes pop, progress bars fill).
+- Still no scroll-hijacking. Motion enhances actions, never blocks them.
+- Use Framer Motion: whileHover={{ scale: 1.02 }}, whileTap={{ scale: 0.97 }}, transition={{ type: "spring", stiffness: 500, damping: 30 }}.`,
+
+    4: `MOTION LEVEL 4 — CINEMATIC (Marketing/Landing Pages):
+- Everything plus scroll-driven reveals, parallax layers, pinned sections, horizontal scroll sequences, text splitting/masking on scroll, 3D transforms, hero animations, background morph effects.
+- Every animation must still serve the narrative. Motion IS the content here.
+- Use GSAP ScrollTrigger or CSS scroll-driven animations.`,
+  };
+
+  // Domain-specific accent color
+  const domainAccents = `ACCENT COLOR — match to the product domain (DON'T default to blue or purple):
+- Finance/trust → Deep blue, teal
+- Creative/energy → Warm orange, coral, magenta
+- Health/nature → Green, sage
+- Premium/luxury → Gold on dark, deep navy on light
+- Developer tools → Any saturated color works: cyan, violet, green
+- If truly generic, use oklch(0.55 0.2 270) — a medium violet-blue (safest non-generic option)`;
+
+  return `FRONTEND UX MASTERY — ANTI-SLOP DESIGN SYSTEM:
+
+${archetypeRules[arch.archetype]}
+
+THE ANTI-SLOP COLOR RULES:
+1. Start with your BACKGROUND, not your brand color. Background is 80% of what users see.
+2. Limit working palette to ~12 intentional CSS custom property tokens:
+   BACKGROUNDS: --bg-base (page), --bg-raised (cards/sidebar), --bg-overlay (popovers/modals), --bg-hover (interactive rows), --bg-active (selected/pressed)
+   TEXT: --text-primary (headlines/body), --text-secondary (metadata/descriptions), --text-tertiary (placeholders/timestamps)
+   BORDERS: --border-default (card borders/dividers), --border-strong (hover/focus borders)
+   ACCENT: --accent (brand, used sparingly ~10% of pixels), --accent-hover (darker variant)
+   SEMANTIC: --color-error (#e5484d), --color-warning (#f0a000), --color-success (#30a46c)
+3. Accent color is a SPICE, not main ingredient. It goes on: primary CTA (one per viewport), active states, links, focus rings. That's all.
+4. Surfaces create hierarchy, NOT borders and shadows. Use 2-3 background tones to layer information.
+${domainAccents}
+
+TYPOGRAPHY — ONE FONT, MANY VOICES:
+- One font family, differentiated by weight and size. NOT two fancy fonts.
+- Letter-spacing on headings: -0.01em to -0.025em. Larger text = tighter tracking.
+- Letter-spacing on tiny uppercase labels: +0.04em to +0.08em.
+- Line-height: 1.1-1.2 for headings, 1.5-1.6 for body, 1.4 for UI text.
+- font-weight 500 (medium) is your workhorse: nav items, button labels, table headers, form labels. Reserve 600-700 for headings only.
+- Max paragraph width: max-width: 64ch. Text wider than ~65 chars is hard to read.
+- ALWAYS set globally: -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+- font-variant-numeric: tabular-nums on anything with numbers (tables, prices, stats, dates).
+- text-wrap: balance on headings to prevent orphan words.
+
+SPACING — THE INVISIBLE ARCHITECTURE:
+- Everything snaps to a 4px base grid. No arbitrary values (no padding: 13px).
+- Spacing tokens: 2px (hairline), 4px (icon-to-label), 6px (small button), 8px (compact list), 12px (default input/nav), 16px (standard card), 20px (comfortable card), 24px (card groups), 32px (major blocks), 48px (page sections), 64px (marketing sections), 80-96px (hero sections).
+- Inner/outer rule: Padding inside a container should be roughly HALF the gap between containers. Card with 16px padding = 24-32px gap between cards.
+
+COMPONENTS — THE BUILDING BLOCKS:
+### Buttons: THREE styles only. Not five. Not one.
+- Primary: accent color. One per logical viewport area.
+- Secondary: bordered or subtle background. Everything else.
+- Ghost: no border, no fill. Icon buttons, inline actions, cancel buttons.
+
+### Cards: The fewer visual properties, the better.
+- background: var(--bg-raised); border: 1px solid var(--border-default); border-radius (by archetype); padding: 16px. That's it.
+- No shadow. No gradient header. No hover-lift. If clickable, add on hover: background: var(--bg-hover); border-color: var(--border-strong).
+
+### Inputs:
+- height: 32px (dense tool) or 36px (consumer app). padding: 0 10px. border: 1px solid var(--border-default).
+- border-radius: 6px. background: transparent or var(--bg-base). font-size: var(--text-sm). color: var(--text-primary).
+- Focus: border-color: var(--accent); box-shadow: 0 0 0 3px oklch(from var(--accent) l c h / 0.15); outline: none.
+- Error: border-color: var(--color-error); box-shadow: 0 0 0 3px oklch(from var(--color-error) l c h / 0.15).
+
+${motionRules[arch.motionLevel]}
+
+PERFORMANCE RULES (ALL levels):
+1. Only animate transform and opacity — these are GPU-composited. Animating width, height, margin, padding causes layout reflows.
+2. Never transition: all — explicitly list properties you intend to animate.
+3. Cap simultaneous animations — max 3-4 elements animating at once.
+4. Exits always faster than enters — entering is an event, exiting is cleanup.
+
+ACCESSIBILITY (REQUIRED):
+- @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; } }
+- :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; } :focus:not(:focus-visible) { outline: none; }
+- cursor: pointer ONLY on elements that navigate or trigger actions (buttons, links, clickable cards). Not on text, icons, or non-interactive cards.
+- Semantic HTML: main, nav, section, article.
+
+THE ANTI-SLOP CHECKLIST (every generated app MUST pass):
+- [ ] No purple-to-blue gradients (unless genuinely the brand)
+- [ ] No cards with border AND shadow AND hover-translateY at same time
+- [ ] No staggered entrance animations on every list
+- [ ] No more than 2 font sizes visible simultaneously in any one section
+- [ ] No border-radius over 12px on anything smaller than a modal (except pills/avatars)
+- [ ] Brand/accent color on less than 10% of visible area
+- [ ] Buttons have clear primary/secondary/ghost hierarchy
+- [ ] No animation takes longer than 300ms in response to user input
+- [ ] Every interactive element has a visible focus-visible state
+- [ ] Dark mode text is NOT pure #ffffff and background is NOT pure #000000
+- [ ] It looks like someone chose these exact colors on purpose, not generated from a template
 `;
+}
 
-// ============= UX QUALITY SYSTEM =============
+// ============= LEGACY FRONTEND_SKILLS_PROMPT (kept for backward compat, now uses getFrontendUXPrompt()) =============
+const FRONTEND_SKILLS_PROMPT = ``;
+
+// ============= UX QUALITY SYSTEM (archetype-aware) =============
 const UX_QUALITY_PROMPT = `
 UX QUALITY RULES — every app MUST follow these:
 
-LAYOUT & SPACING:
-- Use consistent 8px spacing grid (p-2, p-4, p-6, p-8 in Tailwind)
-- Max content width: max-w-6xl mx-auto with px-4 padding on sides
-- Cards must have consistent padding (p-6) and gap between them (gap-6)
-- Section spacing: py-12 or py-16 between major sections
-- Never let content touch the edges of the screen
+LAYOUT & SPACING (4px grid system):
+- EVERYTHING snaps to a 4px base grid. No arbitrary padding values.
+- Max content width varies by archetype: 1200px (tools), 1080px (consumer), 1280px (marketing).
+- Cards: consistent padding (16px), gap between them (24px). Inner padding ≈ half outer gap.
+- Section spacing: 32px between major blocks (tools), 48px (apps), 64px+ (marketing).
+- Never let content touch edges — minimum 16px side padding on mobile.
 
 VISUAL HIERARCHY:
-- One clear hero/header section with the app name + one-line description
-- Primary action button must be visually dominant (larger, brighter color, prominent placement)
-- Secondary actions are subtler (outline or ghost buttons)
-- Destructive actions (delete) use red/danger color, placed away from primary actions
-- Group related items visually with cards or bordered sections
-- Use consistent heading sizes: h1 for page title, h2 for sections, h3 for card titles
+- One clear hero/header section with the app name + one-line description.
+- Primary action button: ONE per logical viewport area. Accent color. Visually dominant.
+- Secondary: bordered or subtle background. Ghost: no border/fill for inline/cancel actions.
+- Destructive actions (delete) use --color-error, placed away from primary actions.
+- Group related items with surface elevation (--bg-raised), NOT borders+shadows+gradients combined.
 
 RESPONSIVE DESIGN:
-- Mobile-first: default layout is single column
-- sm: 2 columns for card grids
-- lg: 3-4 columns for card grids
-- Navigation collapses to hamburger on mobile (or use bottom tab bar)
-- Forms stack vertically on mobile, can go horizontal on desktop
-- Font sizes scale: text-sm on mobile, text-base on desktop
+- Mobile-first: default layout is single column.
+- sm: 2 columns for card grids.
+- lg: 3-4 columns for card grids.
+- Navigation: sidebar (dense tools), top nav (marketing), bottom nav (mobile/consumer).
+- Forms stack vertically on mobile, can go horizontal on desktop.
 
 EMPTY STATES:
-- When a list has zero items, show a friendly empty state with an icon, message, and CTA button
-- Example: "No invoices yet" with a + Create Invoice button
-- Never show a blank white page or just a header with nothing below
+- Every list, table, and feed needs a designed empty state. Centered icon + short message + CTA.
+- Never show a blank white page or just a header with nothing below.
 
 FORM UX:
-- Labels above every input field (not just placeholders)
-- Placeholder text shows example format (e.g., "e.g., john@example.com")
-- Inline validation: red border + error message below field on invalid input
-- Green checkmark or border on valid input
-- Submit button disabled until form is valid
-- After successful submit: clear form, show success toast, add item to list
+- Labels above every input field (not just placeholders).
+- Placeholder text shows example format (e.g., "e.g., john@example.com").
+- Inline validation: --color-error border + error message below field.
+- Focus: --accent border + subtle accent glow ring.
+- Submit button disabled until form is valid.
 
 NAVIGATION (CRITICAL — must be functional, NOT dead links):
-- Sticky top navbar with app logo/name and 3-4 tab navigation links
-- Navigation MUST use React state (useState) to switch views — NOT href links to other pages
-- Pattern: const [activeTab, setActiveTab] = useState("home") with onClick={() => setActiveTab("dashboard")}
-- Each tab renders a different section/view within the SAME page.tsx — no separate route files needed
-- Active tab MUST be visually highlighted (bold text, underline, accent color, or bg highlight)
-- Navbar links MUST use <button> or <a onClick={...}> with e.preventDefault() — NEVER href="#" or href="/dashboard"
-- Minimum tabs: Home (main content), Dashboard (stats/overview), Profile/Settings (user prefs)
-- Each tab view must have real, meaningful content — not empty placeholder pages
+- Navigation MUST use React state (useState) to switch views — NOT href links.
+- Pattern: const [activeTab, setActiveTab] = useState("home") with onClick.
+- Active tab: accent color text + faint accent background (accent/10%). Not bold. Not underlined.
+- NEVER use href="#" or href="/page". NEVER.
+- Minimum tabs: Home (main content), Dashboard (stats/overview), Settings (user prefs).
 
-MICRO-INTERACTIONS:
-- Buttons: scale down slightly on click (active:scale-95), lift on hover
-- Cards: subtle shadow increase on hover (hover:shadow-lg)
-- List items: slide in with staggered animation on load
-- Delete: item fades/slides out before removal
-- New items: fade/slide in at top of list
-- Transitions: all interactive elements have transition-all duration-200
-
-LOADING & FEEDBACK:
-- Show skeleton loader (not spinner) for initial page content
-- Show inline spinner on buttons during async actions
-- Disable buttons during loading to prevent double-submit
-- Toast notifications: slide in from bottom-right, auto-dismiss after 3s
-- Use optimistic UI: update the list immediately, revert on error
-
-COLOR & CONTRAST:
-- Text must have WCAG AA contrast ratio against background
-- Don't use light gray text on white backgrounds
-- Use the accent color consistently for all primary actions
-- Error: red-500, Success: green-500, Warning: amber-500, Info: blue-500
+FINISHING TOUCHES (the 1% that makes it feel hand-built):
+1. Custom scrollbars: ::-webkit-scrollbar { width: 6px; height: 6px; } ::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 3px; }
+2. Selection highlight: ::selection { background: oklch(from var(--accent) l c h / 0.25); }
+3. Focus-visible only: no ugly outlines on click, visible outlines on keyboard nav.
+4. Cursor discipline: cursor: pointer ONLY on buttons, links, clickable cards. Not on text or icons.
+5. Border-radius nesting: inner radius = parent radius - parent padding (card 12px + 8px padding → inner 4px).
+6. Smooth page transitions: even a 150ms opacity fade feels faster than instant layout flash.
+7. Empty states: designed, not blank.
+8. Loading states: skeleton shimmer, not blank page. Every async button shows inline spinner + disables itself.
 `;
 
 // ============= AI INTEGRATION =============
@@ -1224,6 +1354,39 @@ async function fixFailedTests(projectPath: string, frontendResults: TestResult, 
 }
 
 
+// ============= SOURCE REFERENCE BUILDER =============
+
+function buildSourceReference(idea: Idea): string {
+  const lines: string[] = [];
+
+  // Always include the problem context
+  if (idea.problem) {
+    lines.push(`PROBLEM THIS SOLVES: ${idea.problem}`);
+  }
+  if (idea.targetUsers) {
+    lines.push(`TARGET USERS: ${idea.targetUsers}`);
+  }
+
+  // Include Reddit source references if available
+  if (idea.redditSignals && idea.redditSignals.length > 0) {
+    lines.push(`\nIDEA SOURCE — Real user requests from Reddit:`);
+    for (const signal of idea.redditSignals.slice(0, 3)) {
+      lines.push(`- r/${signal.subreddit}: "${signal.postTitle}" (${signal.score} upvotes, ${signal.numComments} comments)`);
+      if (signal.postBody) {
+        lines.push(`  User said: "${signal.postBody.substring(0, 150)}..."`);
+      }
+      lines.push(`  Link: ${signal.url}`);
+    }
+    lines.push(`\nIMPORTANT: This product was inspired by REAL user needs found on Reddit. The app should directly address the problems described above. Include a subtle "Inspired by community feedback" note in the footer or about section.`);
+  } else if (idea.source === "reddit") {
+    lines.push(`\nIDEA SOURCE: Discovered from Reddit community signals — addresses real user pain points.`);
+  } else {
+    lines.push(`\nIDEA SOURCE: Generated from trending product categories and market analysis.`);
+  }
+
+  return lines.join("\n");
+}
+
 // ============= BUILD FUNCTIONS =============
 
 function getRandomDesign() {
@@ -1236,20 +1399,25 @@ function designToPrompt(d: any): string {
 
 async function buildWebApp(idea: Idea, projectPath: string): Promise<string> {
   const design = getRandomDesign();
-  await logger.log(`Using design style: ${design.name}`);
+  const arch = getProductArchetype(idea);
+  await logger.log(`Using design style: ${design.name} | Archetype: ${arch.label} | Motion Level: ${arch.motionLevel}`);
 
   const hasAI = needsAI(idea);
   if (hasAI) await logger.log("🤖 AI features detected — including AI integration prompt");
+
+  // Build source reference context
+  const sourceRef = buildSourceReference(idea);
 
   const prompt = `Build a COMPLETE Next.js 14 (App Router) TypeScript web app. Output ONLY a JSON array of file objects: [{"path":"...","content":"..."},...]. No explanations.
 
 PROJECT: ${idea.title}
 DESCRIPTION: ${idea.description}
 FEATURES: ${idea.features.join("; ")}
+${sourceRef}
 
 ${designToPrompt(design)}
 
-${FRONTEND_SKILLS_PROMPT}
+${getFrontendUXPrompt(idea)}
 
 ${UX_QUALITY_PROMPT}
 
@@ -1327,11 +1495,14 @@ async function buildChromeExtension(idea: Idea, projectPath: string): Promise<st
 
   if (hasAI) await logger.log("🤖 AI features detected for extension");
 
+  const sourceRef = buildSourceReference(idea);
+
   const prompt = `Build a COMPLETE Chrome Extension with popup UI. Output ONLY a JSON array of file objects: [{"path":"...","content":"..."},...]. No explanations.
 
 PROJECT: ${idea.title}
 DESCRIPTION: ${idea.description}
 FEATURES: ${idea.features.join("; ")}
+${sourceRef}
 
 ${designToPrompt(design)}
 
@@ -1392,11 +1563,14 @@ async function buildMobileApp(idea: Idea, projectPath: string): Promise<string> 
 
   if (hasAI) await logger.log("🤖 AI features detected for mobile app");
 
+  const sourceRef = buildSourceReference(idea);
+
   const prompt = `Build a COMPLETE React Native (Expo SDK 50) mobile app. Output ONLY a JSON array of file objects: [{"path":"...","content":"..."},...]. No explanations.
 
 PROJECT: ${idea.title}
 DESCRIPTION: ${idea.description}
 FEATURES: ${idea.features.join("; ")}
+${sourceRef}
 
 ${designToPrompt(design)}
 
@@ -1637,10 +1811,11 @@ async function pushToGithub(projectPath: string, idea: Idea, projectName: string
         headers: { Authorization: `Bearer ${CONFIG.github.token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ names: topics }),
       });
+      const sourceTag = idea.redditSignals?.length ? " | Inspired by Reddit community" : idea.source === "reddit" ? " | Community-inspired" : "";
       await fetch(`https://api.github.com/repos/${CONFIG.github.username}/${repoName}`, {
         method: "PATCH",
         headers: { Authorization: `Bearer ${CONFIG.github.token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ description: `[${label}] ${idea.description}` }),
+        body: JSON.stringify({ description: `[${label}] ${idea.description}${sourceTag}` }),
       });
       await logger.log(`Tagged ${repoName}: [${label}] + topics: ${topics.join(", ")}`);
     } catch (e) {
@@ -1821,6 +1996,19 @@ function generateProductReadme(idea: Idea, projectName: string, funcResults: Tes
   // AI section
   const aiSection = isAI ? "\n### AI Features\n\nThis app uses **Kimi K2.5** via NVIDIA API for intelligent processing.\n\nTo use AI features, add your NVIDIA API key:\n" + codeBlock + "bash\n# Create .env.local file\necho \"NVIDIA_API_KEY=nvapi-your-key\" > .env.local\n" + codeBlock + "\n\nGet a free API key at [build.nvidia.com](https://build.nvidia.com)\n" : "";
 
+  // Source/Inspiration section
+  let sourceSection = "";
+  if (idea.redditSignals && idea.redditSignals.length > 0) {
+    const signalLines = idea.redditSignals.slice(0, 3).map(s =>
+      "- **r/" + s.subreddit + "**: [" + s.postTitle.substring(0, 80) + "](" + s.url + ") (" + s.score + " upvotes, " + s.numComments + " comments)"
+    ).join("\n");
+    sourceSection = "\n## Inspiration & Source\n\nThis product was built to address **real user needs** discovered from community feedback:\n\n" + signalLines + "\n\n> Built because real people asked for it.\n";
+  } else if (idea.source === "reddit") {
+    sourceSection = "\n## Inspiration\n\nThis product was inspired by real user discussions and pain points discovered on Reddit communities including r/SideProject, r/startups, r/SaaS, and r/AppIdeas.\n";
+  } else {
+    sourceSection = "\n## Inspiration\n\nBuilt based on trending product categories and market analysis of high-demand utility tools.\n";
+  }
+
   const lines = [
     '<div align="center">',
     "",
@@ -1844,6 +2032,8 @@ function generateProductReadme(idea: Idea, projectName: string, funcResults: Tes
     "## Who Is This For?",
     "",
     idea.targetUsers,
+    "",
+    sourceSection,
     "",
     "## Features",
     "",
@@ -1917,11 +2107,13 @@ async function buildMVP(idea: Idea): Promise<boolean> {
     return false;
   }
 
+  const arch = getProductArchetype(idea);
   await logger.log(`\n${"=".repeat(50)}`);
   await logger.log(`🔨 Building: ${idea.title}`);
-  await logger.log(`📦 Type: ${idea.type.toUpperCase()}`);
+  await logger.log(`📦 Type: ${idea.type.toUpperCase()} | Archetype: ${arch.label}`);
   await logger.log(`✨ Features: ${idea.features.join(", ")}`);
-  await logger.log(`🤖 AI: ${needsAI(idea) ? "YES" : "NO"}`);
+  await logger.log(`🤖 AI: ${needsAI(idea) ? "YES" : "NO"} | Motion Level: ${arch.motionLevel}`);
+  await logger.log(`📌 Source: ${idea.source}${idea.redditSignals?.length ? ` (${idea.redditSignals.length} Reddit signals)` : ""}`);
   await logger.log(`${"=".repeat(50)}\n`);
 
   await sendTelegram(`🔨 *Building*: ${idea.title}\nType: ${idea.type}\nAI: ${needsAI(idea) ? "Yes" : "No"}`);
