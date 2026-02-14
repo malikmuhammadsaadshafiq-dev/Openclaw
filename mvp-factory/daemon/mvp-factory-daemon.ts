@@ -1640,7 +1640,7 @@ async function pushToGithub(projectPath: string, idea: Idea): Promise<string> {
     const repoUrl = `https://github.com/${CONFIG.github.username}/${repoName}`;
 
     // Git operations with timeout
-    const gitOpts = { cwd: projectPath, timeout: 60000 };
+    const gitOpts = { cwd: projectPath, timeout: 60000, maxBuffer: 10 * 1024 * 1024 };
     await execAsync('git init', gitOpts);
     await execAsync('git config user.email "mvp-factory@neurafinity.ai"', gitOpts);
     await execAsync('git config user.name "MVP Factory"', gitOpts);
@@ -1761,7 +1761,7 @@ async function deployToVercel(projectPath: string, idea: Idea): Promise<string> 
     const { stdout, stderr } = await execAsync(deployCmd, {
       cwd: projectPath,
       timeout: 600000,
-      env: { ...process.env, VERCEL_ORG_ID: vercelTeam },
+      env: { ...process.env },
     });
 
     const output = stdout + stderr;
