@@ -1,6 +1,6 @@
 #!/bin/bash
 # MVP Factory Server Deployment Script
-# Deploys OpenClaw MVP Factory to the server and starts the daemon
+# Deploys NeuraFinity MVP Factory to the server and starts the daemon
 
 set -e
 
@@ -47,7 +47,7 @@ apt-get update
 apt-get install -y git tmux jq
 
 # Install global tools
-npm install -g typescript tsx expo-cli eas-cli openclaw
+npm install -g typescript tsx expo-cli eas-cli neurafinity
 
 # Create deployment directory
 mkdir -p /root/mvp-factory
@@ -72,12 +72,12 @@ EXPO_TOKEN=
 
 # Paths
 MVP_OUTPUT_DIR=/root/mvp-projects
-LOG_DIR=/root/.openclaw/logs
+LOG_DIR=/root/.neurafinity/logs
 EOF
 
 # Create directories
 mkdir -p /root/mvp-projects/{ideas,built,web,mobile}
-mkdir -p /root/.openclaw/{logs,memory,skills}
+mkdir -p /root/.neurafinity/{logs,memory,skills}
 
 # Install dependencies
 npm install

@@ -54,8 +54,8 @@ MVP Factory is a fully autonomous build agent. Once started, it runs in a loop:
 ### Step 1: Clone and install
 
 ```bash
-git clone https://github.com/malikmuhammadsaadshafiq-dev/Openclaw.git
-cd Openclaw/mvp-factory
+git clone https://github.com/malikmuhammadsaadshafiq-dev/NeuraFinity.git
+cd NeuraFinity/mvp-factory
 npm install
 ```
 
@@ -115,7 +115,7 @@ TELEGRAM_CHAT_ID=your-chat-id
 
 # OPTIONAL - Custom paths (defaults shown)
 MVP_OUTPUT_DIR=/root/mvp-projects
-LOG_DIR=/root/.openclaw/logs
+LOG_DIR=/root/.neurafinity/logs
 ```
 
 ### Step 4: Create output directories
@@ -123,14 +123,14 @@ LOG_DIR=/root/.openclaw/logs
 ```bash
 # Linux / macOS
 mkdir -p ~/mvp-projects/{ideas,built,web,mobile,signals,skipped,stats}
-mkdir -p ~/.openclaw/logs
+mkdir -p ~/.neurafinity/logs
 
 # Windows (PowerShell)
 New-Item -ItemType Directory -Force -Path "$HOME\mvp-projects\ideas","$HOME\mvp-projects\built","$HOME\mvp-projects\web","$HOME\mvp-projects\mobile","$HOME\mvp-projects\signals","$HOME\mvp-projects\skipped"
-New-Item -ItemType Directory -Force -Path "$HOME\.openclaw\logs"
+New-Item -ItemType Directory -Force -Path "$HOME\.neurafinity\logs"
 ```
 
-> **Note:** By default the daemon writes to `/root/mvp-projects/` and `/root/.openclaw/logs/`. If you're running locally (not as root on a server), edit the `CONFIG.paths` section at the top of `daemon/mvp-factory-daemon-v10-server.ts` to point to your local directories.
+> **Note:** By default the daemon writes to `/root/mvp-projects/` and `/root/.neurafinity/logs/`. If you're running locally (not as root on a server), edit the `CONFIG.paths` section at the top of `daemon/mvp-factory-daemon-v10-server.ts` to point to your local directories.
 
 ### Step 5: Start the daemon
 
@@ -151,7 +151,7 @@ That's it. The daemon will:
 npm start
 
 # Or if running as a service, check logs at:
-# Linux: ~/.openclaw/logs/daemon.log
+# Linux: ~/.neurafinity/logs/daemon.log
 # The daemon also prints everything to stdout
 ```
 
@@ -166,7 +166,7 @@ For 24/7 autonomous operation, deploy to a Linux server (Ubuntu/Debian).
 SSH into your server and run:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/malikmuhammadsaadshafiq-dev/Openclaw/master/mvp-factory/scripts/setup-server.sh | bash
+curl -fsSL https://raw.githubusercontent.com/malikmuhammadsaadshafiq-dev/NeuraFinity/master/mvp-factory/scripts/setup-server.sh | bash
 ```
 
 This installs Node.js 22, creates the directory structure, sets up the systemd service, and starts the daemon. You still need to edit `/root/mvp-factory/.env` with your API keys afterward.
@@ -182,8 +182,8 @@ apt-get install -y nodejs git
 npm install -g typescript tsx eas-cli
 
 # 3. Clone the repo
-git clone https://github.com/malikmuhammadsaadshafiq-dev/Openclaw.git /root/Openclaw
-cd /root/Openclaw/mvp-factory
+git clone https://github.com/malikmuhammadsaadshafiq-dev/NeuraFinity.git /root/NeuraFinity
+cd /root/NeuraFinity/mvp-factory
 
 # 4. Install dependencies
 npm install
@@ -193,7 +193,7 @@ nano .env
 
 # 6. Create output directories
 mkdir -p /root/mvp-projects/{ideas,built,web,mobile,signals,skipped}
-mkdir -p /root/.openclaw/logs
+mkdir -p /root/.neurafinity/logs
 
 # 7. Create systemd service
 cat > /etc/systemd/system/mvp-factory.service << 'EOF'
@@ -204,11 +204,11 @@ After=network.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/root/Openclaw/mvp-factory
+WorkingDirectory=/root/NeuraFinity/mvp-factory
 ExecStart=/usr/bin/npx tsx daemon/mvp-factory-daemon-v10-server.ts
 Restart=always
 RestartSec=10
-EnvironmentFile=/root/Openclaw/mvp-factory/.env
+EnvironmentFile=/root/NeuraFinity/mvp-factory/.env
 
 [Install]
 WantedBy=multi-user.target
@@ -231,7 +231,7 @@ systemctl stop mvp-factory            # Stop the daemon
 ls /root/mvp-projects/ideas/          # Queued ideas
 ls /root/mvp-projects/built/          # Completed builds
 cat /root/mvp-projects/stats.json     # Today's stats
-tail -100 /root/.openclaw/logs/daemon.log  # Recent logs
+tail -100 /root/.neurafinity/logs/daemon.log  # Recent logs
 ```
 
 ---
@@ -306,7 +306,7 @@ A monitoring dashboard is included at `dashboard/server.js`. It provides a web U
 ### Running the dashboard (on server)
 
 ```bash
-cd /root/Openclaw/mvp-factory
+cd /root/NeuraFinity/mvp-factory
 node dashboard/server.js
 # Runs on port 3000
 ```
@@ -380,7 +380,7 @@ reddit: {
 ```typescript
 paths: {
   output: "/root/mvp-projects",       // Base output directory
-  logs: "/root/.openclaw/logs",       // Log files
+  logs: "/root/.neurafinity/logs",       // Log files
   ideas: "/root/mvp-projects/ideas",  // Queued ideas (JSON)
   built: "/root/mvp-projects/built",  // Build metadata (JSON)
   stats: "/root/mvp-projects/stats.json",  // Daily stats
@@ -401,7 +401,7 @@ mvp-factory/
 │   ├── setup-server.sh                    # One-line server setup
 │   └── deploy.sh                          # Deploy script
 ├── config/
-│   └── openclaw.json                      # OpenClaw integration config
+│   └── neurafinity.json                      # NeuraFinity integration config
 ├── package.json
 ├── .env                                   # Your API keys (not committed)
 └── README.md
@@ -515,5 +515,5 @@ MIT License - use, modify, and distribute freely.
 ---
 
 <div align="center">
-<strong>Built by Openclaw Squadron</strong>
+<strong>Built by NeuraFinity Squadron</strong>
 </div>

@@ -1,4 +1,4 @@
-import { Skill, SkillContext } from '@openclaw/sdk';
+import { Skill, SkillContext } from '@neurafinity/sdk';
 
 interface Idea {
   id: string;

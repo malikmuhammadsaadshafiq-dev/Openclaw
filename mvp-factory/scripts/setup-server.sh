@@ -37,7 +37,7 @@ npm install -g typescript tsx expo-cli eas-cli pnpm
 echo -e "${YELLOW}Creating directories...${NC}"
 mkdir -p /root/mvp-factory/{daemon,skills,config,scripts}
 mkdir -p /root/mvp-projects/{ideas,built,web,mobile}
-mkdir -p /root/.openclaw/{logs,memory,skills}
+mkdir -p /root/.neurafinity/{logs,memory,skills}
 
 # Create the daemon script
 echo -e "${YELLOW}Creating daemon script...${NC}"
@@ -70,7 +70,7 @@ const CONFIG = {
   },
   paths: {
     output: '/root/mvp-projects',
-    logs: '/root/.openclaw/logs',
+    logs: '/root/.neurafinity/logs',
     ideas: '/root/mvp-projects/ideas',
     built: '/root/mvp-projects/built',
   },

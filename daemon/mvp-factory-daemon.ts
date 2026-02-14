@@ -39,7 +39,7 @@ const CONFIG = {
   },
   paths: {
     output: "/root/mvp-projects",
-    logs: "/root/.openclaw/logs",
+    logs: "/root/.neurafinity/logs",
     ideas: "/root/mvp-projects/ideas",
     built: "/root/mvp-projects/built",
     stats: "/root/mvp-projects/stats.json",
@@ -2200,7 +2200,7 @@ function generateProductReadme(idea: Idea, projectName: string, funcResults: Tes
     "",
     '<div align="center">',
     "",
-    "**Built autonomously by [Openclaw MVP Factory](https://github.com/" + ghUser + "/Openclaw)** \u2014 an AI-powered system that discovers real user needs and ships working software.",
+    "**Built autonomously by [NeuraFinity MVP Factory](https://github.com/" + ghUser + "/NeuraFinity)** \u2014 an AI-powered system that discovers real user needs and ships working software.",
     "",
     "</div>",
     "",

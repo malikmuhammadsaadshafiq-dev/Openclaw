@@ -1,4 +1,4 @@
-import { Skill, SkillContext } from '@openclaw/sdk';
+import { Skill, SkillContext } from '@neurafinity/sdk';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import * as fs from 'fs/promises';
@@ -279,7 +279,7 @@ npm run dev
 \`\`\`
 
 ## Built by MVP Factory
-Generated automatically by OpenClaw MVP Factory using Kimi K2.5
+Generated automatically by NeuraFinity MVP Factory using Kimi K2.5
 `,
       },
     ];

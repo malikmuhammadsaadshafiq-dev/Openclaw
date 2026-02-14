@@ -30,7 +30,7 @@ const CONFIG = {
   },
   paths: {
     output: process.env.MVP_OUTPUT_DIR || '/root/mvp-projects',
-    logs: process.env.LOG_DIR || '/root/.openclaw/logs',
+    logs: process.env.LOG_DIR || '/root/.neurafinity/logs',
     ideas: '/root/mvp-projects/ideas',
     built: '/root/mvp-projects/built',
   },

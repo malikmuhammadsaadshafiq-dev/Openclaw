@@ -1,6 +1,6 @@
 <div align="center">
 
-# Openclaw
+# NeuraFinity
 
 ### Autonomous AI Agent That Builds & Ships Real Software
 
@@ -10,7 +10,7 @@
 [![Kimi K2.5](https://img.shields.io/badge/LLM-Kimi_K2.5-FF6F00?style=for-the-badge&logo=nvidia&logoColor=white)](#)
 [![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](#license)
 
-**Openclaw scrapes Reddit for real pain points, generates complete working apps with AI, tests them, and auto-deploys to GitHub + Vercel + Expo Go. Fully autonomous. 15 apps per day. Zero human intervention.**
+**NeuraFinity scrapes Reddit for real pain points, generates complete working apps with AI, tests them, and auto-deploys to GitHub + Vercel + Expo Go. Fully autonomous. 15 apps per day. Zero human intervention.**
 
 [How It Works](#-how-it-works) | [Quick Start](#-quick-start) | [Architecture](#-architecture) | [Live Stats](#-live-stats) | [Built With](#-built-with)
 
@@ -20,7 +20,7 @@
 
 ## What Is This?
 
-Openclaw is an autonomous software factory built for the [Clawathon Hackathon](https://openwork.bot/hackathon). It runs 24/7 on a server and continuously:
+NeuraFinity is an autonomous software factory built for the [Clawathon Hackathon](https://openwork.bot/hackathon). It runs 24/7 on a server and continuously:
 
 1. **Discovers** what people need by scraping 13 subreddits for real user pain points
 2. **Ideates** 5 MVPs per cycle using Kimi K2.5 - prioritizing utility tools (like ilovepdf, tinypng) alongside AI-powered apps
@@ -36,7 +36,7 @@ Openclaw is an autonomous software factory built for the [Clawathon Hackathon](h
 ## How It Works
 
 ```
-                    OPENCLAW AUTONOMOUS LOOP
+                    NEURAFINITY AUTONOMOUS LOOP
                     ========================
 
     Reddit Scraping          Idea Generation           Code Generation
@@ -85,8 +85,8 @@ Each style includes custom CSS animations, color schemes, typography, card style
 ### Run locally (development)
 
 ```bash
-git clone https://github.com/malikmuhammadsaadshafiq-dev/Openclaw.git
-cd Openclaw/mvp-factory
+git clone https://github.com/malikmuhammadsaadshafiq-dev/NeuraFinity.git
+cd NeuraFinity/mvp-factory
 npm install
 ```
 
@@ -104,7 +104,7 @@ TELEGRAM_CHAT_ID=your-chat-id       # Optional - notifications
 Create output directories and start:
 ```bash
 # Linux/macOS
-mkdir -p ~/mvp-projects/{ideas,built,web,mobile,signals} ~/.openclaw/logs
+mkdir -p ~/mvp-projects/{ideas,built,web,mobile,signals} ~/.neurafinity/logs
 
 # Start the factory
 npm start
@@ -114,7 +114,7 @@ npm start
 
 ```bash
 # One-line setup on Ubuntu/Debian
-curl -fsSL https://raw.githubusercontent.com/malikmuhammadsaadshafiq-dev/Openclaw/master/mvp-factory/scripts/setup-server.sh | bash
+curl -fsSL https://raw.githubusercontent.com/malikmuhammadsaadshafiq-dev/NeuraFinity/master/mvp-factory/scripts/setup-server.sh | bash
 
 # Then add your API keys
 nano /root/mvp-factory/.env
@@ -128,7 +128,7 @@ systemctl restart mvp-factory
 ## Architecture
 
 ```
-Openclaw/
+NeuraFinity/
 ├── mvp-factory/                      # Core autonomous build system
 │   ├── daemon/
 │   │   └── mvp-factory-daemon-v10-server.ts  # Main daemon (2400+ lines)
@@ -149,7 +149,7 @@ Openclaw/
 │   │   ├── setup-server.sh           # One-line server setup
 │   │   └── deploy.sh                 # Deployment script
 │   └── config/
-│       └── openclaw.json             # LLM & integration config
+│       └── neurafinity.json             # LLM & integration config
 │
 ├── mvp-schemaflow/                   # Sample generated Next.js app
 │   └── src/app/                      # Full working app with pages
@@ -225,7 +225,7 @@ All projects are public on GitHub: [github.com/malikmuhammadsaadshafiq-dev](http
 
 ## Squadron (Clawathon Hackathon)
 
-Built for the [Clawathon Hackathon](https://openwork.bot/hackathon) by the Openclaw Squadron:
+Built for the [Clawathon Hackathon](https://openwork.bot/hackathon) by the NeuraFinity Squadron:
 
 | Agent | Role | Status |
 |-------|------|--------|
@@ -266,6 +266,6 @@ MIT License - use, modify, and distribute freely.
 
 <div align="center">
 
-**Openclaw** - Autonomous software that builds software.
+**NeuraFinity** - Autonomous software that builds software.
 
 </div>

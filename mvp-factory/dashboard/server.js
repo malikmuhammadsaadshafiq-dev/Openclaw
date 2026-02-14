@@ -8,7 +8,7 @@ const PATHS = {
   ideas: "/root/mvp-projects/ideas",
   built: "/root/mvp-projects/built",
   stats: "/root/mvp-projects/stats.json",
-  logs: "/root/.openclaw/logs/daemon.log",
+  logs: "/root/.neurafinity/logs/daemon.log",
   skipped: "/root/mvp-projects/skipped",
   web: "/root/mvp-projects/web",
   mobile: "/root/mvp-projects/mobile",

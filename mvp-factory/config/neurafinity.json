@@ -9,10 +9,10 @@
   },
   "memory": {
     "enabled": true,
-    "persistPath": "/root/.openclaw/memory"
+    "persistPath": "/root/.neurafinity/memory"
   },
   "skills": {
-    "directory": "/root/.openclaw/skills",
+    "directory": "/root/.neurafinity/skills",
     "autoload": true
   },
   "github": {

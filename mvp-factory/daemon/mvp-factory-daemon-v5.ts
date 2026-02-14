@@ -1,7 +1,7 @@
 /**
  * MVP Factory Autonomous Daemon v5
  * - Rate limited: 15 MVPs max per 24h
- * - Telegram notifications via OpenClaw
+ * - Telegram notifications via NeuraFinity
  * - Vercel deployment for live previews
  * - Longer API timeout (8 min)
  */
@@ -32,7 +32,7 @@ const CONFIG = {
   },
   paths: {
     output: "/root/mvp-projects",
-    logs: "/root/.openclaw/logs",
+    logs: "/root/.neurafinity/logs",
     ideas: "/root/mvp-projects/ideas",
     built: "/root/mvp-projects/built",
     stats: "/root/mvp-projects/stats.json",
