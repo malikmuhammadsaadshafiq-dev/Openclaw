@@ -280,7 +280,7 @@ async function researchIdeas(): Promise<Idea[]> {
     ? `\n\nIMPORTANT - DO NOT suggest any ideas similar to these already-built products:\n${existingTitles.map(t => `- ${t}`).join('\n')}\n\nYour ideas must be COMPLETELY DIFFERENT from the above list. Different name, different concept, different problem space.`
     : '';
 
-  const prompt = `You are an expert startup analyst researching X/Twitter and Reddit for the hottest new app, SaaS, and web ideas.
+  const prompt = `You are an expert startup analyst and software architect researching viable product ideas.
 
 Current date: ${new Date().toISOString().split('T')[0]}
 
@@ -288,28 +288,37 @@ Search through trending posts from:
 - X/Twitter: "I wish there was an app", "someone build this", "startup idea", "would pay for"
 - Reddit: r/SideProject, r/startups, r/SaaS, r/AppIdeas, r/indiehackers
 
-Generate 5 UNIQUE, TRENDING app ideas that are:
-1. Buildable as MVPs in 8-24 hours
-2. Solving real problems people are talking about RIGHT NOW
-3. Have clear monetization potential
-4. Not already solved by major players
-5. MUST have unique, distinctive names that don't overlap with existing products${alreadyBuiltList}
+Generate 5 UNIQUE ideas that are REAL, FUNCTIONAL products (NOT UI mockups). Each idea must be one of:
+
+A) AI-ASSISTED TOOL: Uses LLM/AI to actually process user input (text analysis, code generation, content creation, document summarization, data extraction, smart recommendations). These will call a REAL AI API.
+
+B) UTILITY TOOL: Performs actual data processing/transformation (file converters, data validators, calculators, formatters, code tools, SEO analyzers, API testers). These must have server-side processing.
+
+C) DATA DASHBOARD: Visualizes and analyzes real data (analytics tools, monitoring dashboards, financial trackers, health trackers with actual computation).
+
+CRITICAL RULES:
+1. Each product MUST have REAL server-side functionality, not just a pretty UI with localStorage
+2. "AI-powered" means it ACTUALLY calls an AI API, not just has "AI" in the name
+3. Features must be concrete and implementable (e.g., "Analyzes text sentiment using NLP" not "AI-powered analysis")
+4. Must be buildable as a complete MVP in 8-24 hours
+5. Must solve a REAL problem with REAL utility
+6. MUST have unique names that don't overlap with existing products${alreadyBuiltList}
 
 For each idea, determine if it's best as:
 - "web" - A Next.js web application
 - "mobile" - A React Native/Expo mobile app
-- "saas" - A full SaaS with auth, payments
+- "saas" - A full SaaS platform
 - "api" - An API-only service
 
 Return ONLY a valid JSON array:
 [
   {
     "title": "Short catchy name",
-    "description": "One sentence description",
-    "problem": "What problem it solves",
-    "targetUsers": "Who would use it",
-    "features": ["core feature 1", "core feature 2", "core feature 3"],
-    "techStack": "Next.js + Supabase" or "Expo + NativeWind",
+    "description": "One sentence describing what it ACTUALLY DOES (not what it looks like)",
+    "problem": "Specific problem it solves with real utility",
+    "targetUsers": "Who would use it and why",
+    "features": ["REAL feature with server-side logic", "actual data processing capability", "concrete AI/utility function"],
+    "techStack": "Next.js + API Routes" or "Expo + NativeWind",
     "type": "web|mobile|saas|api",
     "estimatedHours": 8-24,
     "viabilityScore": 7-10
@@ -545,63 +554,306 @@ const KNOWN_PACKAGES: Record<string, string> = {
   '@radix-ui/react-toast': '^1.1.5',
 };
 
+// ============================================================
+// Ideation Validation & Product Classification
+// ============================================================
+
+interface ProductBlueprint {
+  category: 'ai-assisted' | 'utility' | 'data-tool' | 'automation' | 'saas-platform';
+  realFeatures: string[];       // What the product ACTUALLY does (not UI mockup)
+  apiRoutes: string[];          // Real API routes needed
+  dataModel: string;            // What data it processes
+  integrations: string[];       // External APIs/services used
+  aiCapability?: string;        // If AI-assisted, what the AI actually does
+}
+
+async function validateAndClassifyIdea(idea: Idea): Promise<ProductBlueprint> {
+  const prompt = `You are a senior software architect. Classify this product idea and define what REAL functionality it needs.
+
+Product: ${idea.title}
+Description: ${idea.description}
+Features: ${idea.features.join(', ')}
+Type: ${idea.type}
+
+Classify into ONE category:
+- "ai-assisted": Product uses AI/LLM for core functionality (text generation, analysis, summarization, code generation, image description, etc.)
+- "utility": Tool that processes/transforms data (converters, calculators, formatters, validators)
+- "data-tool": Dashboard, analytics, or data visualization tool
+- "automation": Workflow automation, scheduling, notification tool
+- "saas-platform": Multi-user platform with auth, data persistence, collaboration
+
+For each category, define REAL functionality (NOT UI mockups):
+- What API routes are needed (e.g., POST /api/analyze, GET /api/data)
+- What data processing happens server-side
+- What external APIs or services it integrates with
+- If AI-assisted: exactly what the LLM processes (input → output)
+
+CRITICAL: Products must have REAL server-side logic, not just forms that save to localStorage.
+
+Return ONLY valid JSON:
+{
+  "category": "ai-assisted|utility|data-tool|automation|saas-platform",
+  "realFeatures": ["feature that actually works server-side", "..."],
+  "apiRoutes": ["POST /api/analyze - processes user input with AI", "..."],
+  "dataModel": "what data structure the app works with",
+  "integrations": ["NVIDIA Kimi K2.5 API", "or other real APIs"],
+  "aiCapability": "if ai-assisted: exactly what AI does, e.g. 'summarizes uploaded text documents'"
+}`;
+
+  try {
+    const response = await kimi.complete(prompt, { maxTokens: 2000, temperature: 0.3 });
+    const jsonMatch = response.match(/\{[\s\S]*?\}/);
+    if (jsonMatch) {
+      return JSON.parse(jsonMatch[0]);
+    }
+  } catch (error) {
+    await logger.log(`Blueprint classification failed: ${error}`, 'WARN');
+  }
+
+  // Fallback: auto-classify based on keywords
+  const titleLower = idea.title.toLowerCase() + ' ' + idea.description.toLowerCase();
+  const isAI = /\b(ai|ml|generat|summar|analyz|predict|classif|detect|recommend|chatbot|assistant|nlp|gpt|llm)\b/.test(titleLower);
+
+  return {
+    category: isAI ? 'ai-assisted' : 'utility',
+    realFeatures: idea.features,
+    apiRoutes: isAI
+      ? ['POST /api/analyze - processes input with Kimi K2.5 AI', 'GET /api/history - retrieves past analyses']
+      : ['POST /api/process - processes user input server-side', 'GET /api/results - retrieves results'],
+    dataModel: 'User input data processed server-side',
+    integrations: isAI ? ['NVIDIA Kimi K2.5 API'] : [],
+    aiCapability: isAI ? `AI-powered ${idea.features[0] || 'analysis'}` : undefined,
+  };
+}
+
+// ============================================================
+// Real API Route Templates
+// ============================================================
+
+// Template for AI-powered API route that ACTUALLY calls NVIDIA/Kimi K2.5
+function generateAIApiRoute(blueprint: ProductBlueprint, idea: Idea): string {
+  return `import { NextRequest, NextResponse } from 'next/server';
+
+// Real AI-powered API route using NVIDIA Kimi K2.5
+const NVIDIA_API_KEY = process.env.NVIDIA_API_KEY || '';
+const NVIDIA_API_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { input, mode } = body;
+
+    if (!input || typeof input !== 'string') {
+      return NextResponse.json({ error: 'Input is required' }, { status: 400 });
+    }
+
+    if (!NVIDIA_API_KEY) {
+      // Fallback: provide useful processing without AI
+      return NextResponse.json({
+        result: processWithoutAI(input, mode),
+        source: 'local-processing',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Call NVIDIA Kimi K2.5 API for real AI processing
+    const systemPrompt = getSystemPrompt(mode);
+    const response = await fetch(NVIDIA_API_URL, {
+      method: 'POST',
+      headers: {
+        'Authorization': \`Bearer \${NVIDIA_API_KEY}\`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'moonshotai/kimi-k2.5',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: input },
+        ],
+        max_tokens: 4096,
+        temperature: 0.7,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('NVIDIA API error:', errorText);
+      // Graceful fallback
+      return NextResponse.json({
+        result: processWithoutAI(input, mode),
+        source: 'fallback-processing',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    const data = await response.json();
+    const aiResult = data.choices?.[0]?.message?.content || '';
+
+    return NextResponse.json({
+      result: aiResult,
+      source: 'kimi-k2.5',
+      model: 'moonshotai/kimi-k2.5',
+      timestamp: new Date().toISOString(),
+      usage: data.usage || {},
+    });
+  } catch (error) {
+    console.error('API route error:', error);
+    return NextResponse.json(
+      { error: 'Processing failed. Please try again.' },
+      { status: 500 }
+    );
+  }
+}
+
+function getSystemPrompt(mode?: string): string {
+  const baseContext = ${JSON.stringify(blueprint.aiCapability || idea.description)};
+  const modeInstructions: Record<string, string> = {
+    analyze: 'Analyze the following input in detail. Provide structured insights, key findings, and actionable recommendations.',
+    summarize: 'Summarize the following input concisely. Highlight the most important points.',
+    generate: 'Generate high-quality content based on the following input. Be creative but accurate.',
+    transform: 'Transform and improve the following input. Make it more professional, clear, and effective.',
+  };
+  return \`You are an AI assistant for ${idea.title}. Your specialty: \${baseContext}. \${modeInstructions[mode || 'analyze'] || modeInstructions.analyze}\`;
+}
+
+function processWithoutAI(input: string, mode?: string): string {
+  // Useful fallback processing without AI
+  const words = input.split(/\\s+/);
+  const sentences = input.split(/[.!?]+/).filter(Boolean);
+  const chars = input.length;
+
+  switch (mode) {
+    case 'summarize':
+      return sentences.length > 3
+        ? sentences.slice(0, 3).join('. ') + '.'
+        : input;
+    case 'analyze':
+      return \`Analysis: \${words.length} words, \${sentences.length} sentences, \${chars} characters. Key terms: \${
+        [...new Set(words.filter(w => w.length > 5))].slice(0, 10).join(', ')
+      }. Readability: \${words.length / sentences.length < 15 ? 'Good' : 'Complex'} (avg \${(words.length / sentences.length).toFixed(1)} words/sentence).\`;
+    default:
+      return input;
+  }
+}
+`;
+}
+
+// Template for utility/data processing API route
+function generateUtilityApiRoute(blueprint: ProductBlueprint, idea: Idea): string {
+  return `import { NextRequest, NextResponse } from 'next/server';
+
+// Real data processing API route
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { data, operation } = body;
+
+    if (!data) {
+      return NextResponse.json({ error: 'Data is required' }, { status: 400 });
+    }
+
+    const result = processData(data, operation);
+
+    return NextResponse.json({
+      result,
+      operation: operation || 'default',
+      processedAt: new Date().toISOString(),
+      stats: {
+        inputSize: JSON.stringify(data).length,
+        outputSize: JSON.stringify(result).length,
+      },
+    });
+  } catch (error) {
+    console.error('Processing error:', error);
+    return NextResponse.json(
+      { error: 'Processing failed. Please check your input.' },
+      { status: 500 }
+    );
+  }
+}
+
+function processData(data: any, operation?: string): any {
+  // Real server-side data processing logic
+  if (typeof data === 'string') {
+    switch (operation) {
+      case 'transform': return transformText(data);
+      case 'validate': return validateData(data);
+      case 'extract': return extractInfo(data);
+      default: return { processed: data, length: data.length };
+    }
+  }
+
+  if (Array.isArray(data)) {
+    return {
+      items: data,
+      count: data.length,
+      summary: summarizeArray(data),
+    };
+  }
+
+  return { processed: data };
+}
+
+function transformText(text: string): object {
+  const words = text.split(/\\s+/);
+  const unique = [...new Set(words.map(w => w.toLowerCase()))];
+  return {
+    original: text,
+    wordCount: words.length,
+    uniqueWords: unique.length,
+    uppercase: text.toUpperCase(),
+    reversed: text.split('').reverse().join(''),
+    slug: text.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+  };
+}
+
+function validateData(data: string): object {
+  const isEmail = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(data);
+  const isUrl = /^https?:\\/\\//.test(data);
+  const isJson = (() => { try { JSON.parse(data); return true; } catch { return false; } })();
+  return { isEmail, isUrl, isJson, length: data.length, isEmpty: data.trim() === '' };
+}
+
+function extractInfo(text: string): object {
+  const emails = text.match(/[^\\s@]+@[^\\s@]+\\.[^\\s@]+/g) || [];
+  const urls = text.match(/https?:\\/\\/[^\\s]+/g) || [];
+  const numbers = text.match(/\\d+\\.?\\d*/g) || [];
+  const dates = text.match(/\\d{4}-\\d{2}-\\d{2}|\\d{1,2}\\/\\d{1,2}\\/\\d{2,4}/g) || [];
+  return { emails, urls, numbers: numbers.map(Number), dates, totalFound: emails.length + urls.length + numbers.length + dates.length };
+}
+
+function summarizeArray(arr: any[]): object {
+  if (arr.length === 0) return { empty: true };
+  const types = arr.map(item => typeof item);
+  const typeCount: Record<string, number> = {};
+  types.forEach(t => { typeCount[t] = (typeCount[t] || 0) + 1; });
+  return { count: arr.length, types: typeCount };
+}
+
+export async function GET() {
+  return NextResponse.json({
+    status: 'healthy',
+    service: '${idea.title}',
+    endpoints: ['POST /api/process'],
+    timestamp: new Date().toISOString(),
+  });
+}
+`;
+}
+
 // Generate complete project
 async function generateProject(idea: Idea): Promise<{ files: Array<{ path: string; content: string }> }> {
   const isWeb = idea.type === 'web' || idea.type === 'saas' || idea.type === 'api';
 
+  // Step 1: Validate and classify the idea
+  await logger.log(`Classifying idea: ${idea.title}...`);
+  const blueprint = await validateAndClassifyIdea(idea);
+  await logger.log(`Classification: ${blueprint.category} | AI: ${blueprint.aiCapability || 'none'} | Routes: ${blueprint.apiRoutes.length}`);
+
+  // Step 2: Build the appropriate generation prompt based on classification
   const prompt = isWeb
-    ? `Generate a complete Next.js 14 application for:
-
-**${idea.title}**
-${idea.description}
-
-Features to implement:
-${idea.features.map(f => `- ${f}`).join('\n')}
-
-Create a COMPLETE, WORKING application with:
-- App Router (app/ directory)
-- TypeScript
-- TailwindCSS styling
-- All features fully implemented
-- Clean, modern UI
-- Proper error handling
-
-CRITICAL RULES FOR VERCEL DEPLOYMENT:
-1. next.config.js MUST include: typescript: { ignoreBuildErrors: true }, eslint: { ignoreDuringBuilds: true }
-2. Do NOT use default imports from packages that only have named exports
-3. Do NOT import packages that aren't in package.json
-4. All 'use client' directives must be at the VERY TOP of the file
-5. Include ALL dependencies in package.json with exact versions
-6. Do NOT use shadcn/ui unless you include the full component files
-7. Use simple Tailwind classes instead of complex component libraries
-8. Include a src/lib/utils.ts with any helper functions you reference
-
-Return ONLY a JSON array of files:
-[{"path": "package.json", "content": "..."}, {"path": "src/app/page.tsx", "content": "..."}]
-
-Include ALL files needed: package.json, tsconfig.json, next.config.js, tailwind.config.ts, postcss.config.js, all pages, all components, lib files, README.md`
-    : `Generate a complete Expo/React Native mobile app for:
-
-**${idea.title}**
-${idea.description}
-
-Features to implement:
-${idea.features.map(f => `- ${f}`).join('\n')}
-
-Create a COMPLETE, WORKING mobile app with:
-- Expo SDK 50+
-- Expo Router (app/ directory)
-- TypeScript
-- NativeWind (Tailwind for RN)
-- All features fully implemented
-- Native-feeling UI
-
-CRITICAL: Include ALL dependencies in package.json. Do NOT import packages that aren't listed.
-
-Return ONLY a JSON array of files:
-[{"path": "package.json", "content": "..."}, {"path": "app/index.tsx", "content": "..."}]
-
-Include ALL files: package.json, app.json, tsconfig.json, tailwind.config.js, babel.config.js, all screens, components, README.md`;
+    ? buildWebGenerationPrompt(idea, blueprint)
+    : buildMobileGenerationPrompt(idea, blueprint);
 
   const response = await kimi.complete(prompt, { maxTokens: 30000, temperature: 0.3 });
 
@@ -612,12 +864,338 @@ Include ALL files: package.json, app.json, tsconfig.json, tailwind.config.js, ba
 
   let files: Array<{ path: string; content: string }> = JSON.parse(jsonMatch[0]);
 
-  // Post-process files for Vercel compatibility
+  // Step 3: Inject REAL API routes based on blueprint
   if (isWeb) {
+    files = injectRealApiRoutes(files, blueprint, idea);
     files = ensureVercelCompatibility(files);
   }
 
+  // Step 4: Quality gate - validate generated code has real functionality
+  const quality = assessCodeQuality(files, blueprint);
+  await logger.log(`Quality score: ${quality.score}/14 | Has API routes: ${quality.hasApiRoutes} | Has server logic: ${quality.hasServerLogic}`);
+
+  if (quality.score < 6) {
+    await logger.log(`Quality too low (${quality.score}/14), regenerating with stricter prompt...`, 'WARN');
+    // Retry with even stricter prompt
+    const retryPrompt = isWeb
+      ? buildStrictWebPrompt(idea, blueprint, quality.issues)
+      : buildMobileGenerationPrompt(idea, blueprint);
+
+    const retryResponse = await kimi.complete(retryPrompt, { maxTokens: 30000, temperature: 0.2 });
+    const retryMatch = retryResponse.match(/\[[\s\S]*\]/);
+    if (retryMatch) {
+      files = JSON.parse(retryMatch[0]);
+      if (isWeb) {
+        files = injectRealApiRoutes(files, blueprint, idea);
+        files = ensureVercelCompatibility(files);
+      }
+    }
+  }
+
   return { files };
+}
+
+// Build the web generation prompt with REAL functionality requirements
+function buildWebGenerationPrompt(idea: Idea, blueprint: ProductBlueprint): string {
+  const aiSection = blueprint.category === 'ai-assisted'
+    ? `
+THIS IS AN AI-POWERED PRODUCT. The AI functionality MUST be REAL:
+- Include an API route at src/app/api/analyze/route.ts that calls the NVIDIA Kimi K2.5 API
+- The API key comes from process.env.NVIDIA_API_KEY
+- API endpoint: https://integrate.api.nvidia.com/v1/chat/completions
+- Model: moonshotai/kimi-k2.5
+- The frontend sends user input to YOUR API route, which forwards to NVIDIA and returns real AI results
+- Include a graceful fallback if the API key is not set (basic text processing, not just an error)
+- AI capability: ${blueprint.aiCapability || 'intelligent analysis and generation'}
+
+Example API route structure:
+\`\`\`
+const response = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
+  method: 'POST',
+  headers: { 'Authorization': \\\`Bearer \\\${process.env.NVIDIA_API_KEY}\\\`, 'Content-Type': 'application/json' },
+  body: JSON.stringify({ model: 'moonshotai/kimi-k2.5', messages: [...], max_tokens: 4096, temperature: 0.7 }),
+});
+\`\`\``
+    : '';
+
+  const utilitySection = blueprint.category === 'utility' || blueprint.category === 'data-tool'
+    ? `
+THIS IS A UTILITY/DATA TOOL. It MUST have REAL data processing:
+- Include API routes that do actual server-side computation
+- Process, transform, validate, or analyze data on the server
+- Return structured results, not just echo the input
+- Include proper input validation and error messages
+- Data model: ${blueprint.dataModel}`
+    : '';
+
+  return `Generate a PRODUCTION-QUALITY Next.js 14 application for:
+
+**${idea.title}**
+${idea.description}
+
+Target users: ${idea.targetUsers}
+Problem solved: ${idea.problem}
+
+Features to implement (EACH must have REAL functionality):
+${blueprint.realFeatures.map(f => `- ${f}`).join('\n')}
+
+Required API routes:
+${blueprint.apiRoutes.map(r => `- ${r}`).join('\n')}
+
+${aiSection}
+${utilitySection}
+
+ABSOLUTE REQUIREMENTS (violations = rejected):
+1. REAL SERVER-SIDE LOGIC: Every feature must work via Next.js API routes (src/app/api/*/route.ts)
+2. NO localStorage-only CRUD: Data processing must happen server-side, not just saving to browser storage
+3. NO placeholder functions: Every button must trigger a real action with real results
+4. NO fake data: If data is needed, generate it programmatically or process user input
+5. WORKING API routes: Each route must accept input, process it, and return meaningful output
+6. PROPER ERROR HANDLING: Show real error messages from the API, not generic "something went wrong"
+7. LOADING STATES: Show spinners/skeletons while API calls are in progress
+8. RESPONSIVE UI: Must look good on mobile and desktop with TailwindCSS
+
+TECH STACK:
+- Next.js 14 App Router (app/ directory structure)
+- TypeScript (strict)
+- TailwindCSS for styling (no complex component libraries)
+- React hooks for state management
+- Fetch API for client-server communication
+
+VERCEL DEPLOYMENT RULES:
+1. next.config.js MUST have: typescript: { ignoreBuildErrors: true }, eslint: { ignoreDuringBuilds: true }
+2. Do NOT use default imports from packages with only named exports
+3. 'use client' must be the FIRST line in client components
+4. ALL dependencies must be in package.json with versions
+5. Do NOT use shadcn/ui - use plain Tailwind classes
+6. Include src/lib/utils.ts for any shared helpers
+
+FILE STRUCTURE REQUIRED:
+- package.json (with ALL deps)
+- next.config.js
+- tsconfig.json
+- tailwind.config.ts
+- postcss.config.js
+- src/app/layout.tsx
+- src/app/page.tsx (main page)
+- src/app/api/*/route.ts (API routes with REAL logic)
+- src/components/*.tsx (reusable components)
+- src/lib/utils.ts
+
+Return ONLY a JSON array of files:
+[{"path": "package.json", "content": "..."}, {"path": "src/app/page.tsx", "content": "..."}, ...]
+
+Include EVERY file needed for a complete, working, deployable application.`;
+}
+
+// Strict retry prompt when quality gate fails
+function buildStrictWebPrompt(idea: Idea, blueprint: ProductBlueprint, issues: string[]): string {
+  return `REGENERATE this Next.js 14 application. The previous attempt was REJECTED for these reasons:
+${issues.map(i => `- ${i}`).join('\n')}
+
+Product: ${idea.title}
+Description: ${idea.description}
+
+YOU MUST FIX THESE ISSUES:
+1. Include REAL API routes in src/app/api/ with actual server-side processing
+2. The frontend must call these API routes and display real results
+3. NO localStorage as a database replacement
+4. Every feature must produce real, useful output
+
+${blueprint.category === 'ai-assisted' ? `This is an AI product. Include a real API route that calls:
+- URL: https://integrate.api.nvidia.com/v1/chat/completions
+- Model: moonshotai/kimi-k2.5
+- Use process.env.NVIDIA_API_KEY for auth
+- Include fallback processing if API key is missing` : ''}
+
+Required API routes:
+${blueprint.apiRoutes.map(r => `- ${r}`).join('\n')}
+
+TECH: Next.js 14, TypeScript, TailwindCSS, App Router
+Include: package.json, next.config.js, tsconfig.json, tailwind.config.ts, postcss.config.js, ALL source files
+
+Return ONLY a JSON array: [{"path": "...", "content": "..."}, ...]`;
+}
+
+// Mobile generation prompt (also improved)
+function buildMobileGenerationPrompt(idea: Idea, blueprint: ProductBlueprint): string {
+  return `Generate a PRODUCTION-QUALITY Expo/React Native mobile app for:
+
+**${idea.title}**
+${idea.description}
+
+Features (EACH must have REAL functionality):
+${blueprint.realFeatures.map(f => `- ${f}`).join('\n')}
+
+REQUIREMENTS:
+- Expo SDK 50+ with Expo Router (app/ directory)
+- TypeScript
+- NativeWind (Tailwind for RN)
+- REAL data processing (not just UI mockups)
+- Proper error handling and loading states
+- Native-feeling UI with smooth animations
+${blueprint.category === 'ai-assisted' ? `
+- Include a real API service that calls NVIDIA Kimi K2.5:
+  URL: https://integrate.api.nvidia.com/v1/chat/completions
+  Model: moonshotai/kimi-k2.5
+  Auth: Bearer token from environment variable` : ''}
+
+CRITICAL:
+- Include ALL dependencies in package.json
+- Do NOT import packages not in package.json
+- Every screen must have real functionality, not just placeholder text
+
+Return ONLY a JSON array of files:
+[{"path": "package.json", "content": "..."}, {"path": "app/index.tsx", "content": "..."}]
+
+Include ALL files: package.json, app.json, tsconfig.json, tailwind.config.js, babel.config.js, all screens, components`;
+}
+
+// Inject real API routes if the generated code is missing them
+function injectRealApiRoutes(
+  files: Array<{ path: string; content: string }>,
+  blueprint: ProductBlueprint,
+  idea: Idea
+): Array<{ path: string; content: string }> {
+  const result = [...files];
+  const hasApiRoute = result.some(f => f.path.includes('/api/') && f.path.endsWith('route.ts'));
+
+  if (!hasApiRoute) {
+    await_log_sync('No API routes found in generated code, injecting real ones...');
+
+    if (blueprint.category === 'ai-assisted') {
+      result.push({
+        path: 'src/app/api/analyze/route.ts',
+        content: generateAIApiRoute(blueprint, idea),
+      });
+    } else {
+      result.push({
+        path: 'src/app/api/process/route.ts',
+        content: generateUtilityApiRoute(blueprint, idea),
+      });
+    }
+  }
+
+  // Also inject .env.example so deployers know what env vars are needed
+  const hasEnvExample = result.some(f => f.path === '.env.example' || f.path === '.env.local.example');
+  if (!hasEnvExample && blueprint.category === 'ai-assisted') {
+    result.push({
+      path: '.env.example',
+      content: `# AI API Configuration\nNVIDIA_API_KEY=your_nvidia_api_key_here\n# Get your API key at: https://build.nvidia.com/\n`,
+    });
+  }
+
+  return result;
+}
+
+// Synchronous logger helper for non-async contexts
+function await_log_sync(msg: string) {
+  console.log(`[${new Date().toISOString()}] [INFO] ${msg}`);
+}
+
+// ============================================================
+// Quality Assessment Gate
+// ============================================================
+
+interface QualityAssessment {
+  score: number;          // 0-14
+  hasApiRoutes: boolean;
+  hasServerLogic: boolean;
+  hasRealProcessing: boolean;
+  hasErrorHandling: boolean;
+  hasLoadingStates: boolean;
+  hasResponsiveUI: boolean;
+  issues: string[];
+}
+
+function assessCodeQuality(
+  files: Array<{ path: string; content: string }>,
+  blueprint: ProductBlueprint
+): QualityAssessment {
+  let score = 0;
+  const issues: string[] = [];
+
+  // 1. Has API routes (2 points)
+  const apiFiles = files.filter(f => f.path.includes('/api/') && (f.path.endsWith('route.ts') || f.path.endsWith('route.js')));
+  const hasApiRoutes = apiFiles.length > 0;
+  if (hasApiRoutes) {
+    score += 2;
+  } else {
+    issues.push('No API routes found - app has no server-side functionality');
+  }
+
+  // 2. API routes have real logic, not just stubs (2 points)
+  const hasServerLogic = apiFiles.some(f => {
+    const content = f.content;
+    return (content.includes('fetch(') || content.includes('process') || content.includes('JSON.parse') ||
+            content.includes('await') || content.includes('response.json'));
+  });
+  if (hasServerLogic) {
+    score += 2;
+  } else if (hasApiRoutes) {
+    issues.push('API routes are stubs without real processing logic');
+  }
+
+  // 3. No localStorage as primary data store (2 points)
+  const allContent = files.map(f => f.content).join('\n');
+  const localStorageCount = (allContent.match(/localStorage\.(set|get|remove)Item/g) || []).length;
+  const hasRealProcessing = localStorageCount < 5; // Allow some localStorage for preferences, but not as DB
+  if (hasRealProcessing) {
+    score += 2;
+  } else {
+    issues.push(`Overuses localStorage (${localStorageCount} calls) - use API routes for data persistence`);
+  }
+
+  // 4. Frontend calls API routes (2 points)
+  const clientFiles = files.filter(f => f.path.endsWith('.tsx') || f.path.endsWith('.jsx'));
+  const callsApi = clientFiles.some(f => f.content.includes("fetch('/api/") || f.content.includes('fetch("/api/') || f.content.includes('fetch(`/api/'));
+  if (callsApi) {
+    score += 2;
+  } else {
+    issues.push('Frontend does not call any API routes - no client-server communication');
+  }
+
+  // 5. Error handling (1 point)
+  const hasErrorHandling = allContent.includes('catch') && (allContent.includes('error') || allContent.includes('Error'));
+  if (hasErrorHandling) {
+    score += 1;
+  } else {
+    issues.push('No error handling found');
+  }
+
+  // 6. Loading states (1 point)
+  const hasLoadingStates = allContent.includes('loading') || allContent.includes('isLoading') || allContent.includes('spinner') || allContent.includes('Loading');
+  if (hasLoadingStates) {
+    score += 1;
+  } else {
+    issues.push('No loading states - poor UX during API calls');
+  }
+
+  // 7. Responsive design (1 point)
+  const hasResponsiveUI = allContent.includes('md:') || allContent.includes('lg:') || allContent.includes('sm:');
+  if (hasResponsiveUI) {
+    score += 1;
+  } else {
+    issues.push('No responsive design breakpoints');
+  }
+
+  // 8. Has enough files for a real app (1 point)
+  if (files.length >= 8) {
+    score += 1;
+  } else {
+    issues.push(`Only ${files.length} files generated - too few for a real app`);
+  }
+
+  return {
+    score,
+    hasApiRoutes,
+    hasServerLogic,
+    hasRealProcessing,
+    hasErrorHandling,
+    hasLoadingStates,
+    hasResponsiveUI,
+    issues,
+  };
 }
 
 // Ensure all generated files are Vercel-compatible
@@ -860,11 +1438,10 @@ async function publishToExpo(projectPath: string, idea: Idea): Promise<string> {
 }
 
 // Mark idea as built
-async function markBuilt(idea: Idea, liveUrl?: string): Promise<void> {
+async function markBuilt(idea: Idea, liveUrl?: string, qualityScore?: number, category?: string): Promise<void> {
   await fs.mkdir(CONFIG.paths.built, { recursive: true });
 
   try {
-    // Read the idea file and add liveUrl if available
     const ideaPath = path.join(CONFIG.paths.ideas, `${idea.id}.json`);
     const builtPath = path.join(CONFIG.paths.built, `${idea.id}.json`);
 
@@ -875,10 +1452,15 @@ async function markBuilt(idea: Idea, liveUrl?: string): Promise<void> {
         data.liveUrl = liveUrl;
       }
       data.builtAt = new Date().toISOString();
+      if (qualityScore !== undefined) {
+        data.functionalityScore = qualityScore;
+      }
+      if (category) {
+        data.productCategory = category;
+      }
       await fs.writeFile(builtPath, JSON.stringify(data, null, 2));
       await fs.unlink(ideaPath);
     } catch {
-      // Fallback: just move the file
       await fs.rename(ideaPath, builtPath);
     }
   } catch {}
@@ -959,9 +1541,13 @@ async function buildNextIdea(): Promise<BuildResult> {
   }
 
   try {
-    // Generate project
+    // Generate project (now includes ideation validation + quality gate)
     const { files } = await generateProject(idea);
     await logger.log(`Generated ${files.length} files`);
+
+    // Get the blueprint category for metadata
+    const blueprint = await validateAndClassifyIdea(idea);
+    const quality = assessCodeQuality(files, blueprint);
 
     // Write files
     const projectPath = await writeProject(idea, files);
@@ -982,10 +1568,10 @@ async function buildNextIdea(): Promise<BuildResult> {
       expoUrl = await publishToExpo(projectPath, idea);
     }
 
-    // Mark as built (include liveUrl)
-    await markBuilt(idea, liveUrl);
+    // Mark as built with quality score and category
+    await markBuilt(idea, liveUrl, quality.score, blueprint.category);
 
-    await logger.log(`✅ MVP Complete: ${idea.title}${liveUrl ? ` | Live: ${liveUrl}` : ''}`);
+    await logger.log(`✅ MVP Complete: ${idea.title} | Quality: ${quality.score}/14 | Category: ${blueprint.category}${liveUrl ? ` | Live: ${liveUrl}` : ''}`);
 
     return { success: true, projectPath, githubUrl, expoUrl };
   } catch (error) {
