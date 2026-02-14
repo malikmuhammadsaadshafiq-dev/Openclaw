@@ -10,7 +10,7 @@ echo "🦞 MVP Factory Deployment Starting..."
 SERVER_IP="45.58.40.219"
 SERVER_USER="root"
 DEPLOY_DIR="/root/mvp-factory"
-NVIDIA_API_KEY="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"
+NVIDIA_API_KEY="${NVIDIA_API_KEY:?Set NVIDIA_API_KEY env var before deploying}"
 
 # Colors
 GREEN='\033[0;32m'
@@ -59,7 +59,7 @@ tar -xzf /tmp/mvp-factory.tar.gz
 # Create environment file
 cat > .env << 'EOF'
 # Kimi K2.5 via NVIDIA API
-NVIDIA_API_KEY=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
+NVIDIA_API_KEY=${NVIDIA_API_KEY}
 LLM_BASE_URL=https://integrate.api.nvidia.com/v1
 LLM_MODEL=moonshotai/kimi-k2.5
 

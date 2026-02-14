@@ -305,7 +305,7 @@ PKGJSON
 # Create .env
 cat > /root/mvp-factory/.env << 'ENVFILE'
 # Kimi K2.5 via NVIDIA API
-NVIDIA_API_KEY=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
+NVIDIA_API_KEY=${NVIDIA_API_KEY:-your_nvidia_api_key_here}
 
 # GitHub (REQUIRED - add your credentials)
 GITHUB_TOKEN=
