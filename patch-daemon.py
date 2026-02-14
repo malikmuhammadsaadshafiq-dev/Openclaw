@@ -1,336 +1,455 @@
-import re
-import sys
+#!/usr/bin/env python3
+"""Patch MVP Factory daemon to fix Vercel deployment failures.
 
-filepath = sys.argv[1] if len(sys.argv) > 1 else '/root/mvp-factory/daemon/mvp-factory-daemon.ts'
+Root causes of failures:
+1. module_not_found: AI generates code importing packages not in package.json
+2. import_error: Mismatched default/named imports
+3. lint_or_type_error: TypeScript errors that bypass ignoreBuildErrors
 
-with open(filepath, 'r', encoding='utf-8') as f:
-    content = f.read()
+Fixes:
+1. Expand KNOWN_GOOD_VERSIONS with commonly used packages
+2. Add autoDetectAndInstallMissingPackages() for web projects
+3. Add fixImportExportMismatches() function
+4. Add verifyBuildLocally() for pre-deploy checking
+5. Wire new functions into buildMVP flow
+6. Improve AI prompt for consistent named exports
+7. Add lucide-react, clsx, tailwind-merge to required deps
+8. Add @types/react-dom to required devDeps
+"""
+
+DAEMON_PATH = "/root/mvp-factory/daemon/mvp-factory-daemon.ts"
+
+with open(DAEMON_PATH, "r") as f:
+    code = f.read()
 
 changes = 0
 
-# ======== 1. UPGRADE FUNCTIONALITY_RULES ========
-old_func_rules = """CRITICAL - MVP MUST BE FUNCTIONAL:
+# =====================================================
+# FIX 1: Expand KNOWN_GOOD_VERSIONS with commonly used packages
+# =====================================================
+old_versions = '''const KNOWN_GOOD_VERSIONS: Record<string, string> = {
+  "next": "^14.2.21",
+  "react": "^18.3.1",
+  "react-dom": "^18.3.1",
+  "typescript": "^5.7.3",
+  "@types/node": "^20.17.16",
+  "@types/react": "^18.3.18",
+  "@types/react-dom": "^18.3.5",
+  "tailwindcss": "^3.4.17",
+  "postcss": "^8.5.1",
+  "autoprefixer": "^10.4.20",
+  "eslint": "^8.56.0",
+  "eslint-config-next": "^14.2.21",
+  "@supabase/supabase-js": "^2.49.1",
+  "lucide-react": "^0.469.0",
+  "framer-motion": "^11.18.0",
+  "recharts": "^2.15.0",
+  "date-fns": "^4.1.0",
+};'''
 
-1. USER INTERACTIONS (Required):
-   - Forms that actually submit and show results
-   - Buttons that trigger visible actions
-   - Input fields with real-time validation
-   - Loading states when actions happen
-   - Success/error feedback messages
-   - Modal dialogs for confirmations
+new_versions = '''const KNOWN_GOOD_VERSIONS: Record<string, string> = {
+  "next": "^14.2.21",
+  "react": "^18.3.1",
+  "react-dom": "^18.3.1",
+  "typescript": "^5.7.3",
+  "@types/node": "^20.17.16",
+  "@types/react": "^18.3.18",
+  "@types/react-dom": "^18.3.5",
+  "tailwindcss": "^3.4.17",
+  "postcss": "^8.5.1",
+  "autoprefixer": "^10.4.20",
+  "eslint": "^8.56.0",
+  "eslint-config-next": "^14.2.21",
+  "@supabase/supabase-js": "^2.49.1",
+  "lucide-react": "^0.469.0",
+  "framer-motion": "^11.18.0",
+  "recharts": "^2.15.0",
+  "date-fns": "^4.1.0",
+  "clsx": "^2.1.0",
+  "tailwind-merge": "^2.2.0",
+  "class-variance-authority": "^0.7.0",
+  "@radix-ui/react-dialog": "^1.0.5",
+  "@radix-ui/react-dropdown-menu": "^2.0.6",
+  "@radix-ui/react-slot": "^1.0.2",
+  "@radix-ui/react-toast": "^1.1.5",
+  "@radix-ui/react-tabs": "^1.0.4",
+  "zustand": "^4.5.0",
+  "react-hot-toast": "^2.4.1",
+  "react-icons": "^5.0.1",
+  "uuid": "^9.0.0",
+  "zod": "^3.22.0",
+  "sonner": "^1.4.0",
+  "react-hook-form": "^7.50.0",
+  "@heroicons/react": "^2.1.1",
+  "chart.js": "^4.4.1",
+  "react-chartjs-2": "^5.2.0",
+  "cmdk": "^0.2.0",
+  "react-dropzone": "^14.2.3",
+  "react-markdown": "^9.0.1",
+  "next-themes": "^0.2.1",
+  "sharp": "^0.33.2",
+  "axios": "^1.6.7",
+};'''
 
-2. STATE MANAGEMENT (Required):
-   - useState for all interactive elements
-   - Track user inputs in state
-   - Show/hide components based on state
-   - Counter or progress tracking
-   - Lists that can be added/removed
-
-3. DEMO DATA (Required):
-   - Pre-populated realistic sample data
-   - At least 5-10 demo items to show
-   - User can interact with demo data
-   - Add/edit/delete functionality works
-
-4. VISUAL FEEDBACK (Required):
-   - Loading spinners when processing
-   - Toast notifications for success/error
-   - Animated transitions between states
-   - Disabled states on buttons during loading
-   - Progress bars for multi-step actions
-
-5. REAL SCENARIOS (Required):
-   - If it's a todo app: user can add, check, delete todos
-   - If it's analytics: show charts with real-looking data
-   - If it's social: show posts user can like/comment
-   - If it's productivity: timer/pomodoro that works
-   - If it's finance: calculator that computes
-
-FORBIDDEN:
-- Static pages with no interactions
-- Buttons that do nothing
-- Empty states with no demo data
-- Forms without submit handlers
-- "Coming soon" or placeholder sections"""
-
-new_func_rules = """CRITICAL - EVERY MVP MUST BE A FULLY WORKING PRODUCT (not a demo/prototype):
-
-1. ZERO DEAD ENDS — every UI element must work:
-   - Every button MUST have a working onClick that changes visible state
-   - Every nav link MUST switch to a real view with real content
-   - Every form MUST submit, validate, and show results
-   - Every modal MUST open AND close properly
-   - Every delete button MUST remove the item with animation
-   - Every search/filter MUST actually filter the displayed list
-   - NEVER use alert() — use inline toast/notification components
-
-2. FULL STATE MANAGEMENT — app must feel alive:
-   - useState for ALL interactive elements (no exceptions)
-   - Items can be Created, Read, Updated, and Deleted (full CRUD)
-   - Search/filter state that filters items in real-time as user types
-   - Sort functionality (by date, name, status, priority, etc.)
-   - Toggle between list/grid view where appropriate
-   - Tab navigation state to switch between views
-   - Form state with validation (required fields, format checks)
-   - localStorage.setItem/getItem to persist data across page refreshes
-
-3. REALISTIC DEMO DATA — must look like a real product in use:
-   - 10-15 pre-populated items with realistic, diverse data
-   - Real names (Sarah Chen, Marcus Johnson, Emily Rodriguez — NOT User 1, User 2)
-   - Real dates (2024-03-15, 2024-04-02 — NOT placeholder or today)
-   - Real prices ($49.99, $12,500 — NOT $0 or $XX.XX)
-   - Real descriptions (2-3 sentences of actual content — NOT Lorem ipsum)
-   - Mixed statuses (active, pending, completed, cancelled — shows variety)
-   - Demo data must be diverse: different categories, different values, different states
-
-4. COMPLETE TAB VIEWS — every nav tab must render a full page:
-   - HOME tab: Main content with item list/grid, add button, search bar
-   - DASHBOARD tab: Stats cards (total items, completed %, recent activity), summary using pure CSS/SVG bars, activity timeline
-   - PROFILE/SETTINGS tab: User avatar placeholder, display name, email, theme toggle (dark/light), notification prefs with working toggles, export data button
-   - Each tab must have AT LEAST 3 interactive elements
-
-5. WORKING FEATURES — not just UI mockups:
-   - Search bar: filters items as user types (items.filter(i => i.title.toLowerCase().includes(query)))
-   - Sort dropdown: changes item order (by date, by name, by status)
-   - Status filters: click to show only items with a specific status
-   - Counters update when items are added/deleted
-   - Dashboard stats recalculate based on actual items array
-   - Dark mode toggle actually switches all colors via CSS class or state
-   - Export button copies data to clipboard or downloads as JSON
-
-6. VISUAL FEEDBACK FOR EVERY ACTION:
-   - Loading: skeleton shimmer for initial load, inline spinner on buttons during actions
-   - Success: green toast slides in from bottom-right, auto-dismisses after 3s
-   - Error: red toast with error message
-   - Delete: item fades out before removal (300ms transition)
-   - Add: new item slides in at top of list
-   - Buttons: disabled + spinner during async operations
-   - Form validation: red border + message on invalid, green on valid
-
-ABSOLUTELY FORBIDDEN (will fail quality check):
-- Static pages with no interactions
-- Buttons that do nothing (onClick={() => {} is NOT acceptable)
-- href="#" or href="/page" links (MUST use state-based navigation)
-- Empty states with no demo data on first load
-- Forms without submit handlers
-- "Coming soon", "Under construction", "TODO" sections
-- Placeholder text: "Lorem ipsum", "Sample text", "Description here"
-- More than 1-2 placeholder items maximum in the entire app
-- Modals/drawers that do not close when clicking outside or pressing X
-- console.log as the only action on button click"""
-
-if old_func_rules in content:
-    content = content.replace(old_func_rules, new_func_rules)
+if old_versions in code:
+    code = code.replace(old_versions, new_versions)
     changes += 1
-    print('1. Upgraded FUNCTIONALITY_RULES')
+    print("  [OK] Fix 1: Expanded KNOWN_GOOD_VERSIONS with 20+ packages")
 else:
-    print('WARNING: Could not find FUNCTIONALITY_RULES')
+    print("  [SKIP] Fix 1: KNOWN_GOOD_VERSIONS not found (may already be patched)")
 
-# ======== 2. UPGRADE SAMPLE_INTERACTIONS ========
-old_sample_start = "EXAMPLE PATTERNS TO USE:"
-old_sample_end = """// Success toast
-{success && (
-  <div className="fixed bottom-4 right-4 bg-green-500 text-white p-4 rounded-lg animate-slide-up">
-    ✅ Action completed!
-  </div>
-)}"""
+# =====================================================
+# FIX 2: Add new functions before sanitizePackageJson
+# =====================================================
+NEW_FUNCTIONS = '''
+// ============= AUTO-DETECT MISSING PACKAGES (WEB) =============
 
-new_sample = """REQUIRED PATTERNS — use ALL of these in every app:
+async function autoDetectAndInstallMissingPackages(projectPath: string): Promise<void> {
+  await logger.log("Scanning imports for missing packages...");
 
-// ===== TAB NAVIGATION (MANDATORY) =====
-const [activeTab, setActiveTab] = useState("home")
-// In navbar: onClick={() => setActiveTab("dashboard")} — NEVER href="#"
-// Render: {activeTab === "home" && <HomeView />} {activeTab === "dashboard" && <DashboardView />}
+  try {
+    const exts = [".tsx", ".ts", ".jsx", ".js"];
+    async function walkSrc2(dir: string): Promise<string[]> {
+      const files: string[] = [];
+      try {
+        const entries = await fs.readdir(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          const full = path.join(dir, entry.name);
+          if (entry.name === "node_modules" || entry.name === ".next" || entry.name === ".git") continue;
+          if (entry.isDirectory()) files.push(...await walkSrc2(full));
+          else if (exts.some(ext => entry.name.endsWith(ext))) files.push(full);
+        }
+      } catch {}
+      return files;
+    }
 
-// ===== SEARCH + FILTER (MANDATORY) =====
-const [searchQuery, setSearchQuery] = useState("")
-const [statusFilter, setStatusFilter] = useState("all")
-const [sortBy, setSortBy] = useState("date")
+    const sourceFiles = await walkSrc2(projectPath);
+    const importedPackages = new Set<string>();
 
-const filteredItems = items
-  .filter(item => item.title.toLowerCase().includes(searchQuery.toLowerCase()))
-  .filter(item => statusFilter === "all" || item.status === statusFilter)
-  .sort((a, b) => sortBy === "date" ? b.date.localeCompare(a.date) : a.title.localeCompare(b.title))
+    for (const file of sourceFiles) {
+      try {
+        const content = await fs.readFile(file, "utf-8");
+        // Match: import ... from 'package' or require('package')
+        const lines = content.split("\\n");
+        for (const line of lines) {
+          const fromMatch = line.match(/from\\s+['"]([@a-zA-Z][^'"]*)['"]/);
+          const requireMatch = line.match(/require\\s*\\(\\s*['"]([@a-zA-Z][^'"]*)['"]/);
+          const pkg = (fromMatch && fromMatch[1]) || (requireMatch && requireMatch[1]);
+          if (pkg) {
+            const basePkg = pkg.startsWith("@") ? pkg.split("/").slice(0, 2).join("/") : pkg.split("/")[0];
+            const builtins = ["react", "react-dom", "next", "fs", "path", "util", "crypto", "stream", "http", "https", "url", "os", "child_process", "events", "buffer", "querystring", "assert", "tty", "net", "dns", "zlib", "process"];
+            if (!builtins.includes(basePkg) && !basePkg.startsWith("next/")) {
+              importedPackages.add(basePkg);
+            }
+          }
+        }
+      } catch {}
+    }
 
-// ===== FULL CRUD (MANDATORY) =====
-const addItem = (data) => { setItems([{ id: Date.now().toString(), ...data, date: new Date().toISOString().split("T")[0] }, ...items]); showToast("Added successfully", "success") }
-const deleteItem = (id) => { setItems(items.filter(i => i.id !== id)); showToast("Deleted", "success") }
-const updateItem = (id, updates) => { setItems(items.map(i => i.id === id ? {...i, ...updates} : i)); showToast("Updated", "success") }
-const toggleStatus = (id) => { setItems(items.map(i => i.id === id ? {...i, status: i.status === "active" ? "completed" : "active"} : i)) }
+    if (importedPackages.size === 0) return;
 
-// ===== DATA PERSISTENCE (MANDATORY) =====
-useEffect(() => { const saved = localStorage.getItem("app-items"); if (saved) setItems(JSON.parse(saved)) }, [])
-useEffect(() => { localStorage.setItem("app-items", JSON.stringify(items)) }, [items])
+    // Read current package.json
+    const pkgPath = path.join(projectPath, "package.json");
+    let pkg: any = {};
+    try {
+      pkg = JSON.parse(await fs.readFile(pkgPath, "utf-8"));
+    } catch {}
 
-// ===== DASHBOARD STATS (MANDATORY for dashboard tab) =====
-const stats = {
-  total: items.length,
-  active: items.filter(i => i.status === "active").length,
-  completed: items.filter(i => i.status === "completed").length,
-  completionRate: Math.round((items.filter(i => i.status === "completed").length / Math.max(items.length, 1)) * 100),
+    const allDeps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+    const missingPackages: string[] = [];
+
+    for (const pkgName of importedPackages) {
+      if (!allDeps[pkgName]) {
+        missingPackages.push(pkgName);
+      }
+    }
+
+    if (missingPackages.length === 0) {
+      await logger.log("All imported packages are in package.json");
+      return;
+    }
+
+    await logger.log(`Found ${missingPackages.length} missing packages: ${missingPackages.join(", ")}`);
+
+    if (!pkg.dependencies) pkg.dependencies = {};
+    for (const pkgName of missingPackages) {
+      if (KNOWN_GOOD_VERSIONS[pkgName]) {
+        pkg.dependencies[pkgName] = KNOWN_GOOD_VERSIONS[pkgName];
+      } else {
+        pkg.dependencies[pkgName] = "latest";
+      }
+    }
+
+    await fs.writeFile(pkgPath, JSON.stringify(pkg, null, 2));
+    await logger.log(`Added ${missingPackages.length} missing packages to package.json`);
+  } catch (error) {
+    await logger.log(`Import scan error: ${error}`, "WARN");
+  }
 }
 
-// ===== DARK MODE (MANDATORY for settings tab) =====
-const [darkMode, setDarkMode] = useState(false)
-useEffect(() => { document.documentElement.classList.toggle("dark", darkMode) }, [darkMode])
+// ============= FIX IMPORT/EXPORT MISMATCHES =============
 
-// ===== TOAST NOTIFICATIONS =====
-const [toast, setToast] = useState(null)
-const showToast = (message, type = "success") => { setToast({message, type}); setTimeout(() => setToast(null), 3000) }
+async function fixImportExportMismatches(projectPath: string): Promise<void> {
+  await logger.log("Checking for import/export mismatches...");
 
-// ===== EXPORT DATA =====
-const exportData = () => { navigator.clipboard.writeText(JSON.stringify(items, null, 2)); showToast("Data copied to clipboard") }
+  try {
+    const exts = [".tsx", ".ts", ".jsx", ".js"];
+    async function walkSrc3(dir: string): Promise<string[]> {
+      const files: string[] = [];
+      try {
+        const entries = await fs.readdir(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          const full = path.join(dir, entry.name);
+          if (entry.name === "node_modules" || entry.name === ".next" || entry.name === ".git") continue;
+          if (entry.isDirectory()) files.push(...await walkSrc3(full));
+          else if (exts.some(ext => entry.name.endsWith(ext))) files.push(full);
+        }
+      } catch {}
+      return files;
+    }
 
-// ===== FORM WITH VALIDATION =====
-const [formErrors, setFormErrors] = useState({})
-const validateForm = () => {
-  const errors = {}
-  if (!formData.title.trim()) errors.title = "Title is required"
-  if (!formData.description.trim()) errors.description = "Description is required"
-  setFormErrors(errors)
-  return Object.keys(errors).length === 0
-}"""
+    const sourceFiles = await walkSrc3(projectPath);
 
-if old_sample_end in content:
-    # Find the full old sample block
-    start_idx = content.find(old_sample_start)
-    end_idx = content.find(old_sample_end) + len(old_sample_end)
-    if start_idx != -1:
-        content = content[:start_idx] + new_sample + content[end_idx:]
-        changes += 1
-        print('2. Upgraded SAMPLE_INTERACTIONS')
-else:
-    print('WARNING: Could not find SAMPLE_INTERACTIONS end marker')
+    // Build map of file -> export info
+    const exportMap = new Map<string, { hasDefault: boolean; namedExports: string[] }>();
+    for (const file of sourceFiles) {
+      try {
+        const content = await fs.readFile(file, "utf-8");
+        const hasDefault = /export\\s+default\\s+/.test(content);
+        const namedExports: string[] = [];
+        const re = /export\\s+(?:function|const|class)\\s+(\\w+)/g;
+        let m;
+        while ((m = re.exec(content)) !== null) {
+          if (m[1]) namedExports.push(m[1]);
+        }
+        const relPath = path.relative(projectPath, file);
+        exportMap.set(relPath, { hasDefault, namedExports });
+      } catch {}
+    }
 
+    let fixCount = 0;
+    for (const file of sourceFiles) {
+      try {
+        let content = await fs.readFile(file, "utf-8");
+        let modified = false;
 
-# ======== 3. UPGRADE MANDATORY PATTERNS in buildWebApp ========
-old_patterns = """MANDATORY PATTERNS (code MUST contain ALL of these):
-1. page.tsx MUST start with 'use client' and import { useState } from 'react'
-2. page.tsx MUST have: const [items, setItems] = useState([{...}, {...}, ...]) with 8+ REALISTIC pre-populated objects (real names like "Sarah Chen", real dates like "2024-03-15", real prices like "$49.99")
-3. page.tsx MUST have 3+ onClick handlers that call setState functions
-4. page.tsx MUST have an onSubmit handler for adding new items
-5. page.tsx MUST have: const [loading, setLoading] = useState(false) and show a spinner/skeleton when loading
-6. page.tsx MUST have delete function: setItems(items.filter(i => i.id !== id))
-7. page.tsx MUST have toast/notification feedback on actions
-8. NEVER use "Lorem ipsum", "placeholder", "TODO:", "example text", "Item 1", "Item 2"
-9. Every button MUST have an onClick that does something real (not empty)
-10. All components must have 'use client' directive
-11. MUST have an empty state component: when items.length === 0, show a friendly message + icon + "Add your first..." CTA button
-12. MUST be responsive: use grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 for card layouts"""
+        // Find default imports from local files: import Foo from '@/...' or './...'
+        const re = /import\\s+(\\w+)\\s+from\\s+['"](@\\/[^'"]+|\\.\\/?[^'"]+|\\.\\.\\/[^'"]+)['"]/g;
+        let match;
+        const replacements: Array<[string, string]> = [];
 
-new_patterns = """MANDATORY PATTERNS — THE APP MUST BE FULLY FUNCTIONAL (code MUST contain ALL of these):
-1. page.tsx MUST start with 'use client' and import { useState, useEffect } from 'react'
-2. page.tsx MUST have: const [items, setItems] = useState([{...}, {...}, ...]) with 10-15 REALISTIC pre-populated objects (real names like "Sarah Chen", real dates like "2024-03-15", real prices like "$49.99", real descriptions of 2+ sentences)
-3. page.tsx MUST have 5+ onClick handlers that call setState functions — every single button must do something visible
-4. page.tsx MUST have an onSubmit handler with form validation (required fields check, error messages below inputs)
-5. page.tsx MUST have: const [loading, setLoading] = useState(false) and show skeleton shimmer on initial load
-6. page.tsx MUST have delete: setItems(items.filter(i => i.id !== id)) with fade-out animation
-7. page.tsx MUST have toast notifications: const [toast, setToast] = useState(null) — slide in from bottom-right
-8. NEVER use "Lorem ipsum", "placeholder", "TODO:", "Coming soon", "Under construction", "example text", "Item 1", "Item 2", "Description here", "Your text"
-9. Every button MUST have an onClick that changes visible state (not empty, not console.log only)
-10. All components must have 'use client' directive
-11. MUST have empty state when items.length === 0: friendly icon + message + "Add your first..." CTA
-12. MUST be responsive: grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 for card layouts"""
+        while ((match = re.exec(content)) !== null) {
+          const importName = match[1];
+          const importPath = match[2];
 
-if old_patterns in content:
-    content = content.replace(old_patterns, new_patterns)
-    changes += 1
-    print('3. Upgraded MANDATORY PATTERNS')
-else:
-    print('WARNING: Could not find MANDATORY PATTERNS')
+          let resolvedRelPath = "";
+          if (importPath.startsWith("@/")) {
+            resolvedRelPath = "src/" + importPath.slice(2);
+          } else {
+            resolvedRelPath = path.relative(projectPath, path.resolve(path.dirname(file), importPath));
+          }
 
+          const candidates = [resolvedRelPath, resolvedRelPath + ".tsx", resolvedRelPath + ".ts", resolvedRelPath + ".jsx", resolvedRelPath + ".js"];
+          let exportInfo = null;
+          for (const c of candidates) {
+            if (exportMap.has(c)) {
+              exportInfo = exportMap.get(c)!;
+              break;
+            }
+          }
 
-# ======== 4. ADD ADDITIONAL MANDATORY RULES after rule 14 ========
-old_rule14_block = """14. Forms MUST have labels above inputs, placeholder examples, and inline validation
+          if (exportInfo && !exportInfo.hasDefault && exportInfo.namedExports.includes(importName)) {
+            const quote = match[0].includes("'") ? "'" : '"';
+            replacements.push([match[0], `import { ${importName} } from ${quote}${importPath}${quote}`]);
+          }
+        }
 
-FILES:"""
+        for (const [oldStr, newStr] of replacements) {
+          content = content.replace(oldStr, newStr);
+          modified = true;
+          fixCount++;
+        }
 
-new_rule14_block = """14. Forms MUST have labels above inputs, placeholder examples, and inline validation (red border + error msg)
-15. MUST have search/filter: const [searchQuery, setSearchQuery] = useState("") with items.filter(i => i.title.toLowerCase().includes(searchQuery.toLowerCase()))
-16. MUST have sort: const [sortBy, setSortBy] = useState("date") with dropdown to change sort order
-17. MUST persist data with localStorage: useEffect(() => localStorage.setItem("items", JSON.stringify(items)), [items])
-18. MUST have a Dashboard tab view showing: total items count, completion rate %, items by status breakdown, recent activity list
-19. MUST have a Settings/Profile tab view with: dark mode toggle that works, user display name input, export data button that copies JSON to clipboard
-20. FORBIDDEN: href="#", href="/page", onClick={() => {}, console.log-only handlers, alert(), "Coming soon" sections, empty onClick handlers
+        if (modified) {
+          await fs.writeFile(file, content);
+        }
+      } catch {}
+    }
 
-FILES:"""
-
-if old_rule14_block in content:
-    content = content.replace(old_rule14_block, new_rule14_block)
-    changes += 1
-    print('4. Added rules 15-20')
-else:
-    print('WARNING: Could not find rule 14 block')
-
-
-# ======== 5. UPGRADE FUNCTIONALITY TESTS - add new checks ========
-old_test_check = """  const passedCount = tests.filter(t => t.passed).length;
-  return { passed: passedCount >= 6, tests };
+    if (fixCount > 0) {
+      await logger.log(`Fixed ${fixCount} import/export mismatches`);
+    } else {
+      await logger.log("No import/export mismatches found");
+    }
+  } catch (error) {
+    await logger.log(`Import/export fix error: ${error}`, "WARN");
+  }
 }
 
+// ============= LOCAL BUILD VERIFICATION =============
 
-async function runBackendTests"""
+async function verifyBuildLocally(projectPath: string): Promise<boolean> {
+  await logger.log("Running local build verification...");
 
-new_test_check = r"""  // Test 11: Has search/filter functionality
-  const hasSearch = allFileContents.includes("searchQuery") || allFileContents.includes("filterQuery") || (allFileContents.includes("search") && allFileContents.includes(".filter(") && allFileContents.includes(".includes("));
-  tests.push({
-    name: "Has search/filter",
-    passed: hasSearch,
-    details: hasSearch ? "\u2713 Search works" : "\u2717 No search functionality",
-  });
+  try {
+    await execAsync(
+      `cd "${projectPath}" && npm run build 2>&1`,
+      { timeout: 180000 }
+    );
+    await logger.log("Local build verified successfully");
+    return true;
+  } catch (error) {
+    const errStr = String(error);
+    await logger.log("Local build failed, attempting auto-fix...", "WARN");
 
-  // Test 12: Has tab navigation
-  const hasTabNav = allFileContents.includes("activeTab") || allFileContents.includes("currentTab") || allFileContents.includes("activeView") || allFileContents.includes("currentView");
-  tests.push({
-    name: "Has tab navigation",
-    passed: hasTabNav,
-    details: hasTabNav ? "\u2713 Working tabs" : "\u2717 No tab navigation",
-  });
+    // Extract missing modules from error output
+    const allMatches = [
+      ...Array.from(errStr.matchAll(/Module not found[^']*'([^']+)'/g)),
+      ...Array.from(errStr.matchAll(/Cannot find module '([^']+)'/g)),
+    ];
 
-  // Test 13: Has data persistence
-  const hasPersistence = allFileContents.includes("localStorage") || allFileContents.includes("sessionStorage") || allFileContents.includes("AsyncStorage");
-  tests.push({
-    name: "Has data persistence",
-    passed: hasPersistence,
-    details: hasPersistence ? "\u2713 Data persists" : "\u2717 Data lost on refresh",
-  });
+    const missingModules = new Set<string>();
+    for (const m of allMatches) {
+      const mod = m[1];
+      const basePkg = mod.startsWith("@") ? mod.split("/").slice(0, 2).join("/") : mod.split("/")[0];
+      const skipPrefixes = [".", "/", "~"];
+      if (!skipPrefixes.some(ch => basePkg.startsWith(ch))) {
+        missingModules.add(basePkg);
+      }
+    }
 
-  // Test 14: No dead links
-  const hasDeadLinks = /href=["']#["']/.test(allFileContents) || /href=["']\/(?:dashboard|profile|settings|about|contact)["']/.test(allFileContents);
-  tests.push({
-    name: "No dead links",
-    passed: !hasDeadLinks,
-    details: !hasDeadLinks ? "\u2713 All links work" : "\u2717 Has dead href=# or href=/page links",
-  });
+    if (missingModules.size > 0) {
+      const pkgList = Array.from(missingModules).join(" ");
+      await logger.log(`Installing build-time missing packages: ${pkgList}`);
+      try {
+        await execAsync(`cd "${projectPath}" && npm install ${pkgList} --legacy-peer-deps 2>&1 || true`, { timeout: 60000 });
+        await execAsync(`cd "${projectPath}" && npm run build 2>&1`, { timeout: 180000 });
+        await logger.log("Build succeeded after installing missing packages");
+        return true;
+      } catch {
+        await logger.log("Build still failing after fix attempt", "WARN");
+      }
+    }
 
-  const passedCount = tests.filter(t => t.passed).length;
-  return { passed: passedCount >= 9, tests };
+    return false;
+  }
 }
 
+'''
 
-async function runBackendTests"""
-
-if old_test_check in content:
-    content = content.replace(old_test_check, new_test_check)
+marker = "// ============= PACKAGE SANITIZER ============="
+if marker in code:
+    code = code.replace(marker, NEW_FUNCTIONS + "\n" + marker)
     changes += 1
-    print('5. Added 4 new functionality tests + raised passing bar to 9/14')
+    print("  [OK] Fix 2: Added 3 new functions (autoDetect, fixMismatches, verifyBuild)")
 else:
-    print('WARNING: Could not find test check block')
+    print("  [FAIL] Fix 2: Could not find PACKAGE SANITIZER marker")
 
+# =====================================================
+# FIX 3: Wire new functions into buildMVP flow
+# =====================================================
+old_install = '''    // Install dependencies
+    if (idea.type !== "extension") {
+      await logger.log("\xf0\x9f\x93\xa6 Installing dependencies...");
+      try {
+        await execAsync("npm install 2>&1 || true", { cwd: projectPath, timeout: 120000 });
+      } catch {}
+    }'''
 
-# ======== 6. UPGRADE fixFailedTests threshold ========
-old_threshold = '  const funcPassed = funcResults.tests.filter(t => t.passed).length;\n  if (funcPassed >= 6) return; // Good enough'
-new_threshold = '  const funcPassed = funcResults.tests.filter(t => t.passed).length;\n  if (funcPassed >= 10) return; // Require high quality — at least 10/14 tests must pass'
+new_install = '''    // Install dependencies
+    if (idea.type !== "extension") {
+      // Auto-detect and install missing packages (scan imports for web/saas)
+      if (idea.type !== "mobile") {
+        await autoDetectAndInstallMissingPackages(projectPath);
+        await fixImportExportMismatches(projectPath);
+      }
 
-if old_threshold in content:
-    content = content.replace(old_threshold, new_threshold)
+      await logger.log("\xf0\x9f\x93\xa6 Installing dependencies...");
+      try {
+        await execAsync("npm install --legacy-peer-deps 2>&1 || true", { cwd: projectPath, timeout: 120000 });
+      } catch {}
+
+      // Local build verification for web/saas apps
+      if (idea.type === "web" || idea.type === "saas") {
+        const buildOk = await verifyBuildLocally(projectPath);
+        if (!buildOk) {
+          await logger.log("Build verification failed, will still attempt Vercel deploy", "WARN");
+        }
+      }
+    }'''
+
+if old_install in code:
+    code = code.replace(old_install, new_install)
     changes += 1
-    print('6. Raised fix threshold from 6 to 10')
+    print("  [OK] Fix 3: Wired new functions into buildMVP flow")
 else:
-    print('WARNING: Could not find fix threshold')
+    print("  [FAIL] Fix 3: Could not find Install dependencies block")
 
+# =====================================================
+# FIX 4: Improve AI prompt for consistent named exports
+# =====================================================
+old_prompt = "10. All components must have 'use client' directive"
+new_prompt = "10. All components MUST use NAMED exports (export function ComponentName) and importers MUST use NAMED imports: import { ComponentName } from '@/components/ComponentName'. NEVER use export default for components. All component files must have 'use client' directive"
 
-with open(filepath, 'w', encoding='utf-8') as f:
-    f.write(content)
+if old_prompt in code:
+    code = code.replace(old_prompt, new_prompt, 1)
+    changes += 1
+    print("  [OK] Fix 4: Improved AI prompt for consistent named exports")
+else:
+    print("  [SKIP] Fix 4: Prompt line already updated")
 
-print(f'\nDone! Applied {changes}/6 changes to {filepath}')
+# =====================================================
+# FIX 5: Add lucide-react, clsx, tailwind-merge to required deps
+# =====================================================
+old_required = '''    // Ensure required dependencies exist
+    if (!pkg.dependencies) pkg.dependencies = {};
+    if (!pkg.dependencies.next) pkg.dependencies.next = "^14.2.21";
+    if (!pkg.dependencies.react) pkg.dependencies.react = "^18.3.1";
+    if (!pkg.dependencies["react-dom"]) pkg.dependencies["react-dom"] = "^18.3.1";'''
+
+new_required = '''    // Ensure required dependencies exist
+    if (!pkg.dependencies) pkg.dependencies = {};
+    if (!pkg.dependencies.next) pkg.dependencies.next = "^14.2.21";
+    if (!pkg.dependencies.react) pkg.dependencies.react = "^18.3.1";
+    if (!pkg.dependencies["react-dom"]) pkg.dependencies["react-dom"] = "^18.3.1";
+    // Add commonly-used packages that AI frequently imports
+    if (!pkg.dependencies.clsx && !pkg.devDependencies?.clsx) pkg.dependencies.clsx = "^2.1.0";
+    if (!pkg.dependencies["tailwind-merge"] && !pkg.devDependencies?.["tailwind-merge"]) pkg.dependencies["tailwind-merge"] = "^2.2.0";
+    if (!pkg.dependencies["lucide-react"] && !pkg.devDependencies?.["lucide-react"]) pkg.dependencies["lucide-react"] = "^0.469.0";'''
+
+if old_required in code:
+    code = code.replace(old_required, new_required)
+    changes += 1
+    print("  [OK] Fix 5: Added lucide-react, clsx, tailwind-merge to required deps")
+else:
+    print("  [SKIP] Fix 5: Required deps block already updated")
+
+# =====================================================
+# FIX 6: Add @types/react-dom to required devDeps
+# =====================================================
+old_devdeps = '''    const requiredDevDeps: Record<string, string> = {
+      "typescript": "^5.7.3",
+      "@types/node": "^20.17.16",
+      "@types/react": "^18.3.18",
+    };'''
+
+new_devdeps = '''    const requiredDevDeps: Record<string, string> = {
+      "typescript": "^5.7.3",
+      "@types/node": "^20.17.16",
+      "@types/react": "^18.3.18",
+      "@types/react-dom": "^18.3.5",
+    };'''
+
+if old_devdeps in code:
+    code = code.replace(old_devdeps, new_devdeps)
+    changes += 1
+    print("  [OK] Fix 6: Added @types/react-dom to required devDeps")
+else:
+    print("  [SKIP] Fix 6: devDeps already updated")
+
+# Write patched file
+with open(DAEMON_PATH, "w") as f:
+    f.write(code)
+
+print(f"\nDone! Applied {changes}/6 patches to {DAEMON_PATH}")
+print(f"File size: {len(code)} chars, {code.count(chr(10))} lines")
