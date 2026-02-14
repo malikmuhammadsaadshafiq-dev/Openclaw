@@ -116,9 +116,169 @@ class KimiClient {
 
 const kimi = new KimiClient();
 
-// Idea Research Module
+// ============================================================
+// Duplicate Detection System
+// ============================================================
+
+// Normalize a title into a slug for comparison
+function toSlug(title: string): string {
+  return title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
+// Extract keywords from a title (removes common filler words)
+function extractKeywords(title: string): Set<string> {
+  const stopWords = new Set([
+    'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
+    'of', 'with', 'by', 'is', 'it', 'my', 'your', 'our', 'app', 'tool',
+    'pro', 'ai', 'smart', 'auto', 'easy', 'quick', 'fast', 'simple',
+    'free', 'online', 'web', 'mobile', 'new', 'super', 'ultra', 'mega',
+  ]);
+  return new Set(
+    title.toLowerCase()
+      .replace(/[^a-z0-9\s]/g, '')
+      .split(/\s+/)
+      .filter(w => w.length > 1 && !stopWords.has(w))
+  );
+}
+
+// Calculate similarity between two sets of keywords (Jaccard index)
+function keywordSimilarity(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 && b.size === 0) return 1;
+  let intersection = 0;
+  for (const word of a) {
+    if (b.has(word)) intersection++;
+  }
+  const union = a.size + b.size - intersection;
+  return union === 0 ? 0 : intersection / union;
+}
+
+// Check if two descriptions/problems are conceptually similar
+function descriptionSimilarity(desc1: string, desc2: string): number {
+  const words1 = extractKeywords(desc1);
+  const words2 = extractKeywords(desc2);
+  return keywordSimilarity(words1, words2);
+}
+
+// Represents an existing product for dedup checks
+interface ExistingProduct {
+  title: string;
+  slug: string;
+  keywords: Set<string>;
+  description: string;
+  source: 'ideas' | 'built' | 'web' | 'github';
+}
+
+// Load all existing products from ideas queue, built archive, and web output folders
+async function loadExistingProducts(): Promise<ExistingProduct[]> {
+  const products: ExistingProduct[] = [];
+
+  // Helper to load JSON files from a directory
+  async function loadFromDir(dir: string, source: 'ideas' | 'built'): Promise<void> {
+    try {
+      const files = await fs.readdir(dir);
+      for (const file of files) {
+        if (!file.endsWith('.json')) continue;
+        try {
+          const content = await fs.readFile(path.join(dir, file), 'utf-8');
+          const data = JSON.parse(content);
+          if (data.title) {
+            products.push({
+              title: data.title,
+              slug: toSlug(data.title),
+              keywords: extractKeywords(data.title),
+              description: data.description || data.problem || '',
+              source,
+            });
+          }
+        } catch {}
+      }
+    } catch {}
+  }
+
+  // Helper to load from web/mobile output directories (folder names = slugs)
+  async function loadFromOutputDir(dir: string): Promise<void> {
+    try {
+      const folders = await fs.readdir(dir);
+      for (const folder of folders) {
+        const pkgPath = path.join(dir, folder, 'package.json');
+        try {
+          await fs.access(pkgPath);
+          // Folder exists and has a package.json = it's a real project
+          products.push({
+            title: folder, // slug is the folder name
+            slug: folder,
+            keywords: extractKeywords(folder.replace(/-/g, ' ')),
+            description: '',
+            source: 'web',
+          });
+        } catch {}
+      }
+    } catch {}
+  }
+
+  await Promise.all([
+    loadFromDir(CONFIG.paths.ideas, 'ideas'),
+    loadFromDir(CONFIG.paths.built, 'built'),
+    loadFromOutputDir(path.join(CONFIG.paths.output, 'web')),
+    loadFromOutputDir(path.join(CONFIG.paths.output, 'mobile')),
+  ]);
+
+  return products;
+}
+
+// Check if a new idea is a duplicate of any existing product
+function isDuplicate(idea: { title: string; description?: string; problem?: string }, existing: ExistingProduct[]): { duplicate: boolean; reason: string; matchedWith: string } {
+  const newSlug = toSlug(idea.title);
+  const newKeywords = extractKeywords(idea.title);
+
+  for (const product of existing) {
+    // 1. Exact slug match (e.g., "Invoice Forge" and "InvoiceForge" both become "invoice-forge")
+    if (newSlug === product.slug) {
+      return { duplicate: true, reason: 'exact slug match', matchedWith: product.title };
+    }
+
+    // 2. One slug contains the other (e.g., "splitwizard" vs "splitwizard-pro")
+    if (newSlug.includes(product.slug) || product.slug.includes(newSlug)) {
+      if (Math.min(newSlug.length, product.slug.length) >= 5) {
+        return { duplicate: true, reason: 'slug containment', matchedWith: product.title };
+      }
+    }
+
+    // 3. High keyword similarity in title (>= 60% overlap)
+    const titleSim = keywordSimilarity(newKeywords, product.keywords);
+    if (titleSim >= 0.6) {
+      return { duplicate: true, reason: `title keyword similarity ${Math.round(titleSim * 100)}%`, matchedWith: product.title };
+    }
+
+    // 4. If descriptions available, check description similarity too
+    const newDesc = idea.description || idea.problem || '';
+    if (newDesc && product.description) {
+      const descSim = descriptionSimilarity(newDesc, product.description);
+      if (descSim >= 0.5 && titleSim >= 0.3) {
+        return { duplicate: true, reason: `description similarity ${Math.round(descSim * 100)}% + title ${Math.round(titleSim * 100)}%`, matchedWith: product.title };
+      }
+    }
+  }
+
+  return { duplicate: false, reason: '', matchedWith: '' };
+}
+
+// ============================================================
+// Idea Research Module (with deduplication)
+// ============================================================
+
 async function researchIdeas(): Promise<Idea[]> {
   await logger.log('Starting idea research cycle...');
+
+  // Load existing products for dedup and for the LLM prompt
+  const existingProducts = await loadExistingProducts();
+  const existingTitles = existingProducts.map(p => p.title);
+  await logger.log(`Loaded ${existingProducts.length} existing products for dedup check`);
+
+  // Build a list of already-built products to include in the prompt
+  const alreadyBuiltList = existingTitles.length > 0
+    ? `\n\nIMPORTANT - DO NOT suggest any ideas similar to these already-built products:\n${existingTitles.map(t => `- ${t}`).join('\n')}\n\nYour ideas must be COMPLETELY DIFFERENT from the above list. Different name, different concept, different problem space.`
+    : '';
 
   const prompt = `You are an expert startup analyst researching X/Twitter and Reddit for the hottest new app, SaaS, and web ideas.
 
@@ -133,6 +293,7 @@ Generate 5 UNIQUE, TRENDING app ideas that are:
 2. Solving real problems people are talking about RIGHT NOW
 3. Have clear monetization potential
 4. Not already solved by major players
+5. MUST have unique, distinctive names that don't overlap with existing products${alreadyBuiltList}
 
 For each idea, determine if it's best as:
 - "web" - A Next.js web application
@@ -165,9 +326,9 @@ Return ONLY a valid JSON array:
       return [];
     }
 
-    const ideas: any[] = JSON.parse(jsonMatch[0]);
+    const rawIdeas: any[] = JSON.parse(jsonMatch[0]);
 
-    return ideas.map(idea => ({
+    const ideas: Idea[] = rawIdeas.map(idea => ({
       ...idea,
       id: crypto.randomUUID(),
       source: Math.random() > 0.5 ? 'x' : 'reddit' as const,
@@ -175,21 +336,71 @@ Return ONLY a valid JSON array:
       sourceUrl: `https://simulated.mvpfactory/${Date.now()}`,
       discoveredAt: new Date().toISOString(),
     }));
+
+    // Filter out duplicates against existing products
+    const uniqueIdeas: Idea[] = [];
+    for (const idea of ideas) {
+      const check = isDuplicate(idea, existingProducts);
+      if (check.duplicate) {
+        await logger.log(`DUPLICATE SKIPPED: "${idea.title}" matches "${check.matchedWith}" (${check.reason})`, 'WARN');
+      } else {
+        // Also check against other ideas in this batch (prevent intra-batch dupes)
+        const batchCheck = isDuplicate(idea, uniqueIdeas.map(i => ({
+          title: i.title,
+          slug: toSlug(i.title),
+          keywords: extractKeywords(i.title),
+          description: i.description,
+          source: 'ideas' as const,
+        })));
+        if (batchCheck.duplicate) {
+          await logger.log(`BATCH DUPLICATE SKIPPED: "${idea.title}" matches "${batchCheck.matchedWith}" within same batch`, 'WARN');
+        } else {
+          uniqueIdeas.push(idea);
+        }
+      }
+    }
+
+    await logger.log(`Research: ${rawIdeas.length} ideas generated, ${rawIdeas.length - uniqueIdeas.length} duplicates filtered, ${uniqueIdeas.length} unique kept`);
+    return uniqueIdeas;
   } catch (error) {
     await logger.log(`Research error: ${error}`, 'ERROR');
     return [];
   }
 }
 
-// Save ideas to queue
+// Save ideas to queue (with final dedup check)
 async function saveIdeas(ideas: Idea[]): Promise<void> {
   await fs.mkdir(CONFIG.paths.ideas, { recursive: true });
 
+  // Final dedup check right before saving (in case another cycle saved something between research and save)
+  const existingProducts = await loadExistingProducts();
+  let saved = 0;
+  let skipped = 0;
+
   for (const idea of ideas) {
+    const check = isDuplicate(idea, existingProducts);
+    if (check.duplicate) {
+      await logger.log(`SAVE DEDUP: Skipping "${idea.title}" - matches "${check.matchedWith}" (${check.reason})`, 'WARN');
+      skipped++;
+      continue;
+    }
+
     const filePath = path.join(CONFIG.paths.ideas, `${idea.id}.json`);
     await fs.writeFile(filePath, JSON.stringify(idea, null, 2));
     await logger.log(`Queued idea: ${idea.title} (${idea.type})`);
+    saved++;
+
+    // Add to existing products so subsequent ideas in this batch are checked against it
+    existingProducts.push({
+      title: idea.title,
+      slug: toSlug(idea.title),
+      keywords: extractKeywords(idea.title),
+      description: idea.description,
+      source: 'ideas',
+    });
   }
+
+  await logger.log(`Saved ${saved} ideas, skipped ${skipped} duplicates`);
 }
 
 // Get next idea to build
@@ -733,6 +944,20 @@ async function buildNextIdea(): Promise<BuildResult> {
 
   await logger.log(`Building MVP: ${idea.title} (${idea.type})`);
 
+  // Pre-build duplicate check against built products and web output folders
+  const existingProducts = await loadExistingProducts();
+  // Only check against built/web products (not ideas queue, since this idea IS from the queue)
+  const builtProducts = existingProducts.filter(p => p.source === 'built' || p.source === 'web' || p.source === 'github');
+  const dupCheck = isDuplicate(idea, builtProducts);
+  if (dupCheck.duplicate) {
+    await logger.log(`BUILD DEDUP: Skipping "${idea.title}" - already built as "${dupCheck.matchedWith}" (${dupCheck.reason})`, 'WARN');
+    // Remove from ideas queue so it doesn't block future builds
+    try {
+      await fs.unlink(path.join(CONFIG.paths.ideas, `${idea.id}.json`));
+    } catch {}
+    return { success: false, projectPath: '', githubUrl: '', error: `Duplicate of ${dupCheck.matchedWith}` };
+  }
+
   try {
     // Generate project
     const { files } = await generateProject(idea);
@@ -774,13 +999,20 @@ async function runResearchCycle(): Promise<void> {
   await logger.log('=== Research Cycle Start ===');
 
   const ideas = await researchIdeas();
-  await logger.log(`Discovered ${ideas.length} ideas`);
+  await logger.log(`Discovered ${ideas.length} unique ideas (duplicates already filtered)`);
 
   // Filter for high viability
   const viable = ideas.filter(i => i.viabilityScore >= 7);
   await logger.log(`${viable.length} pass viability threshold`);
 
   await saveIdeas(viable);
+
+  // Log current queue stats
+  try {
+    const queueFiles = await fs.readdir(CONFIG.paths.ideas);
+    const builtFiles = await fs.readdir(CONFIG.paths.built);
+    await logger.log(`Queue: ${queueFiles.filter(f => f.endsWith('.json')).length} ideas pending | ${builtFiles.filter(f => f.endsWith('.json')).length} total built`);
+  } catch {}
 
   await logger.log('=== Research Cycle Complete ===');
 }
