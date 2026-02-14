@@ -26,8 +26,42 @@ function readJsonDir(dir) {
 }
 
 function readStats() {
-  try { return JSON.parse(fs.readFileSync(PATHS.stats, "utf-8")); }
-  catch { return { date: "", buildsToday: 0, researchesToday: 0, totalBuilt: 0, functionalityScore: 0 }; }
+  // Read base stats from file (daily counters)
+  let fileStats;
+  try { fileStats = JSON.parse(fs.readFileSync(PATHS.stats, "utf-8")); }
+  catch { fileStats = { date: "", buildsToday: 0, researchesToday: 0, totalBuilt: 0, functionalityScore: 0 }; }
+
+  // Compute REAL counts from disk (overrides stale file data)
+  const builtItems = readJsonDir(PATHS.built);
+  const totalBuilt = builtItems.length;
+  const liveCount = builtItems.filter(b => b.liveUrl).length;
+  const githubCount = builtItems.filter(b => b.githubUrl).length;
+
+  // Count web and mobile projects from output dirs
+  let webCount = 0, mobileCount = 0;
+  try { webCount = fs.readdirSync(PATHS.web).filter(f => fs.statSync(path.join(PATHS.web, f)).isDirectory()).length; } catch {}
+  try { mobileCount = fs.readdirSync(PATHS.mobile).filter(f => fs.statSync(path.join(PATHS.mobile, f)).isDirectory()).length; } catch {}
+
+  // Recalculate functionality score from actual built items
+  let functionalityScore = 0;
+  for (const b of builtItems) {
+    functionalityScore += (b.functionalityScore || 0);
+  }
+
+  // Count ideas in queue
+  let queueCount = 0;
+  try { queueCount = fs.readdirSync(PATHS.ideas).filter(f => f.endsWith(".json")).length; } catch {}
+
+  return {
+    ...fileStats,
+    totalBuilt,
+    webCount,
+    mobileCount,
+    liveCount,
+    githubCount,
+    queueCount,
+    functionalityScore: functionalityScore || fileStats.functionalityScore || 0,
+  };
 }
 
 function readLogs(n = 150) {

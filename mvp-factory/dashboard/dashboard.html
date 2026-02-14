@@ -611,35 +611,34 @@ body{
       <!-- STATS ROW -->
       <div class="stats-row">
         <div class="card stat-card ani d1">
-          <div class="stat-icon">&#9881;&#65039;</div>
-          <div class="stat-value" id="vBuilds">--</div>
-          <div class="stat-label">Builds Today</div>
-          <div class="stat-sub" id="subBuilds"></div>
-          <div class="sparkline" id="spark1"></div>
+          <div class="stat-icon">&#127942;</div>
+          <div class="stat-value" id="vTotal">--</div>
+          <div class="stat-label">Total Shipped</div>
+          <div class="stat-sub" id="subTotal">unique products</div>
         </div>
         <div class="card stat-card ani d2">
+          <div class="stat-icon">&#127760;</div>
+          <div class="stat-value" id="vWeb">--</div>
+          <div class="stat-label">Web Apps</div>
+          <div class="stat-sub" id="subWeb">Next.js projects</div>
+        </div>
+        <div class="card stat-card ani d3">
+          <div class="stat-icon">&#128241;</div>
+          <div class="stat-value" id="vMobile">--</div>
+          <div class="stat-label">Mobile Apps</div>
+          <div class="stat-sub" id="subMobile">Expo projects</div>
+        </div>
+        <div class="card stat-card ani d4">
+          <div class="stat-icon">&#9889;</div>
+          <div class="stat-value" id="vLive">--</div>
+          <div class="stat-label">Live on Vercel</div>
+          <div class="stat-sub" id="subLive">deployed</div>
+        </div>
+        <div class="card stat-card ani d5">
           <div class="stat-icon">&#128203;</div>
           <div class="stat-value" id="vQueue">--</div>
           <div class="stat-label">In Queue</div>
           <div class="stat-sub">ideas waiting</div>
-        </div>
-        <div class="card stat-card ani d3">
-          <div class="stat-icon">&#127942;</div>
-          <div class="stat-value" id="vTotal">--</div>
-          <div class="stat-label">Total Shipped</div>
-          <div class="stat-sub" id="subTotal">all time</div>
-        </div>
-        <div class="card stat-card ani d4">
-          <div class="stat-icon">&#9889;</div>
-          <div class="stat-value" id="vScore">--</div>
-          <div class="stat-label">Func Score</div>
-          <div class="stat-sub">quality points</div>
-        </div>
-        <div class="card stat-card ani d5">
-          <div class="stat-icon">&#128300;</div>
-          <div class="stat-value" id="vResearch">--</div>
-          <div class="stat-label">Researches</div>
-          <div class="stat-sub">today</div>
         </div>
         <div class="card stat-card ani d5">
           <div class="stat-icon">&#128225;</div>
@@ -977,9 +976,13 @@ async function refreshAll(){
 
   // Stats
   if(stats){
-    setVal("vBuilds",stats.buildsToday||0);setVal("vTotal",stats.totalBuilt||0);
-    setVal("vScore",stats.functionalityScore||0);setVal("vResearch",stats.researchesToday||0);
-    document.getElementById("subBuilds").textContent=stats.lastBuildAt?"Last: "+relTime(stats.lastBuildAt):"";
+    setVal("vTotal",stats.totalBuilt||0);
+    setVal("vWeb",stats.webCount||0);
+    setVal("vMobile",stats.mobileCount||0);
+    setVal("vLive",stats.liveCount||0);
+    document.getElementById("subTotal").textContent=stats.githubCount?(stats.githubCount+" on GitHub"):"unique products";
+    document.getElementById("subWeb").textContent=stats.buildsToday?(stats.buildsToday+" built today"):"Next.js projects";
+    document.getElementById("subLive").textContent=stats.lastBuildAt?("Last: "+relTime(stats.lastBuildAt)):"deployed";
   }
 
   // Queue
