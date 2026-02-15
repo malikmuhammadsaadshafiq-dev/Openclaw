@@ -37,7 +37,7 @@ const CONFIG = {
   },
   paths: {
     output: "/root/mvp-projects",
-    logs: "/root/.neurafinity/logs",
+    logs: "/root/.openclaw/logs",
     ideas: "/root/mvp-projects/ideas",
     built: "/root/mvp-projects/built",
     stats: "/root/mvp-projects/stats.json",
