@@ -164,7 +164,7 @@ def fix_project(project_path, project_name):
     print(f"  * Deploying to Vercel...")
     try:
         result = subprocess.run(
-            ["npx", "vercel", "--prod", "--yes", "--token", os.environ.get("VERCEL_TOKEN", "")],
+            ["npx", "vercel", "--prod", "--yes", "--token", os.environ.get("VERCEL_TOKEN", "dbAkE4w6jIVJKkA2xfSIZXIt")],
             cwd=project_path,
             timeout=300,
             capture_output=True,
