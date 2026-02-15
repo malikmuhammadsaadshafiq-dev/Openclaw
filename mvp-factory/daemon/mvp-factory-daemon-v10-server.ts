@@ -606,6 +606,17 @@ function needsAI(idea: Idea): boolean {
   return aiKeywords.some(kw => text.includes(kw));
 }
 
+function needsFileUpload(idea: Idea): boolean {
+  const text = `${idea.title} ${idea.description} ${idea.features.join(" ")}`.toLowerCase();
+  const fileKeywords = [
+    "upload", "drag-and-drop", "drag and drop", "drop zone", "dropzone",
+    "file", "import", "attach", "photo", "image", "screenshot", "scan",
+    "csv", "json", "xml", "yaml", "pdf", "audio", "video", "mbox", "eml",
+    ".png", ".jpg", ".svg", ".mp3", ".wav", "receipt", "invoice", "logo",
+  ];
+  return fileKeywords.some(kw => text.includes(kw));
+}
+
 const AI_INTEGRATION_PROMPT = `
 AI INTEGRATION — This product needs WORKING AI features using Kimi K2.5:
 
@@ -652,6 +663,67 @@ export async function askAI(prompt: string, systemPrompt?: string): Promise<stri
 
 3. Use askAI() in components. Always show loading spinner while waiting.
 4. IMPORTANT: The .env.local file with the real NVIDIA_API_KEY will be auto-created.
+`;
+
+const FILE_UPLOAD_PROMPT = `
+FILE UPLOAD & ATTACHMENT HANDLING — This product handles user files. NEVER fake file processing with setTimeout + random data.
+
+PATTERN 1: TEXT FILES (CSV, JSON, XML, YAML, .txt, .mbox, .eml, code files)
+- Use FileReader.readAsText(file) to get real file contents
+- Parse the contents (JSON.parse, CSV split, XML DOMParser)
+- Display/process the ACTUAL parsed data, not random placeholder data
+- Example:
+  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const text = evt.target?.result as string;
+      // Actually parse and use the text content
+      try { const data = JSON.parse(text); setItems(data); } catch { setError("Invalid file format"); }
+    };
+    reader.readAsText(file);
+  };
+
+PATTERN 2: IMAGE/BINARY FILES (PNG, JPG, SVG, audio, video)
+- Use URL.createObjectURL(file) for preview display
+- Use FileReader.readAsDataURL(file) ONLY if you need base64 (e.g., for AI analysis)
+- For image previews, ALWAYS show the actual uploaded image, not a placeholder
+- Example:
+  const handleImage = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const previewUrl = URL.createObjectURL(file);
+    setPreview(previewUrl);
+    // For AI analysis, send full base64 (NOT truncated):
+    const reader = new FileReader();
+    reader.onload = (evt) => { setBase64(evt.target?.result as string); };
+    reader.readAsDataURL(file);
+  };
+
+PATTERN 3: DRAG-AND-DROP ZONE (reusable component)
+- MUST handle both drag-and-drop AND click-to-browse (hidden input + label)
+- Show visual feedback on dragOver (border color change, background tint)
+- Validate file type and size before processing
+- Example component pattern:
+  <div
+    onDrop={(e) => { e.preventDefault(); handleFile(e.dataTransfer.files[0]); }}
+    onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
+    onDragLeave={() => setDragActive(false)}
+    className={dragActive ? "border-accent bg-accent/10" : "border-dashed border-gray-300"}
+  >
+    <input type="file" accept=".csv,.json,.xml" onChange={handleFile} className="hidden" id="file-input" />
+    <label htmlFor="file-input">Drop files here or click to browse</label>
+  </div>
+
+CRITICAL RULES:
+- NEVER use setTimeout to simulate file processing — ALWAYS read the actual file
+- NEVER generate random data as "analysis results" — process the REAL file content
+- NEVER truncate base64 data (no .substring(0, 1000)) — send the full payload or use object URLs
+- File size validation: check file.size before processing (show error toast if too large)
+- Show loading state while FileReader is working (reader.onload is async)
+- Clean up object URLs with URL.revokeObjectURL() in useEffect cleanup
+- Accept attribute on file inputs must match the product's expected file types
 `;
 
 interface RedditSignal {
@@ -1404,6 +1476,8 @@ async function buildWebApp(idea: Idea, projectPath: string): Promise<string> {
 
   const hasAI = needsAI(idea);
   if (hasAI) await logger.log("🤖 AI features detected — including AI integration prompt");
+  const hasFiles = needsFileUpload(idea);
+  if (hasFiles) await logger.log("📎 File upload features detected — including file handling prompt");
 
   // Build source reference context
   const sourceRef = buildSourceReference(idea);
@@ -1422,6 +1496,7 @@ ${getFrontendUXPrompt(idea)}
 ${UX_QUALITY_PROMPT}
 
 ${hasAI ? AI_INTEGRATION_PROMPT : ""}
+${hasFiles ? FILE_UPLOAD_PROMPT : ""}
 
 MANDATORY PATTERNS — THE APP MUST BE FULLY FUNCTIONAL (code MUST contain ALL of these):
 1. page.tsx MUST start with 'use client' and import { useState, useEffect } from 'react'
@@ -1494,6 +1569,8 @@ async function buildChromeExtension(idea: Idea, projectPath: string): Promise<st
   const hasAI = needsAI(idea);
 
   if (hasAI) await logger.log("🤖 AI features detected for extension");
+  const hasFiles = needsFileUpload(idea);
+  if (hasFiles) await logger.log("📎 File upload features detected for extension");
 
   const sourceRef = buildSourceReference(idea);
 
@@ -1534,6 +1611,7 @@ MANDATORY PATTERNS (code MUST contain ALL of these):
 
 FILES REQUIRED: manifest.json (v3), popup.html, popup.css, popup.js, background.js
 DESIGN: beautiful UI matching the design style, premium feel, smooth animations
+${hasFiles ? FILE_UPLOAD_PROMPT : ""}
 
 Return ONLY the JSON array. Start with [ and end with ].`;
 
@@ -1562,6 +1640,8 @@ async function buildMobileApp(idea: Idea, projectPath: string): Promise<string> 
   const hasAI = needsAI(idea);
 
   if (hasAI) await logger.log("🤖 AI features detected for mobile app");
+  const hasFiles = needsFileUpload(idea);
+  if (hasFiles) await logger.log("📎 File upload features detected for mobile app");
 
   const sourceRef = buildSourceReference(idea);
 
@@ -1609,6 +1689,7 @@ REQUIREMENTS:
 - StyleSheet matching the design style
 - Must look like a real published app
 ${hasAI ? "\nAI INTEGRATION: Include src/api/ai.ts that calls /api/ai endpoint for AI features." : ""}
+${hasFiles ? FILE_UPLOAD_PROMPT : ""}
 
 Return ONLY the JSON array. Start with [ and end with ].`;
 
@@ -2132,11 +2213,11 @@ async function buildMVP(idea: Idea): Promise<boolean> {
   await logger.log(`🔨 Building: ${idea.title}`);
   await logger.log(`📦 Type: ${idea.type.toUpperCase()} | Archetype: ${arch.label}`);
   await logger.log(`✨ Features: ${idea.features.join(", ")}`);
-  await logger.log(`🤖 AI: ${needsAI(idea) ? "YES" : "NO"} | Motion Level: ${arch.motionLevel}`);
+  await logger.log(`🤖 AI: ${needsAI(idea) ? "YES" : "NO"} | 📎 Files: ${needsFileUpload(idea) ? "YES" : "NO"} | Motion Level: ${arch.motionLevel}`);
   await logger.log(`📌 Source: ${idea.source}${idea.redditSignals?.length ? ` (${idea.redditSignals.length} Reddit signals)` : ""}`);
   await logger.log(`${"=".repeat(50)}\n`);
 
-  await sendTelegram(`🔨 *Building*: ${idea.title}\nType: ${idea.type}\nAI: ${needsAI(idea) ? "Yes" : "No"}`);
+  await sendTelegram(`🔨 *Building*: ${idea.title}\nType: ${idea.type}\nAI: ${needsAI(idea) ? "Yes" : "No"}\nFiles: ${needsFileUpload(idea) ? "Yes" : "No"}`);
 
   const projectName = idea.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 25);
   const typeFolder = idea.type === "extension" ? "extensions" : idea.type === "mobile" ? "mobile" : "web";
