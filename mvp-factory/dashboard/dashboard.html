@@ -1086,7 +1086,7 @@ function renderSkillCard(s,i,isFeatured){
     '<div class="skill-icon" style="background:'+s.color+'18;color:'+s.color+'">'+s.name.charAt(0)+verifiedBadge+'</div>'+
     '<div class="skill-info">'+
       '<div class="skill-name">'+esc(s.name)+' '+
-        (s.installed?'<span class="skill-installed">&#10003; Installed</span>':'<button class="skill-install-btn" onclick="event.stopPropagation();installSkill(\''+esc(s.name)+'\')">&#43; Install</button>')+
+        (s.installed?'<span class="skill-installed" style="cursor:pointer" title="Click to uninstall" onclick="event.stopPropagation();uninstallSkill(\''+esc(s.name)+'\')">&#10003; Installed</span>':'<button class="skill-install-btn" onclick="event.stopPropagation();installSkill(\''+esc(s.name)+'\')">&#43; Install</button>')+
       '</div>'+
       '<div class="skill-desc">'+esc(s.desc)+'</div>'+
       '<div class="skill-meta">'+
@@ -1100,9 +1100,36 @@ function renderSkillCard(s,i,isFeatured){
   '</div>';
 }
 
-function installSkill(name){
+async function installSkill(name){
   toast('Installing '+name+'...');
-  setTimeout(()=>toast(name+' installed successfully!'),1500);
+  try {
+    const res=await fetch('/api/skills/install',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
+    const data=await res.json();
+    if(data.success){
+      toast(name+' installed successfully!');
+      const s=skillsData.find(x=>x.name===name);
+      if(s)s.installed=true;
+      renderSkills();
+    } else {
+      toast(data.error||'Install failed');
+    }
+  } catch(e){ toast('Install error: '+e.message); }
+}
+
+async function uninstallSkill(name){
+  toast('Uninstalling '+name+'...');
+  try {
+    const res=await fetch('/api/skills/uninstall',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
+    const data=await res.json();
+    if(data.success){
+      toast(name+' uninstalled');
+      const s=skillsData.find(x=>x.name===name);
+      if(s)s.installed=false;
+      renderSkills();
+    } else {
+      toast(data.error||'Uninstall failed');
+    }
+  } catch(e){ toast('Uninstall error: '+e.message); }
 }
 
 function renderSkills(){

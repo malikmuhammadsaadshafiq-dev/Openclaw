@@ -13,6 +13,7 @@ const PATHS = {
   web: "/root/mvp-projects/web",
   mobile: "/root/mvp-projects/mobile",
   signals: "/root/mvp-projects/signals",
+  installedSkills: "/root/mvp-projects/installed-skills.json",
 };
 
 function readJsonDir(dir) {
@@ -145,7 +146,48 @@ function readLatestSignals() {
   } catch { return { signals: [], file: null, totalFiles: 0, totalSignals: 0 }; }
 }
 
-function getClawHubSkills() {
+function readInstalledSkills() {
+  try { return JSON.parse(fs.readFileSync(PATHS.installedSkills, "utf-8")); }
+  catch { return null; }
+}
+
+function writeInstalledSkills(installed) {
+  fs.writeFileSync(PATHS.installedSkills, JSON.stringify(installed, null, 2));
+}
+
+function installSkill(name) {
+  const skills = getClawHubSkillsRaw();
+  const skill = skills.find(s => s.name === name);
+  if (!skill) return { success: false, error: "Skill not found" };
+  if (skill.installed) return { success: false, error: "Already installed" };
+
+  let installed = readInstalledSkills();
+  if (!installed) {
+    // First time: seed from defaults
+    installed = {};
+    skills.forEach(s => { installed[s.name] = s.installed; });
+  }
+  installed[name] = true;
+  writeInstalledSkills(installed);
+  return { success: true, name, message: name + " installed successfully" };
+}
+
+function uninstallSkill(name) {
+  const skills = getClawHubSkillsRaw();
+  const skill = skills.find(s => s.name === name);
+  if (!skill) return { success: false, error: "Skill not found" };
+
+  let installed = readInstalledSkills();
+  if (!installed) {
+    installed = {};
+    skills.forEach(s => { installed[s.name] = s.installed; });
+  }
+  installed[name] = false;
+  writeInstalledSkills(installed);
+  return { success: true, name, message: name + " uninstalled" };
+}
+
+function getClawHubSkillsRaw() {
   return [
     // Featured / Top Skills
     { name: "ATXP", desc: "Web search, AI image generation, music creation", downloads: 22836, category: "search", color: "#8b5cf6", installed: true, verified: true, rating: 4.8, version: "3.2.1", author: "ATXP Labs", featured: true },
@@ -195,6 +237,17 @@ function getClawHubSkills() {
   ];
 }
 
+function getClawHubSkills() {
+  const skills = getClawHubSkillsRaw();
+  const installed = readInstalledSkills();
+  if (installed) {
+    skills.forEach(s => {
+      if (installed.hasOwnProperty(s.name)) s.installed = installed[s.name];
+    });
+  }
+  return skills;
+}
+
 function getSquadronAgents() {
   return [
     { name: "FrontendClaw", role: "Frontend", wallet: "0xdb1b...e5fb", status: "active", avatar: "FC", color: "#3b82f6" },
@@ -237,6 +290,25 @@ function getHTML() {
 
 const server = http.createServer((req, res) => {
   const url = req.url.split("?")[0];
+
+  // Handle POST endpoints for skill install/uninstall
+  if (req.method === "POST" && (url === "/api/skills/install" || url === "/api/skills/uninstall")) {
+    let body = "";
+    req.on("data", chunk => { body += chunk; });
+    req.on("end", () => {
+      try {
+        const { name } = JSON.parse(body);
+        const result = url === "/api/skills/install" ? installSkill(name) : uninstallSkill(name);
+        res.writeHead(result.success ? 200 : 400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(result));
+      } catch (e) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ success: false, error: "Invalid request" }));
+      }
+    });
+    return;
+  }
+
   if (url.startsWith("/api/")) {
     if (!handleApi(url, res)) {
       res.writeHead(404, { "Content-Type": "application/json" });
