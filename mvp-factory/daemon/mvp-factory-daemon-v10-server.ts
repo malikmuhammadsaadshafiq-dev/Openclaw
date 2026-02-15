@@ -1769,9 +1769,20 @@ async function deployToExpo(projectPath: string, projectName: string): Promise<s
 async function pushToGithub(projectPath: string, idea: Idea, projectName: string): Promise<string> {
   if (!CONFIG.github.token || !CONFIG.github.username) return "";
 
-  const repoName = `mvp-${projectName}`;
+  let repoName = `mvp-${projectName}`;
 
   try {
+    // Check if repo already exists — append timestamp suffix to avoid collision
+    const existsCheck = await fetch(`https://api.github.com/repos/${CONFIG.github.username}/${repoName}`, {
+      headers: { Authorization: `Bearer ${CONFIG.github.token}` },
+    });
+    if (existsCheck.status === 200) {
+      const suffix = Math.floor(Date.now() / 1000) % 10000;
+      const oldName = repoName;
+      repoName = `${repoName}-${suffix}`;
+      await logger.log(`[DEDUP] GitHub repo "${oldName}" already exists, using "${repoName}" instead`, "WARN");
+    }
+
     await fetch("https://api.github.com/user/repos", {
       method: "POST",
       headers: { Authorization: `Bearer ${CONFIG.github.token}`, "Content-Type": "application/json" },
@@ -2107,6 +2118,15 @@ async function buildMVP(idea: Idea): Promise<boolean> {
     return false;
   }
 
+  // Pre-build duplicate check — catch ideas queued before dedup was added
+  const builtProducts = (await loadExistingProducts()).filter(p => p.source === 'built' || p.source === 'web');
+  const dupCheck = isDuplicate(idea, builtProducts);
+  if (dupCheck.duplicate) {
+    await logger.log(`[WARN] Skipping duplicate build "${idea.title}" — ${dupCheck.reason} (matched: "${dupCheck.matchedWith}")`, "WARN");
+    await fs.unlink(path.join(CONFIG.paths.ideas, `${idea.id}.json`)).catch(() => {});
+    return false;
+  }
+
   const arch = getProductArchetype(idea);
   await logger.log(`\n${"=".repeat(50)}`);
   await logger.log(`🔨 Building: ${idea.title}`);
@@ -2256,6 +2276,142 @@ async function buildMVP(idea: Idea): Promise<boolean> {
   }
 }
 
+// ============= DUPLICATE DETECTION =============
+
+function toSlug(title: string): string {
+  return title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
+function extractKeywords(title: string): Set<string> {
+  const stopWords = new Set([
+    'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
+    'of', 'with', 'by', 'is', 'it', 'my', 'your', 'our', 'app', 'tool',
+    'pro', 'ai', 'smart', 'auto', 'easy', 'quick', 'fast', 'simple',
+    'free', 'online', 'web', 'mobile', 'new', 'super', 'ultra', 'mega',
+  ]);
+  return new Set(
+    title.toLowerCase()
+      .replace(/[^a-z0-9\s]/g, '')
+      .split(/\s+/)
+      .filter(w => w.length > 1 && !stopWords.has(w))
+  );
+}
+
+function keywordSimilarity(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 && b.size === 0) return 1;
+  let intersection = 0;
+  for (const word of a) {
+    if (b.has(word)) intersection++;
+  }
+  const union = a.size + b.size - intersection;
+  return union === 0 ? 0 : intersection / union;
+}
+
+function descriptionSimilarity(desc1: string, desc2: string): number {
+  const words1 = extractKeywords(desc1);
+  const words2 = extractKeywords(desc2);
+  return keywordSimilarity(words1, words2);
+}
+
+interface ExistingProduct {
+  title: string;
+  slug: string;
+  keywords: Set<string>;
+  description: string;
+  source: 'ideas' | 'built' | 'web' | 'github';
+}
+
+async function loadExistingProducts(): Promise<ExistingProduct[]> {
+  const products: ExistingProduct[] = [];
+
+  async function loadFromDir(dir: string, source: 'ideas' | 'built'): Promise<void> {
+    try {
+      const files = await fs.readdir(dir);
+      for (const file of files) {
+        if (!file.endsWith('.json')) continue;
+        try {
+          const content = await fs.readFile(path.join(dir, file), 'utf-8');
+          const data = JSON.parse(content);
+          if (data.title) {
+            products.push({
+              title: data.title,
+              slug: toSlug(data.title),
+              keywords: extractKeywords(data.title),
+              description: data.description || data.problem || '',
+              source,
+            });
+          }
+        } catch {}
+      }
+    } catch {}
+  }
+
+  async function loadFromOutputDir(dir: string): Promise<void> {
+    try {
+      const folders = await fs.readdir(dir);
+      for (const folder of folders) {
+        const pkgPath = path.join(dir, folder, 'package.json');
+        try {
+          await fs.access(pkgPath);
+          products.push({
+            title: folder,
+            slug: folder,
+            keywords: extractKeywords(folder.replace(/-/g, ' ')),
+            description: '',
+            source: 'web',
+          });
+        } catch {}
+      }
+    } catch {}
+  }
+
+  await Promise.all([
+    loadFromDir(CONFIG.paths.ideas, 'ideas'),
+    loadFromDir(CONFIG.paths.built, 'built'),
+    loadFromOutputDir(path.join(CONFIG.paths.output, 'web')),
+    loadFromOutputDir(path.join(CONFIG.paths.output, 'mobile')),
+    loadFromOutputDir(path.join(CONFIG.paths.output, 'extensions')),
+  ]);
+
+  return products;
+}
+
+function isDuplicate(idea: { title: string; description?: string; problem?: string }, existing: ExistingProduct[]): { duplicate: boolean; reason: string; matchedWith: string } {
+  const newSlug = toSlug(idea.title);
+  const newKeywords = extractKeywords(idea.title);
+
+  for (const product of existing) {
+    // 1. Exact slug match
+    if (newSlug === product.slug) {
+      return { duplicate: true, reason: 'exact slug match', matchedWith: product.title };
+    }
+
+    // 2. One slug contains the other
+    if (newSlug.includes(product.slug) || product.slug.includes(newSlug)) {
+      if (Math.min(newSlug.length, product.slug.length) >= 5) {
+        return { duplicate: true, reason: 'slug containment', matchedWith: product.title };
+      }
+    }
+
+    // 3. High keyword similarity in title (>= 60% overlap)
+    const titleSim = keywordSimilarity(newKeywords, product.keywords);
+    if (titleSim >= 0.6) {
+      return { duplicate: true, reason: `title keyword similarity ${Math.round(titleSim * 100)}%`, matchedWith: product.title };
+    }
+
+    // 4. Description + title combo check
+    const newDesc = idea.description || idea.problem || '';
+    if (newDesc && product.description) {
+      const descSim = descriptionSimilarity(newDesc, product.description);
+      if (descSim >= 0.5 && titleSim >= 0.3) {
+        return { duplicate: true, reason: `description similarity ${Math.round(descSim * 100)}% + title ${Math.round(titleSim * 100)}%`, matchedWith: product.title };
+      }
+    }
+  }
+
+  return { duplicate: false, reason: '', matchedWith: '' };
+}
+
 // ============= RESEARCH =============
 
 async function researchIdeas(redditSignals?: RedditSignal[]): Promise<Idea[]> {
@@ -2270,6 +2426,16 @@ async function researchIdeas(redditSignals?: RedditSignal[]): Promise<Idea[]> {
     ? `🔍 Generating ideas from ${redditSignals!.length} Reddit signals...`
     : "🔍 Researching trending ideas (AI-generated)...");
 
+  // Load existing products for dedup in prompts
+  const existingProducts = await loadExistingProducts();
+  const alreadyBuiltList = existingProducts.map(p => p.title).join(", ");
+  const dedupInstruction = alreadyBuiltList
+    ? `\nIMPORTANT - DO NOT suggest ideas similar to these already-built products: ${alreadyBuiltList}\n`
+    : "";
+  if (alreadyBuiltList) {
+    await logger.log(`[DEDUP] Loaded ${existingProducts.length} existing products for prompt injection`);
+  }
+
   let prompt: string;
 
   if (hasSignals) {
@@ -2281,7 +2447,7 @@ async function researchIdeas(redditSignals?: RedditSignal[]): Promise<Idea[]> {
 
 REDDIT SIGNALS:
 ${signalSummary}
-
+${dedupInstruction}
 CRITICAL RULES:
 - At least 3 of 5 ideas MUST be pure UTILITY tools (NO AI/LLM calls needed). Set "needsAI": false for these.
 - The other 2 can be AI-powered if the Reddit signal genuinely calls for AI. Set "needsAI": true for those.
@@ -2304,7 +2470,7 @@ Return ONLY JSON:
 [{"title":"Name","description":"One line","problem":"Problem from Reddit","targetUsers":"Users","features":["Interactive feature 1","Interactive feature 2"],"techStack":"Stack","type":"web|mobile|saas|extension","estimatedHours":12,"viabilityScore":8,"needsAI":false,"sourcePostIndices":[1,5]}]`;
   } else {
     prompt = `Generate 5 UNIQUE app ideas — prioritize UTILITY tools that people use daily.
-
+${dedupInstruction}
 CRITICAL RULES:
 - At least 3 of 5 ideas MUST be pure UTILITY tools (NO AI/LLM calls needed). Set "needsAI": false for these.
 - The other 2 can be AI-powered if the idea genuinely requires AI. Set "needsAI": true for those.
@@ -2371,9 +2537,28 @@ Return ONLY JSON:
 
 async function saveIdeas(ideas: Idea[]): Promise<void> {
   await fs.mkdir(CONFIG.paths.ideas, { recursive: true });
+  const existingProducts = await loadExistingProducts();
+  let saved = 0;
   for (const idea of ideas) {
+    const dupCheck = isDuplicate(idea, existingProducts);
+    if (dupCheck.duplicate) {
+      await logger.log(`[WARN] Skipping duplicate idea "${idea.title}" — ${dupCheck.reason} (matched: "${dupCheck.matchedWith}")`, "WARN");
+      continue;
+    }
     await fs.writeFile(path.join(CONFIG.paths.ideas, `${idea.id}.json`), JSON.stringify(idea, null, 2));
     await logger.log(`📥 Queued: ${idea.title} (${idea.type})`);
+    // Add to existing list to prevent intra-batch duplicates
+    existingProducts.push({
+      title: idea.title,
+      slug: toSlug(idea.title),
+      keywords: extractKeywords(idea.title),
+      description: idea.description || idea.problem || '',
+      source: 'ideas',
+    });
+    saved++;
+  }
+  if (saved < ideas.length) {
+    await logger.log(`[DEDUP] Saved ${saved}/${ideas.length} ideas (${ideas.length - saved} duplicates filtered)`);
   }
 }
 
