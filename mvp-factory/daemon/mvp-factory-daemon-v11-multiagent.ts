@@ -3237,88 +3237,146 @@ ${buildStep}
 // ============================================================
 // MAIN DAEMON
 // ============================================================
-async function main(): Promise<void> {
+async function runForever(): Promise<never> {
   await logger.log('=== MVP Factory v11 (Multi-Agent Architecture) Starting ===');
   await logger.log(`Agents: ResearchAgent, ValidationAgent, FrontendAgent, BackendAgent, PMAgent`);
-  await logger.log(`LLM: Kimi K2.5 via NVIDIA API`);
-  await logger.log(`Output: ${CONFIG.paths.output}`);
+  await logger.log(`LLM: Kimi K2.5 via NVIDIA API | Output: ${CONFIG.paths.output}`);
 
-  // Create directories
+  // One-time directory setup
   const dirs = [
     CONFIG.paths.output, CONFIG.paths.ideas, CONFIG.paths.validated,
     CONFIG.paths.built, CONFIG.paths.skipped, CONFIG.paths.logs,
     path.join(CONFIG.paths.output, 'web'), path.join(CONFIG.paths.output, 'mobile'),
+    path.join(CONFIG.paths.output, 'extension'),
   ];
   for (const dir of dirs) {
     await fs.mkdir(dir, { recursive: true });
   }
 
+  // Single PMAgent instance — lives for the entire process lifetime so
+  // context (existingProducts, isBuilding flag, etc.) is preserved across cycles.
   const pm = new PMAgent();
+  let consecutiveErrors = 0;
 
-  // Initial run: Research+Validate first, then build from queue
+  // Timestamps tracking when each cycle last ran
+  let lastResearch = 0;
+  let lastBuild    = 0;
+  let lastHealth   = 0;
+  let lastRotation = 0;
+
+  // Flags so we never run the same cycle twice concurrently
+  let researchRunning = false;
+  let buildRunning    = false;
+
+  const RESEARCH_EVERY = 30 * 60 * 1000;   // 30 min
+  const BUILD_EVERY    = CONFIG.intervals.build; // 20 min
+  const HEALTH_EVERY   = CONFIG.intervals.healthCheck; // 5 min
+  const ROTATE_EVERY   = 60 * 60 * 1000;   // 1 hour
+  const TICK           = 30 * 1000;         // loop tick: 30 s
+
+  // Signal handlers — clean shutdown only on explicit signal
+  process.on('SIGINT',  async () => { await logger.log('Shutting down (SIGINT)...');  process.exit(0); });
+  process.on('SIGTERM', async () => { await logger.log('Shutting down (SIGTERM)...'); process.exit(0); });
+
+  // Catch any unhandled rejections so they never kill the process
+  process.on('unhandledRejection', async (reason) => {
+    await logger.log(`Unhandled rejection (contained): ${reason}`, 'ERROR');
+  });
+
+  // --- Initial cycles (run once at startup before entering the loop) ---
   await logger.log('Running initial Research+Validation cycle...');
-  try {
-    await pm.runResearchAndValidation();
-  } catch (err) {
-    await logger.log(`Initial research+validation error (contained): ${err}`, 'ERROR');
-  }
+  try { await pm.runResearchAndValidation(); } catch (e) { await logger.log(`Init research error: ${e}`, 'ERROR'); }
+  lastResearch = Date.now();
 
   await logger.log('Running initial Build from queue...');
-  try {
-    await pm.runBuildFromQueue();
-  } catch (err) {
-    await logger.log(`Initial build error (contained): ${err}`, 'ERROR');
-  }
+  try { await pm.runBuildFromQueue(); } catch (e) { await logger.log(`Init build error: ${e}`, 'ERROR'); }
+  lastBuild = Date.now();
 
-  // Schedule DECOUPLED cycles
-  // Research + Validate every 30 min (independent — does NOT block on build)
-  setInterval(async () => {
-    try { await pm.runResearchAndValidation(); }
-    catch (err) { await logger.log(`Research+Validation cycle error: ${err}`, 'ERROR'); }
-  }, 30 * 60 * 1000);
-
-  // Build from queue every 20 min (locked — only 1 build at a time)
-  setInterval(async () => {
-    try { await pm.runBuildFromQueue(); }
-    catch (err) { await logger.log(`Build cycle error: ${err}`, 'ERROR'); }
-  }, CONFIG.intervals.build);
-
-  // Health check every 5 min
-  setInterval(async () => {
-    try {
-      const queueFiles = (await fs.readdir(CONFIG.paths.validated)).filter(f => f.endsWith('.json'));
-      const builtFiles = (await fs.readdir(CONFIG.paths.built)).filter(f => f.endsWith('.json'));
-      const stats = {
-        uptime: process.uptime(),
-        memory: process.memoryUsage(),
-        timestamp: new Date().toISOString(),
-        validatedQueue: queueFiles.length,
-        totalBuilt: builtFiles.length,
-      };
-      await fs.writeFile(path.join(CONFIG.paths.logs, 'health-v11.json'), JSON.stringify(stats, null, 2));
-    } catch {}
-  }, CONFIG.intervals.healthCheck);
-
-  // Log rotation every hour
-  setInterval(async () => {
-    try {
-      const logFile = path.join(CONFIG.paths.logs, 'daemon-v11.log');
-      const stat = await fs.stat(logFile);
-      if (stat.size > 10 * 1024 * 1024) {
-        try { await fs.unlink(logFile + '.1'); } catch {}
-        await fs.rename(logFile, logFile + '.1');
-      }
-    } catch {}
-  }, 60 * 60 * 1000);
-
-  await logger.log('Daemon running: Research+Validate every 30m (independent), Build every 20m (locked)');
+  await logger.log(`Daemon loop running — Research every ${RESEARCH_EVERY/60000}m, Build every ${BUILD_EVERY/60000}m`);
   await notifyTelegram('MVP Factory v11 (Multi-Agent) started!');
 
-  process.on('SIGINT', async () => { await logger.log('Shutting down...'); process.exit(0); });
-  process.on('SIGTERM', async () => { await logger.log('Shutting down...'); process.exit(0); });
+  // ─── Resilient main loop ────────────────────────────────────────────────────
+  // Runs forever. Each tick checks whether any cycle is due and fires it as a
+  // concurrent Promise (so research never blocks build and vice-versa).
+  // On any error inside the tick the loop backs off exponentially and retries —
+  // the PMAgent instance and all timing state are preserved across errors.
+  while (true) {
+    try {
+      const now = Date.now();
+
+      // Research cycle — fire-and-forget so it doesn't block the build cycle
+      if (!researchRunning && now - lastResearch >= RESEARCH_EVERY) {
+        researchRunning = true;
+        pm.runResearchAndValidation()
+          .then(() => { lastResearch = Date.now(); })
+          .catch(async (e) => { await logger.log(`Research cycle error: ${e}`, 'ERROR'); lastResearch = Date.now(); })
+          .finally(() => { researchRunning = false; });
+      }
+
+      // Build cycle — fire-and-forget, PMAgent's internal isBuilding lock handles concurrency
+      if (!buildRunning && now - lastBuild >= BUILD_EVERY) {
+        buildRunning = true;
+        pm.runBuildFromQueue()
+          .then(() => { lastBuild = Date.now(); })
+          .catch(async (e) => { await logger.log(`Build cycle error: ${e}`, 'ERROR'); lastBuild = Date.now(); })
+          .finally(() => { buildRunning = false; });
+      }
+
+      // Health check
+      if (now - lastHealth >= HEALTH_EVERY) {
+        lastHealth = now;
+        try {
+          const queueFiles = (await fs.readdir(CONFIG.paths.validated)).filter(f => f.endsWith('.json'));
+          const builtFiles  = (await fs.readdir(CONFIG.paths.built)).filter(f => f.endsWith('.json'));
+          await fs.writeFile(path.join(CONFIG.paths.logs, 'health-v11.json'), JSON.stringify({
+            uptime: process.uptime(),
+            memory: process.memoryUsage(),
+            timestamp: new Date().toISOString(),
+            validatedQueue: queueFiles.length,
+            totalBuilt: builtFiles.length,
+            consecutiveErrors,
+            researchRunning,
+            buildRunning,
+          }, null, 2));
+        } catch {}
+      }
+
+      // Log rotation
+      if (now - lastRotation >= ROTATE_EVERY) {
+        lastRotation = now;
+        try {
+          const logFile = path.join(CONFIG.paths.logs, 'daemon-v11.log');
+          const stat = await fs.stat(logFile);
+          if (stat.size > 10 * 1024 * 1024) {
+            try { await fs.unlink(logFile + '.1'); } catch {}
+            await fs.rename(logFile, logFile + '.1');
+          }
+        } catch {}
+      }
+
+      // Tick succeeded — reset error counter
+      consecutiveErrors = 0;
+
+      // Sleep until next tick
+      await new Promise<void>(r => setTimeout(r, TICK));
+
+    } catch (err) {
+      consecutiveErrors++;
+      // Exponential backoff: 10 s, 20 s, … up to 5 min max
+      const backoff = Math.min(5 * 60 * 1000, 10_000 * consecutiveErrors);
+      await logger.log(`Loop tick error #${consecutiveErrors} — backing off ${backoff / 1000}s: ${err}`, 'ERROR');
+      await new Promise<void>(r => setTimeout(r, backoff));
+    }
+  }
 }
 
-main().catch(async (error) => {
-  await logger.log(`Fatal error: ${error}`, 'ERROR');
-  process.exit(1);
+// Start the daemon. If runForever() somehow throws (extremely unlikely — it has
+// its own while(true) with catch), keep the process alive so systemd doesn't
+// need to restart it and all in-flight work can drain.
+runForever().catch(async (fatalErr) => {
+  try { await logger.log(`FATAL — runForever exited unexpectedly: ${fatalErr}`, 'ERROR'); } catch {}
+  await notifyTelegram(`⚠️ MVP Factory FATAL crash — process staying alive: ${String(fatalErr).slice(0, 200)}`);
+  // Keep the process running (intervals registered inside are still alive).
+  // Systemd Restart=always will handle a true unrecoverable failure.
+  await new Promise<void>(() => { /* intentionally never resolves */ });
 });
