@@ -1639,6 +1639,23 @@ async function pushToGithub(projectPath: string, idea: Idea): Promise<string> {
 
     const repoUrl = `https://github.com/${CONFIG.github.username}/${repoName}`;
 
+    // Write .gitignore before staging (prevents 100MB+ node_modules from being committed)
+    const gitignoreContent = [
+      'node_modules/',
+      '.next/',
+      'out/',
+      'dist/',
+      '.vercel/',
+      '.env',
+      '.env.local',
+      '.env.*.local',
+      '*.log',
+      '.DS_Store',
+    ].join('\n');
+    try {
+      await fs.writeFile(path.join(projectPath, '.gitignore'), gitignoreContent);
+    } catch {}
+
     // Git operations with timeout
     const gitOpts = { cwd: projectPath, timeout: 60000, maxBuffer: 10 * 1024 * 1024 };
     await execAsync('git init', gitOpts);
