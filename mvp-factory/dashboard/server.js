@@ -271,6 +271,7 @@ function readAllBuilt() {
 
   scanDir(PATHS.web, "web");
   scanDir(PATHS.mobile, "mobile");
+  scanDir(PATHS.extension, "extension");
 
   return [...jsonItems, ...extras].sort((a, b) => (b.builtAt || "").localeCompare(a.builtAt || ""));
 }

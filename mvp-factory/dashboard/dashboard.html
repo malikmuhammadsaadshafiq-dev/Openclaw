@@ -1656,7 +1656,10 @@ function applySSEEvent(type,data){
         break;
       case"built":
         if(Array.isArray(data)){
-          window._builtData=data;setVal("vTotal",data.length);
+          window._builtData=data;
+          // vTotal is authoritative from stats (uses Math.max of metadata+dirs+accumulated counter)
+          // Only fall back to built.length if stats haven't arrived yet
+          if(document.getElementById("vTotal")?.textContent==="--")setVal("vTotal",data.length);
           renderBuiltList(document.getElementById("builtList"),25);
           renderBuiltList(document.getElementById("fullBuiltList"),200);
         }
