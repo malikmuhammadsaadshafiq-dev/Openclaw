@@ -16,6 +16,7 @@ const PATHS = {
   mobile: "/root/mvp-projects/mobile",
   signals: "/root/mvp-projects/signals",
   installedSkills: "/root/mvp-projects/installed-skills.json",
+  pipelineProgress: "/root/mvp-projects/pipeline-progress.json",
 };
 
 function readJsonDir(dir) {
@@ -319,6 +320,15 @@ function getValidatedQueue() {
     .sort((a, b) => (b.validation?.overallScore || 0) - (a.validation?.overallScore || 0));
 }
 
+function readPipelineProgress() {
+  try {
+    const data = JSON.parse(fs.readFileSync(PATHS.pipelineProgress, "utf-8"));
+    return data;
+  } catch {
+    return { phase: "idle", detail: "No active cycle", timestamp: null, ideaCount: 0, ideas: [] };
+  }
+}
+
 function handleApi(url, res) {
   let data;
   switch (url) {
@@ -334,6 +344,7 @@ function handleApi(url, res) {
     case "/api/skills": data = getClawHubSkills(); break;
     case "/api/squadron": data = getSquadronAgents(); break;
     case "/api/logs/structured": data = parseStructuredLogs(200); break;
+    case "/api/pipeline-progress": data = readPipelineProgress(); break;
     default: return false;
   }
   res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });

@@ -343,6 +343,21 @@ body{
 .log-filter-btn[data-agent="RA"]{--fc:#f59e0b}.log-filter-btn[data-agent="VA"]{--fc:#ef4444}.log-filter-btn[data-agent="FA"]{--fc:#3b82f6}.log-filter-btn[data-agent="BA"]{--fc:#10b981}.log-filter-btn[data-agent="PM"]{--fc:#8b5cf6}
 .log-filter-btn[data-agent].active{background:color-mix(in srgb,var(--fc) 15%,transparent);color:var(--fc);border-color:color-mix(in srgb,var(--fc) 30%,transparent)}
 
+/* Pipeline activity banner */
+.pipeline-activity{display:flex;align-items:center;gap:0.75rem;padding:0.75rem 1rem;background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.2);border-radius:var(--radius-sm);margin-bottom:1rem;animation:fade-in-up 0.3s var(--ease-out-expo)}
+.pipeline-activity.researching{background:rgba(245,158,11,0.08);border-color:rgba(245,158,11,0.2)}
+.pipeline-activity.validating{background:rgba(239,68,68,0.08);border-color:rgba(239,68,68,0.2)}
+.pipeline-activity.building{background:rgba(16,185,129,0.08);border-color:rgba(16,185,129,0.2)}
+.pa-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;animation:pulse 1.5s infinite}
+.pipeline-activity.researching .pa-dot{background:#f59e0b}
+.pipeline-activity.validating .pa-dot{background:#ef4444}
+.pipeline-activity.building .pa-dot{background:#10b981}
+.pipeline-activity.idle .pa-dot{background:#6b7280;animation:none}
+.pa-text{flex:1;font-size:0.72rem}
+.pa-phase{font-weight:700;text-transform:uppercase;font-size:0.6rem;letter-spacing:0.08em;opacity:0.7;display:block;margin-bottom:0.1rem}
+.pa-detail{opacity:0.85}
+.pa-count{font-size:0.65rem;font-weight:600;padding:0.15rem 0.5rem;border-radius:4px;background:rgba(255,255,255,0.06);flex-shrink:0}
+
 /* ========== SIDEBAR STACK / PIPELINE ========== */
 .sidebar-stack{display:flex;flex-direction:column;gap:1.25rem}
 .tabs{display:flex;gap:0.25rem;background:rgba(255,255,255,0.03);border-radius:var(--radius-sm);padding:3px;margin-bottom:0.75rem}
@@ -946,6 +961,11 @@ body{
 
     <!-- ===== PIPELINE PAGE ===== -->
     <div class="page-section" id="page-pipeline">
+      <div id="pipelineActivityBanner" style="display:none" class="pipeline-activity idle ani">
+        <div class="pa-dot"></div>
+        <div class="pa-text"><span class="pa-phase" id="paPhase">idle</span><span class="pa-detail" id="paDetail">No active cycle</span></div>
+        <span class="pa-count" id="paCount"></span>
+      </div>
       <div class="card ani">
         <div class="card-header">
           <div class="card-title"><span>&#128203;</span> Full Pipeline View</div>
@@ -1256,10 +1276,10 @@ async function api(path){try{const r=await fetch(path);return await r.json()}cat
 /* ========== MAIN REFRESH ========== */
 let firstLoad=true;
 async function refreshAll(){
-  const [status,stats,queue,built,logs,current,sys,signals,squadron]=await Promise.all([
+  const [status,stats,queue,built,logs,current,sys,signals,squadron,pipeProgress]=await Promise.all([
     api("/api/status"),api("/api/stats"),api("/api/queue"),
     api("/api/built"),api("/api/logs"),api("/api/current"),api("/api/system"),
-    api("/api/signals"),api("/api/squadron"),
+    api("/api/signals"),api("/api/squadron"),api("/api/pipeline-progress"),
   ]);
 
   // Status
@@ -1373,6 +1393,19 @@ async function refreshAll(){
   }
 
   document.getElementById("lastUpdate").textContent=new Date().toLocaleTimeString();
+  // Pipeline activity banner
+  if(pipeProgress){
+    const banner=document.getElementById("pipelineActivityBanner");
+    const isActive=pipeProgress.phase!=="idle";
+    banner.style.display=isActive?"flex":"none";
+    if(isActive){
+      banner.className="pipeline-activity "+pipeProgress.phase+" ani";
+      document.getElementById("paPhase").textContent=pipeProgress.phase;
+      document.getElementById("paDetail").textContent=pipeProgress.detail||"";
+      document.getElementById("paCount").textContent=pipeProgress.ideaCount?(pipeProgress.ideaCount+" ideas"):"";
+    }
+  }
+
   if(firstLoad){firstLoad=false;toast("Dashboard connected");loadSkills().then(()=>{renderSkills();document.getElementById("navSkillCount").textContent=skillsData.length})}
 }
 
