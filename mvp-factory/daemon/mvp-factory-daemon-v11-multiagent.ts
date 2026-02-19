@@ -93,8 +93,8 @@ const CONFIG = {
     skipped: '/root/mvp-projects/skipped',
   },
   intervals: {
-    research: 45 * 60 * 1000,    // 45 min
-    build: 20 * 60 * 1000,       // 20 min
+    research: 30 * 60 * 1000,    // 30 min (decoupled from build)
+    build: 20 * 60 * 1000,       // 20 min (locked, 1 at a time)
     healthCheck: 5 * 60 * 1000,  // 5 min
   },
 };
@@ -1651,6 +1651,49 @@ class PMAgent {
   private validationAgent = new ValidationAgent();
   private frontendAgent = new FrontendAgent();
   private backendAgent = new BackendAgent();
+  private isBuilding = false;
+
+  /**
+   * Run Research + Validation independently (no build).
+   * Saves validated ideas to queue for later building.
+   */
+  async runResearchAndValidation(): Promise<ValidatedIdea[]> {
+    await logger.agent(this.name, '========== RESEARCH + VALIDATION CYCLE START ==========');
+    const startTime = Date.now();
+
+    try {
+      // PHASE 1: Research
+      await logger.agent(this.name, 'PHASE 1: Research Agent deployed...');
+      const rawIdeas = await this.researchAgent.run();
+
+      if (rawIdeas.length === 0) {
+        await logger.agent(this.name, 'No raw ideas found. Research cycle complete.');
+        return [];
+      }
+
+      // PHASE 2: Validation
+      await logger.agent(this.name, `PHASE 2: Validation Agent analyzing ${rawIdeas.length} ideas...`);
+      const validatedIdeas = await this.validationAgent.run(rawIdeas);
+
+      if (validatedIdeas.length === 0) {
+        await logger.agent(this.name, 'No ideas passed validation. Research cycle complete.');
+        return [];
+      }
+
+      // Save validated ideas to queue
+      await this.saveValidatedIdeas(validatedIdeas);
+      await logger.agent(this.name, `Research+Validation complete: ${validatedIdeas.length} ideas added to build queue`);
+
+      return validatedIdeas;
+    } catch (error) {
+      const errStr = String(error).slice(0, 300);
+      await logger.agent(this.name, `RESEARCH+VALIDATION ERROR: ${errStr}`);
+      return [];
+    } finally {
+      const duration = Math.round((Date.now() - startTime) / 1000);
+      await logger.agent(this.name, `========== RESEARCH + VALIDATION COMPLETE (${duration}s) ==========`);
+    }
+  }
 
   async runFullPipeline(): Promise<BuildResult> {
     await logger.agent(this.name, '========== FULL PIPELINE START ==========');
@@ -1730,6 +1773,15 @@ class PMAgent {
   }
 
   async runBuildFromQueue(): Promise<BuildResult> {
+    // Prevent concurrent builds
+    if (this.isBuilding) {
+      await logger.agent(this.name, 'Build in progress — skipping queue build cycle');
+      return { success: false, projectPath: '', githubUrl: '', vercelUrl: '', qualityScore: 0, error: 'Build in progress' };
+    }
+
+    this.isBuilding = true;
+    await logger.agent(this.name, '========== BUILD FROM QUEUE START ==========');
+
     // Build from already-validated ideas in queue
     try {
       const validatedDir = CONFIG.paths.validated;
@@ -1773,6 +1825,9 @@ class PMAgent {
       return this.buildAndDeploy(buildable, mergedFiles, quality.score);
     } catch (error) {
       return { success: false, projectPath: '', githubUrl: '', vercelUrl: '', qualityScore: 0, error: String(error) };
+    } finally {
+      this.isBuilding = false;
+      await logger.agent(this.name, '========== BUILD FROM QUEUE COMPLETE ==========');
     }
   }
 
@@ -2356,22 +2411,29 @@ async function main(): Promise<void> {
 
   const pm = new PMAgent();
 
-  // Initial full pipeline run
-  await logger.log('Running initial full pipeline (Research -> Validate -> Build)...');
+  // Initial run: Research+Validate first, then build from queue
+  await logger.log('Running initial Research+Validation cycle...');
   try {
-    await pm.runFullPipeline();
+    await pm.runResearchAndValidation();
   } catch (err) {
-    await logger.log(`Initial pipeline error (contained): ${err}`, 'ERROR');
+    await logger.log(`Initial research+validation error (contained): ${err}`, 'ERROR');
   }
 
-  // Schedule cycles
-  // Full pipeline (research + validate + build) every 45 min
-  setInterval(async () => {
-    try { await pm.runFullPipeline(); }
-    catch (err) { await logger.log(`Pipeline cycle error: ${err}`, 'ERROR'); }
-  }, CONFIG.intervals.research);
+  await logger.log('Running initial Build from queue...');
+  try {
+    await pm.runBuildFromQueue();
+  } catch (err) {
+    await logger.log(`Initial build error (contained): ${err}`, 'ERROR');
+  }
 
-  // Build from queue every 20 min (uses already-validated ideas)
+  // Schedule DECOUPLED cycles
+  // Research + Validate every 30 min (independent — does NOT block on build)
+  setInterval(async () => {
+    try { await pm.runResearchAndValidation(); }
+    catch (err) { await logger.log(`Research+Validation cycle error: ${err}`, 'ERROR'); }
+  }, 30 * 60 * 1000);
+
+  // Build from queue every 20 min (locked — only 1 build at a time)
   setInterval(async () => {
     try { await pm.runBuildFromQueue(); }
     catch (err) { await logger.log(`Build cycle error: ${err}`, 'ERROR'); }
@@ -2405,7 +2467,7 @@ async function main(): Promise<void> {
     } catch {}
   }, 60 * 60 * 1000);
 
-  await logger.log('Daemon running: Full pipeline every 45m, Queue build every 20m');
+  await logger.log('Daemon running: Research+Validate every 30m (independent), Build every 20m (locked)');
   await notifyTelegram('MVP Factory v11 (Multi-Agent) started!');
 
   process.on('SIGINT', async () => { await logger.log('Shutting down...'); process.exit(0); });

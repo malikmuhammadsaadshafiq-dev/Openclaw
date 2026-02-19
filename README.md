@@ -5,6 +5,7 @@
 ### Multi-Agent AI System That Researches, Validates, Builds & Ships Real Products
 
 [![MVP Factory](https://img.shields.io/badge/MVP_Factory-v11_Multi--Agent-blueviolet?style=for-the-badge)](mvp-factory/)
+[![Live Dashboard](https://img.shields.io/badge/Live_Dashboard-Online-34d399?style=for-the-badge)](http://45.58.40.219:3000/)
 [![Agents](https://img.shields.io/badge/AI_Agents-5-ff6f00?style=for-the-badge)](#-agent-architecture)
 [![Data Sources](https://img.shields.io/badge/Data_Sources-5_Platforms-success?style=for-the-badge)](#-research-agent)
 [![Kimi K2.5](https://img.shields.io/badge/LLM-Kimi_K2.5-FF6F00?style=for-the-badge&logo=nvidia&logoColor=white)](#)
@@ -64,76 +65,81 @@
 
 ---
 
-## Pipeline Flow
+## Pipeline Flow (Decoupled)
+
+Research and Validation run **independently** from Building. This means the system can discover and validate new ideas while a build is in progress.
 
 ```
-Research (5 platforms)  →  Validate (5-dim scoring)  →  Build (parallel)  →  Deploy
-     ~10 sec                   ~40 min                    ~20 min            ~5 min
-   220+ posts               8 ideas → 1 approved      Frontend + Backend    GitHub
-   Real data only           87% rejection rate         in PARALLEL          Vercel
-                                                       Retry loops          Telegram
+╔═══════════════════════════════════════════════════════════════════════╗
+║                    TWO INDEPENDENT LOOPS                              ║
+╠═══════════════════════════════════════════════════════════════════════╣
+║                                                                       ║
+║  LOOP 1: Research + Validate (every 30 min, independent)              ║
+║  ┌──────────┐     ┌──────────┐     ┌──────────────────┐              ║
+║  │ Research  │ ──▶ │ Validate │ ──▶ │ Save to Queue    │              ║
+║  │ 5 sources │     │ 5-dim    │     │ (validated/*.json)│              ║
+║  │ 220+ posts│     │ score    │     └──────────────────┘              ║
+║  └──────────┘     └──────────┘           │                            ║
+║       ↑                                  ▼                            ║
+║       └──── runs even while building ── queue ──┐                     ║
+║                                                  │                    ║
+║  LOOP 2: Build from Queue (every 20 min, locked) │                    ║
+║  ┌──────────────┐     ┌──────────────┐     ┌─────┴────┐              ║
+║  │ Pick best    │ ──▶ │ Frontend +   │ ──▶ │ Deploy   │              ║
+║  │ from queue   │     │ Backend      │     │ GitHub + │              ║
+║  │ (if !locked) │     │ (parallel)   │     │ Vercel   │              ║
+║  └──────────────┘     └──────────────┘     └──────────┘              ║
+║       ↑                                                               ║
+║       └──── isBuilding lock prevents concurrent builds ──────────    ║
+║                                                                       ║
+╚═══════════════════════════════════════════════════════════════════════╝
 ```
 
 ### Detailed Flow
 
 ```
-PHASE 1: RESEARCH AGENT
-├── Reddit (21 subreddits, rate-limited, browser UA, retry loop)
-├── HackerNews Firebase API (/show, /ask, /top stories)
-├── HackerNews Algolia Search API ("need tool", "wish there was", etc.)
-├── Dev.to API (top articles this week)
-└── GitHub Trending (SaaS, dev-tools, productivity repos)
-    ↓
-    All run in PARALLEL (Promise.allSettled)
-    ~220 real posts → deduplicate → ~210 unique
-    ↓
-    AI extracts 8 product ideas grounded in real posts
-    ↓
-PHASE 2: VALIDATION AGENT
-├── Dedup check against all existing products
-├── For each idea (sequential, with retry):
-│   ├── Market Demand      (30% weight)  → 1-10
-│   ├── Competition Gap    (25% weight)  → 1-10
-│   ├── Tech Feasibility   (15% weight)  → 1-10
-│   ├── Monetization       (15% weight)  → 1-10
-│   └── Audience Fit       (15% weight)  → 1-10
-├── Weighted score must be ≥ 6.5/10
-├── Competition gap must be ≥ 5/10
-└── Also generates: audience profile, features list, unique angle
-    ↓
-    Typically 1-2 out of 8 ideas pass (87% rejection rate)
-    ↓
-PHASE 3: FRONTEND + BACKEND (IN PARALLEL)
-├── FrontendAgent:
-│   ├── Design UX (audience psychology, design system, conversion)
-│   └── Generate code (Next.js 14, TailwindCSS, responsive)
-├── BackendAgent:
-│   ├── Design architecture (API routes, data models, integrations)
-│   └── Generate code (real logic, AI integration, validation)
-└── Both use retry loops (3 attempts with exponential backoff)
-    ↓
-PHASE 4: MERGE + QUALITY GATE (20 points)
-├── Merge frontend + backend files
-├── Generate: package.json, next.config.js, tsconfig, tailwind config
-├── Quality checks:
-│   ├── API routes with real logic       (4 pts)
-│   ├── Frontend calls API               (3 pts)
-│   ├── No localStorage abuse            (2 pts)
-│   ├── Error handling                   (2 pts)
-│   ├── Loading states                   (2 pts)
-│   ├── Responsive design               (2 pts)
-│   ├── Sufficient files (≥10)           (2 pts)
-│   └── Design system applied            (1 pt)
-├── Minimum: 10/20
-└── Auto-fix if below threshold
-    ↓
-PHASE 5: BUILD + DEPLOY
-├── Write files to disk
-├── npm install
-├── Push to GitHub (auto-create repo, dedup names)
-├── Deploy to Vercel (with env vars)
-├── Record build metadata
-└── Notify via Telegram
+LOOP 1: RESEARCH + VALIDATION (runs independently every 30 min)
+│
+├── PHASE 1: RESEARCH AGENT
+│   ├── Reddit (21 subreddits, rate-limited, browser UA, retry loop)
+│   ├── HackerNews Firebase API (/show, /ask, /top stories)
+│   ├── HackerNews Algolia Search API ("need tool", "wish there was", etc.)
+│   ├── Dev.to API (top articles this week)
+│   └── GitHub Trending (SaaS, dev-tools, productivity repos)
+│       ↓  All run in PARALLEL (Promise.allSettled)
+│       ~220 real posts → deduplicate → ~210 unique
+│       ↓  AI extracts 8 product ideas grounded in real posts
+│
+├── PHASE 2: VALIDATION AGENT
+│   ├── Dedup check against all existing products
+│   ├── For each idea (sequential, with retry):
+│   │   ├── Market Demand      (30% weight)  → 1-10
+│   │   ├── Competition Gap    (25% weight)  → 1-10
+│   │   ├── Tech Feasibility   (15% weight)  → 1-10
+│   │   ├── Monetization       (15% weight)  → 1-10
+│   │   └── Audience Fit       (15% weight)  → 1-10
+│   ├── Weighted score must be ≥ 6.5/10
+│   └── Competition gap must be ≥ 5/10
+│       ↓  Typically 1-2 out of 8 pass (87% rejection rate)
+│       ↓  Saved to validated/ queue
+│
+LOOP 2: BUILD FROM QUEUE (runs independently every 20 min, locked)
+│
+├── isBuilding lock → skip if another build is in progress
+├── Pick best idea from validated/ queue (by score)
+│
+├── PHASE 3: FRONTEND + BACKEND (IN PARALLEL)
+│   ├── FrontendAgent: UX design + code gen (Next.js 14, TailwindCSS)
+│   └── BackendAgent: architecture + code gen (real logic, AI integration)
+│
+├── PHASE 4: MERGE + QUALITY GATE (20 points)
+│   ├── Merge frontend + backend files
+│   ├── Quality checks (10/20 minimum, auto-fix if below)
+│   └── API routes, frontend→API calls, error handling, loading states, etc.
+│
+└── PHASE 5: BUILD + DEPLOY
+    ├── npm install → Push to GitHub → Deploy to Vercel
+    └── Notify via Telegram
 ```
 
 ---
@@ -216,13 +222,14 @@ scp -r mvp-factory/ root@your-server:/root/mvp-factory/
 
 ## Live Dashboard
 
-The dashboard runs at `http://your-server:3000` and shows:
+**[http://45.58.40.219:3000/](http://45.58.40.219:3000/)** - auto-refreshes every 12 seconds
 
-- **5 Agent Status** - Real-time activity of each agent
-- **Pipeline Progress** - Current phase (Research → Validate → Build → Deploy)
+- **5 Agent Cards** - ResearchAgent (RA), ValidationAgent (VA), FrontendAgent (FA), BackendAgent (BA), PMAgent (PM) with live status
+- **Agent-Colored Logs** - Each agent gets its own color + badge, with filter buttons (All/RA/VA/FA/BA/PM)
+- **Decoupled Pipeline** - Research+Validate loop and Build loop shown independently
 - **Validated Queue** - Ideas approved and waiting to be built
-- **Build History** - All completed products with scores
-- **Live Logs** - Real-time v11 daemon logs
+- **Build History** - All completed products with GitHub/Vercel links
+- **ClawHub Skills** - 34-skill marketplace with install/uninstall
 
 ---
 
@@ -287,14 +294,16 @@ Built for the [Clawathon Hackathon](https://openwork.bot/hackathon):
 
 ---
 
-## Scheduling
+## Scheduling (Decoupled)
 
-| Cycle | Interval | What Happens |
-|-------|----------|-------------|
-| **Full Pipeline** | Every 45 min | Research → Validate → Build → Deploy |
-| **Queue Build** | Every 20 min | Build from pre-validated idea queue |
-| **Health Check** | Every 5 min | Write stats to health-v11.json |
-| **Log Rotation** | Every 1 hour | Rotate logs if >10MB |
+| Cycle | Interval | What Happens | Independent? |
+|-------|----------|-------------|:---:|
+| **Research + Validate** | Every 30 min | Scrape 5 platforms → validate → save to queue | Yes |
+| **Build from Queue** | Every 20 min | Pick best idea → build → deploy (locked, 1 at a time) | Yes (locked) |
+| **Health Check** | Every 5 min | Write stats to health-v11.json | Yes |
+| **Log Rotation** | Every 1 hour | Rotate logs if >10MB | Yes |
+
+Research+Validation and Build run on **independent timers**. The build loop has an `isBuilding` lock to prevent concurrent builds, but research continues discovering new ideas while a build is in progress.
 
 ---
 

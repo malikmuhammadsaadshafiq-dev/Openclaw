@@ -268,6 +268,25 @@ function getSquadronAgents() {
   ];
 }
 
+function parseStructuredLogs(n = 200) {
+  const lines = readLogs(n);
+  return lines.map(line => {
+    const tsMatch = line.match(/^\[([^\]]+)\]/);
+    const timestamp = tsMatch ? tsMatch[1] : "";
+    const levelMatch = line.match(/\[(INFO|ERROR|WARN|AGENT)\]/);
+    const level = levelMatch ? levelMatch[1] : "INFO";
+    let agent = null;
+    if (line.includes("[ResearchAgent]")) agent = "ResearchAgent";
+    else if (line.includes("[ValidationAgent]")) agent = "ValidationAgent";
+    else if (line.includes("[FrontendAgent]")) agent = "FrontendAgent";
+    else if (line.includes("[BackendAgent]")) agent = "BackendAgent";
+    else if (line.includes("[PMAgent]")) agent = "PMAgent";
+    const isPhase = line.includes("==========");
+    const message = line.replace(/^\[[^\]]+\]\s*(\[(INFO|ERROR|WARN|AGENT)\]\s*)?(\[[^\]]+\]\s*)?/, "");
+    return { timestamp, level, agent, message, isPhase, raw: line };
+  });
+}
+
 function getValidatedQueue() {
   return readJsonDir(PATHS.validated)
     .sort((a, b) => (b.validation?.overallScore || 0) - (a.validation?.overallScore || 0));
@@ -287,6 +306,7 @@ function handleApi(url, res) {
     case "/api/signals": data = readLatestSignals(); break;
     case "/api/skills": data = getClawHubSkills(); break;
     case "/api/squadron": data = getSquadronAgents(); break;
+    case "/api/logs/structured": data = parseStructuredLogs(200); break;
     default: return false;
   }
   res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
