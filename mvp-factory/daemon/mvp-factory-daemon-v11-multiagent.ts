@@ -560,11 +560,37 @@ class ResearchAgent {
   private rateLimiter = new RateLimiter(2000); // 2s between requests
 
   private redditSubreddits = [
+    // Core startup & idea communities
     'SideProject', 'startups', 'SaaS', 'AppIdeas', 'indiehackers',
-    'Entrepreneur', 'webdev', 'reactjs', 'nextjs', 'selfhosted',
-    'productivity', 'WorkOnline', 'smallbusiness', 'marketing',
-    'artificial', 'MachineLearning', 'datascience', 'cryptocurrency',
-    'PersonalFinance', 'Fitness', 'QuantifiedSelf',
+    'Entrepreneur', 'EntrepreneurRideAlong', 'microsaas', 'solopreneur',
+    'smallbusiness', 'WorkOnline', 'passive_income', 'freelance',
+
+    // Builders & product
+    'buildinpublic', 'nocode', 'lowcode', 'ProductManagement',
+    'growmybusiness', 'GrowthHacking', 'marketing', 'SEO',
+
+    // Web & frontend
+    'webdev', 'reactjs', 'nextjs', 'vuejs', 'svelte',
+    'javascript', 'typescript', 'node',
+
+    // Mobile
+    'FlutterDev', 'androiddev', 'iOSProgramming', 'reactnative',
+
+    // AI & ML
+    'artificial', 'MachineLearning', 'datascience', 'LocalLLaMA',
+    'ChatGPT', 'AI_Agents', 'singularity', 'computervision',
+
+    // Backend & infra
+    'Python', 'golang', 'rust', 'devops', 'selfhosted', 'homelab',
+    'sysadmin', 'aws', 'googlecloud',
+
+    // Domain verticals
+    'fintech', 'edtech', 'healthtech', 'cybersecurity', 'privacy',
+    'gamedev', 'ecommerce', 'dropship', 'digitalnomad',
+
+    // Finance & lifestyle
+    'PersonalFinance', 'investing', 'Fitness', 'QuantifiedSelf',
+    'productivity', 'learnprogramming', 'technology', 'cryptocurrency',
   ];
 
   // Rotate user agents to avoid blocking
@@ -1684,7 +1710,7 @@ class PMAgent {
       const progressPath = path.join(CONFIG.paths.output, 'pipeline-progress.json');
       await fs.writeFile(progressPath, JSON.stringify({
         phase: 'researching',
-        detail: 'Collecting real posts from Reddit (21 subreddits), HN, Dev.to, GitHub Trending...',
+        detail: `Collecting real posts from Reddit (${this.redditSubreddits.length} subreddits), HN, Dev.to, GitHub Trending...`,
         timestamp: new Date().toISOString(), ideaCount: 0, ideas: [],
       })).catch(() => {});
       const rawIdeas = await this.researchAgent.run();
