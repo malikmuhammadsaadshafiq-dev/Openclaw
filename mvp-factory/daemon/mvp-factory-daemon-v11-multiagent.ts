@@ -93,8 +93,8 @@ const CONFIG = {
     skipped: '/root/mvp-projects/skipped',
   },
   intervals: {
-    research: 30 * 60 * 1000,    // 30 min (decoupled from build)
-    build: 20 * 60 * 1000,       // 20 min (locked, 1 at a time)
+    research: 15 * 60 * 1000,    // 15 min — keeps queue full for 12+ builds/day
+    build: 5 * 60 * 1000,        // 5 min check — next build fires as soon as previous finishes
     healthCheck: 5 * 60 * 1000,  // 5 min
   },
 };
@@ -3080,13 +3080,17 @@ ${buildStep}
     // npm install + build (web/saas/api only — mobile uses Expo, extension has no build step)
     if (idea.type !== 'mobile' && idea.type !== 'extension') {
       try {
-        await execAsync('npm install --legacy-peer-deps', { cwd: projectPath, timeout: 180000 });
+        // --prefer-offline uses local cache, --fund=false --audit=false skip slow network checks
+        await execAsync('npm install --legacy-peer-deps --prefer-offline --fund=false --audit=false', { cwd: projectPath, timeout: 300000 });
         await logger.agent(this.name, 'Dependencies installed');
       } catch (err) {
-        await logger.agent(this.name, `npm install warning: ${err}`);
+        await logger.agent(this.name, `npm install retry without offline flag: ${err}`);
         try {
-          await execAsync('npm install', { cwd: projectPath, timeout: 180000 });
-        } catch {}
+          await execAsync('npm install --legacy-peer-deps --fund=false --audit=false', { cwd: projectPath, timeout: 300000 });
+          await logger.agent(this.name, 'Dependencies installed (retry)');
+        } catch (err2) {
+          await logger.agent(this.name, `npm install fallback: ${err2}`);
+        }
       }
 
       // Build test before deployment (ensures no broken MVPs reach production)
@@ -3268,11 +3272,11 @@ async function runForever(): Promise<never> {
   let researchRunning = false;
   let buildRunning    = false;
 
-  const RESEARCH_EVERY = 30 * 60 * 1000;   // 30 min
-  const BUILD_EVERY    = CONFIG.intervals.build; // 20 min
+  const RESEARCH_EVERY = CONFIG.intervals.research; // 15 min — keeps queue full
+  const BUILD_EVERY    = CONFIG.intervals.build;    // 5 min check — starts next build ASAP after previous finishes
   const HEALTH_EVERY   = CONFIG.intervals.healthCheck; // 5 min
   const ROTATE_EVERY   = 60 * 60 * 1000;   // 1 hour
-  const TICK           = 30 * 1000;         // loop tick: 30 s
+  const TICK           = 15 * 1000;         // loop tick: 15 s (faster response)
 
   // Signal handlers — clean shutdown only on explicit signal
   process.on('SIGINT',  async () => { await logger.log('Shutting down (SIGINT)...');  process.exit(0); });
@@ -3317,7 +3321,20 @@ async function runForever(): Promise<never> {
       if (!buildRunning && now - lastBuild >= BUILD_EVERY) {
         buildRunning = true;
         pm.runBuildFromQueue()
-          .then(() => { lastBuild = Date.now(); })
+          .then(async (result) => {
+            lastBuild = Date.now();
+            // If queue was empty, trigger research immediately so the queue refills fast
+            if (result && !result.success && (result.error === 'Empty queue' || result.error === 'No ideas')) {
+              await logger.log('Queue empty — triggering emergency research cycle');
+              if (!researchRunning) {
+                researchRunning = true;
+                pm.runResearchAndValidation()
+                  .then(() => { lastResearch = Date.now(); })
+                  .catch(async (e) => { await logger.log(`Emergency research error: ${e}`, 'ERROR'); lastResearch = Date.now(); })
+                  .finally(() => { researchRunning = false; });
+              }
+            }
+          })
           .catch(async (e) => { await logger.log(`Build cycle error: ${e}`, 'ERROR'); lastBuild = Date.now(); })
           .finally(() => { buildRunning = false; });
       }
