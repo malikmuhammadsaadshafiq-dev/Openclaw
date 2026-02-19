@@ -1,7 +1,55 @@
 const http = require("http");
+const https = require("https");
 const fs = require("fs");
 const path = require("path");
 const { execSync } = require("child_process");
+
+// ── GitHub live stats cache ──────────────────────────────────────────────────
+let _ghCache = { repoCount: 0, lastFetched: 0 };
+
+function readEnvValue(key) {
+  if (process.env[key]) return process.env[key];
+  const envPaths = ["/root/mvp-projects/.env", "/root/.env", "/root/openclaw/.env"];
+  for (const p of envPaths) {
+    try {
+      const content = fs.readFileSync(p, "utf-8");
+      const match = content.match(new RegExp(`^${key}\\s*=\\s*["']?([^"'\\n]+)["']?`, "m"));
+      if (match) return match[1].trim();
+    } catch {}
+  }
+  return "";
+}
+
+function refreshGithubStats() {
+  const token = readEnvValue("GITHUB_TOKEN");
+  const username = readEnvValue("GITHUB_USERNAME") || "malikmuhammadsaadshafiq-dev";
+  const headers = {
+    "User-Agent": "mvp-factory-dashboard/1.0",
+    "Accept": "application/vnd.github.v3+json",
+  };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  const options = { hostname: "api.github.com", path: `/users/${encodeURIComponent(username)}`, method: "GET", headers };
+  const req = https.request(options, (resp) => {
+    let data = "";
+    resp.on("data", (chunk) => { data += chunk; });
+    resp.on("end", () => {
+      try {
+        const user = JSON.parse(data);
+        if (user.public_repos !== undefined) {
+          _ghCache = { repoCount: user.public_repos, lastFetched: Date.now() };
+        }
+      } catch {}
+    });
+  });
+  req.on("error", () => {});
+  req.setTimeout(15000, () => req.destroy());
+  req.end();
+}
+
+// Initial GitHub fetch on startup, then refresh every 5 minutes
+refreshGithubStats();
+setInterval(refreshGithubStats, 5 * 60 * 1000);
 
 const PORT = 3000;
 const PATHS = {
@@ -14,9 +62,17 @@ const PATHS = {
   skipped: "/root/mvp-projects/skipped",
   web: "/root/mvp-projects/web",
   mobile: "/root/mvp-projects/mobile",
+  extension: "/root/mvp-projects/extension",
   signals: "/root/mvp-projects/signals",
   installedSkills: "/root/mvp-projects/installed-skills.json",
   pipelineProgress: "/root/mvp-projects/pipeline-progress.json",
+  // Reddit-specific signal subdirectories
+  redditHot: "/root/mvp-projects/signals/reddit-hot",
+  redditNew: "/root/mvp-projects/signals/reddit-new",
+  redditTop: "/root/mvp-projects/signals/reddit-top",
+  redditRising: "/root/mvp-projects/signals/reddit-rising",
+  redditComments: "/root/mvp-projects/signals/reddit-comments",
+  redditSubreddits: "/root/mvp-projects/signals/reddit-subreddits",
 };
 
 function readJsonDir(dir) {
@@ -35,23 +91,45 @@ function readStats() {
   catch { fileStats = { date: "", buildsToday: 0, researchesToday: 0, totalBuilt: 0, functionalityScore: 0 }; }
 
   const builtItems = readJsonDir(PATHS.built);
-  const totalBuilt = builtItems.length;
   const liveCount = builtItems.filter(b => b.vercelUrl || b.liveUrl).length;
-  const githubCount = builtItems.filter(b => b.githubUrl).length;
 
   const typeCounts = { web: 0, saas: 0, mobile: 0, extension: 0, api: 0 };
+  const monetizeCounts = { free_ads: 0, freemium: 0, saas: 0, one_time: 0 };
   for (const b of builtItems) {
     const t = (b.type || "web").toLowerCase();
     if (typeCounts.hasOwnProperty(t)) typeCounts[t]++;
     else typeCounts.web++;
+    const m = (b.monetizationType || "free_ads").toLowerCase();
+    if (monetizeCounts.hasOwnProperty(m)) monetizeCounts[m]++;
   }
 
-  let dirWebCount = 0, dirMobileCount = 0;
+  // Count actual project directories — more reliable than JSON metadata
+  // (metadata files can be missing for older/cleaned-up builds)
+  let dirWebCount = 0, dirMobileCount = 0, dirExtCount = 0;
   try { dirWebCount = fs.readdirSync(PATHS.web).filter(f => fs.statSync(path.join(PATHS.web, f)).isDirectory()).length; } catch {}
   try { dirMobileCount = fs.readdirSync(PATHS.mobile).filter(f => fs.statSync(path.join(PATHS.mobile, f)).isDirectory()).length; } catch {}
+  try { dirExtCount = fs.readdirSync(PATHS.extension).filter(f => fs.statSync(path.join(PATHS.extension, f)).isDirectory()).length; } catch {}
 
-  const webCount = Math.max(typeCounts.web, dirWebCount - typeCounts.saas - typeCounts.extension - typeCounts.api);
+  const dirTotal = dirWebCount + dirMobileCount + dirExtCount;
+
+  // GitHub API live count (public_repos minus the main Openclaw repo itself)
+  const ghRepoCount = _ghCache.repoCount;
+  const ghMvpEstimate = ghRepoCount > 1 ? ghRepoCount - 1 : ghRepoCount;
+
+  // Use highest of: JSON metadata count, actual directory count, stats.json count, GitHub API count
+  const totalBuilt = Math.max(builtItems.length, dirTotal, fileStats.totalBuilt || 0, ghMvpEstimate);
+
+  // githubCount: use GitHub API repo count as source of truth, with local data as floor
+  const jsonGithubCount = builtItems.filter(b => b.githubUrl).length;
+  const githubCount = Math.max(jsonGithubCount, dirTotal, ghMvpEstimate);
+
+  // Type breakdown: if dir count exceeds JSON count, attribute the extras to web
+  const jsonTotal = typeCounts.web + typeCounts.saas + typeCounts.mobile + typeCounts.extension + typeCounts.api;
+  const extraProjects = Math.max(0, dirTotal - jsonTotal);
+
+  const webCount = Math.max(typeCounts.web, dirWebCount - typeCounts.saas) + extraProjects;
   const mobileCount = Math.max(typeCounts.mobile, dirMobileCount);
+  const extensionCount = Math.max(typeCounts.extension, dirExtCount);
 
   let functionalityScore = 0;
   for (const b of builtItems) {
@@ -76,14 +154,23 @@ function readStats() {
     webCount,
     saasCount: typeCounts.saas,
     mobileCount,
-    extensionCount: typeCounts.extension,
+    extensionCount,
     apiCount: typeCounts.api,
     liveCount,
     githubCount,
     queueCount,
     validatedCount,
+    freeAdsCount: monetizeCounts.free_ads,
+    freemiumCount: monetizeCounts.freemium,
+    saasMonetizeCount: monetizeCounts.saas,
+    oneTimeCount: monetizeCounts.one_time,
     avgValidationScore: Math.round(avgValidationScore * 10) / 10,
     functionalityScore: functionalityScore || fileStats.functionalityScore || 0,
+    // source-of-truth counts for debugging
+    jsonMetadataCount: builtItems.length,
+    dirProjectCount: dirTotal,
+    githubRepoCount: ghRepoCount,
+    githubLastFetched: _ghCache.lastFetched,
     version: "v11-multiagent",
   };
 }
@@ -205,6 +292,51 @@ function installSkill(name) {
   return { success: true, name, message: name + " installed successfully" };
 }
 
+// Returns all built projects — merges JSON metadata with bare project directories
+// so projects that lost their metadata (or were never given any) still appear.
+function readAllBuilt() {
+  const jsonItems = readJsonDir(PATHS.built);
+  const jsonSlugs = new Set(jsonItems.map(b => (b.slug || b.title || "").toLowerCase().replace(/[^a-z0-9]+/g, "-")));
+
+  const extras = [];
+
+  const scanDir = (dir, type) => {
+    try {
+      const entries = fs.readdirSync(dir).filter(f => {
+        try { return fs.statSync(path.join(dir, f)).isDirectory(); } catch { return false; }
+      });
+      for (const name of entries) {
+        const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+        if (!jsonSlugs.has(slug) && !jsonSlugs.has(name.toLowerCase())) {
+          // Try to read a package.json for a title
+          let title = name;
+          try {
+            const pkg = JSON.parse(fs.readFileSync(path.join(dir, name, "package.json"), "utf-8"));
+            if (pkg.name) title = pkg.name;
+          } catch {}
+          extras.push({
+            title,
+            slug,
+            type,
+            builtAt: null,
+            githubUrl: null,
+            liveUrl: null,
+            vercelUrl: null,
+            functionalityScore: null,
+            _dirOnly: true,
+          });
+        }
+      }
+    } catch {}
+  };
+
+  scanDir(PATHS.web, "web");
+  scanDir(PATHS.mobile, "mobile");
+  scanDir(PATHS.extension, "extension");
+
+  return [...jsonItems, ...extras].sort((a, b) => (b.builtAt || "").localeCompare(a.builtAt || ""));
+}
+
 function uninstallSkill(name) {
   const skills = getClawHubSkillsRaw();
   const skill = skills.find(s => s.name === name);
@@ -320,6 +452,105 @@ function getValidatedQueue() {
     .sort((a, b) => (b.validation?.overallScore || 0) - (a.validation?.overallScore || 0));
 }
 
+function readRedditCategory(dirPath) {
+  try {
+    const files = fs.readdirSync(dirPath).filter(f => f.endsWith(".json")).sort().reverse();
+    if (!files.length) return [];
+    return JSON.parse(fs.readFileSync(path.join(dirPath, files[0]), "utf-8"));
+  } catch { return []; }
+}
+
+function getRedditHot() {
+  const fromDir = readRedditCategory(PATHS.redditHot);
+  if (fromDir.length) return fromDir;
+  // Fall back to filtering hot-tagged signals from main signals dir
+  try {
+    const allFiles = fs.readdirSync(PATHS.signals).filter(f => f.startsWith("reddit-hot") || f.startsWith("reddit-")).sort().reverse();
+    if (!allFiles.length) return [];
+    return JSON.parse(fs.readFileSync(path.join(PATHS.signals, allFiles[0]), "utf-8"))
+      .filter(s => (s.category || s.type || "").toLowerCase().includes("hot") || !s.category);
+  } catch { return []; }
+}
+
+function getRedditNew() {
+  const fromDir = readRedditCategory(PATHS.redditNew);
+  if (fromDir.length) return fromDir;
+  try {
+    const allFiles = fs.readdirSync(PATHS.signals).filter(f => f.startsWith("reddit-new")).sort().reverse();
+    if (!allFiles.length) return [];
+    return JSON.parse(fs.readFileSync(path.join(PATHS.signals, allFiles[0]), "utf-8"));
+  } catch { return []; }
+}
+
+function getRedditTop() {
+  const fromDir = readRedditCategory(PATHS.redditTop);
+  if (fromDir.length) return fromDir;
+  try {
+    const allFiles = fs.readdirSync(PATHS.signals).filter(f => f.startsWith("reddit-top")).sort().reverse();
+    if (!allFiles.length) return [];
+    return JSON.parse(fs.readFileSync(path.join(PATHS.signals, allFiles[0]), "utf-8"));
+  } catch { return []; }
+}
+
+function getRedditRising() {
+  const fromDir = readRedditCategory(PATHS.redditRising);
+  if (fromDir.length) return fromDir;
+  try {
+    const allFiles = fs.readdirSync(PATHS.signals).filter(f => f.startsWith("reddit-rising")).sort().reverse();
+    if (!allFiles.length) return [];
+    return JSON.parse(fs.readFileSync(path.join(PATHS.signals, allFiles[0]), "utf-8"));
+  } catch { return []; }
+}
+
+function getRedditComments() {
+  const fromDir = readRedditCategory(PATHS.redditComments);
+  if (fromDir.length) return fromDir;
+  try {
+    const allFiles = fs.readdirSync(PATHS.signals).filter(f => f.startsWith("reddit-comments")).sort().reverse();
+    if (!allFiles.length) return [];
+    return JSON.parse(fs.readFileSync(path.join(PATHS.signals, allFiles[0]), "utf-8"));
+  } catch { return []; }
+}
+
+function getRedditSubreddits() {
+  try {
+    const files = fs.readdirSync(PATHS.redditSubreddits).filter(f => f.endsWith(".json")).sort().reverse();
+    if (files.length) return JSON.parse(fs.readFileSync(path.join(PATHS.redditSubreddits, files[0]), "utf-8"));
+  } catch {}
+  // Derive tracked subreddits from existing signal files
+  try {
+    const allFiles = fs.readdirSync(PATHS.signals).filter(f => f.startsWith("reddit-"));
+    const subreddits = new Set();
+    for (const f of allFiles) {
+      try {
+        const data = JSON.parse(fs.readFileSync(path.join(PATHS.signals, f), "utf-8"));
+        if (Array.isArray(data)) data.forEach(s => { if (s.subreddit) subreddits.add(s.subreddit); });
+      } catch {}
+    }
+    return Array.from(subreddits).map(name => ({ name, url: `https://reddit.com/r/${name}` }));
+  } catch { return []; }
+}
+
+function getRedditSummary() {
+  const all = readLatestSignals();
+  const hot = getRedditHot();
+  const top = getRedditTop();
+  const rising = getRedditRising();
+  const subreddits = getRedditSubreddits();
+  return {
+    total: all.sources.reddit || 0,
+    hot: hot.length,
+    top: top.length,
+    rising: rising.length,
+    trackedSubreddits: subreddits.length,
+    subreddits,
+    topByScore: (all.signals || [])
+      .filter(s => (s.source || "") === "reddit")
+      .sort((a, b) => (b.score || 0) - (a.score || 0))
+      .slice(0, 10),
+  };
+}
+
 function readPipelineProgress() {
   try {
     const data = JSON.parse(fs.readFileSync(PATHS.pipelineProgress, "utf-8"));
@@ -336,7 +567,7 @@ function handleApi(url, res) {
     case "/api/stats": data = readStats(); break;
     case "/api/queue": data = readJsonDir(PATHS.ideas).sort((a, b) => (b.viabilityScore || 0) - (a.viabilityScore || 0)); break;
     case "/api/validated": data = getValidatedQueue(); break;
-    case "/api/built": data = readJsonDir(PATHS.built).sort((a, b) => (b.builtAt || "").localeCompare(a.builtAt || "")); break;
+    case "/api/built": data = readAllBuilt(); break;
     case "/api/logs": data = readLogs(200); break;
     case "/api/current": data = getCurrentBuild(); break;
     case "/api/system": data = getSystemInfo(); break;
@@ -345,6 +576,14 @@ function handleApi(url, res) {
     case "/api/squadron": data = getSquadronAgents(); break;
     case "/api/logs/structured": data = parseStructuredLogs(200); break;
     case "/api/pipeline-progress": data = readPipelineProgress(); break;
+    // Reddit-specific endpoints
+    case "/api/reddit": data = getRedditSummary(); break;
+    case "/api/reddit/hot": data = getRedditHot(); break;
+    case "/api/reddit/new": data = getRedditNew(); break;
+    case "/api/reddit/top": data = getRedditTop(); break;
+    case "/api/reddit/rising": data = getRedditRising(); break;
+    case "/api/reddit/comments": data = getRedditComments(); break;
+    case "/api/reddit/subreddits": data = getRedditSubreddits(); break;
     default: return false;
   }
   res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
@@ -362,8 +601,101 @@ function getHTML() {
   return HTML_CACHE;
 }
 
+// ── SSE broadcast registry ──────────────────────────────────────────────────
+const sseClients = new Set();
+
+function sseWrite(res, event, data) {
+  try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch {}
+}
+
+function broadcast(event, data) {
+  for (const res of sseClients) sseWrite(res, event, data);
+}
+
+// Debounced file watcher — fires once per burst of writes
+let watchDebounceTimer = null;
+function onFileChange() {
+  clearTimeout(watchDebounceTimer);
+  watchDebounceTimer = setTimeout(() => {
+    if (!sseClients.size) return;
+    broadcast("progress", readPipelineProgress());
+    broadcast("logs",     readLogs(200));
+    broadcast("stats",    readStats());
+    broadcast("status",   getDaemonStatus());
+    broadcast("validated", getValidatedQueue());
+    broadcast("built",    readAllBuilt());
+    broadcast("current",  getCurrentBuild());
+  }, 300);
+}
+
+// Watch log file and pipeline-progress.json for changes
+const watchTargets = [PATHS.logsV11, PATHS.logs, PATHS.pipelineProgress];
+for (const target of watchTargets) {
+  try {
+    fs.watch(target, { persistent: false }, onFileChange);
+  } catch {
+    // File may not exist yet on first run — retry after a delay
+    setTimeout(() => {
+      try { fs.watch(target, { persistent: false }, onFileChange); } catch {}
+    }, 15000);
+  }
+}
+
+// Also watch the built + validated dirs so card counts update on new files
+for (const dir of [PATHS.built, PATHS.validated, PATHS.ideas]) {
+  try { fs.watch(dir, { persistent: false }, onFileChange); } catch {}
+}
+
+// ── HTTP server ─────────────────────────────────────────────────────────────
 const server = http.createServer((req, res) => {
   const url = req.url.split("?")[0];
+
+  // ── SSE stream endpoint ──────────────────────────────────────────────────
+  if (url === "/api/stream") {
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+      "X-Accel-Buffering": "no",  // nginx: disable buffering
+    });
+    res.write(": connected\n\n");
+
+    // Push full state on connect
+    sseWrite(res, "status",    getDaemonStatus());
+    sseWrite(res, "stats",     readStats());
+    sseWrite(res, "progress",  readPipelineProgress());
+    sseWrite(res, "logs",      readLogs(200));
+    sseWrite(res, "validated", getValidatedQueue());
+    sseWrite(res, "built",     readAllBuilt());
+    sseWrite(res, "current",   getCurrentBuild());
+    sseWrite(res, "signals",   readLatestSignals());
+    sseWrite(res, "squadron",  getSquadronAgents());
+
+    sseClients.add(res);
+
+    // Heartbeat every 25s to keep the connection alive through proxies/load balancers
+    const heartbeat = setInterval(() => {
+      try { res.write(": heartbeat\n\n"); } catch { cleanup(); }
+    }, 25000);
+
+    // Periodic full-state push every 30s as a safety net
+    const fullPush = setInterval(() => {
+      if (!sseClients.has(res)) { clearInterval(fullPush); return; }
+      broadcast("stats",    readStats());
+      broadcast("status",   getDaemonStatus());
+      broadcast("squadron", getSquadronAgents());
+    }, 30000);
+
+    function cleanup() {
+      sseClients.delete(res);
+      clearInterval(heartbeat);
+      clearInterval(fullPush);
+      try { res.end(); } catch {}
+    }
+    req.on("close", cleanup);
+    req.on("error", cleanup);
+    return;
+  }
 
   if (req.method === "POST" && (url === "/api/skills/install" || url === "/api/skills/uninstall")) {
     let body = "";
