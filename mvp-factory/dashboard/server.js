@@ -130,20 +130,55 @@ function getSystemInfo() {
 
 function readLatestSignals() {
   try {
-    const files = fs.readdirSync(PATHS.signals).filter(f => f.startsWith("reddit-") && f.endsWith(".json"));
-    if (!files.length) return { signals: [], file: null, totalFiles: 0, totalSignals: 0 };
-    files.sort().reverse();
-    const latestFile = files[0];
-    const signals = JSON.parse(fs.readFileSync(path.join(PATHS.signals, latestFile), "utf-8"));
+    const allFiles = fs.readdirSync(PATHS.signals).filter(f => f.endsWith(".json"));
+    if (!allFiles.length) return { signals: [], file: null, totalFiles: 0, totalSignals: 0, sources: {} };
+
+    // Group by source type
+    const redditFiles = allFiles.filter(f => f.startsWith("reddit-")).sort().reverse();
+    const hnFiles = allFiles.filter(f => f.startsWith("hackernews-")).sort().reverse();
+    const devtoFiles = allFiles.filter(f => f.startsWith("devto-")).sort().reverse();
+
+    const readLatestFile = (files) => {
+      if (!files.length) return [];
+      try { return JSON.parse(fs.readFileSync(path.join(PATHS.signals, files[0]), "utf-8")); }
+      catch { return []; }
+    };
+
+    // Read latest batch from each source and tag them
+    const redditSigs = readLatestFile(redditFiles).map(s => ({ ...s, source: s.source || "reddit" }));
+    const hnSigs = readLatestFile(hnFiles).map(s => ({ ...s, source: s.source || "hackernews" }));
+    const devtoSigs = readLatestFile(devtoFiles).map(s => ({ ...s, source: s.source || "devto" }));
+
+    // Combine and sort by engagement
+    const combined = [...redditSigs, ...hnSigs, ...devtoSigs];
+    combined.sort((a, b) => {
+      const eA = (a.score || 0) + 2 * (a.numComments || 0) + 5 * (a.keywords ? a.keywords.length : 0);
+      const eB = (b.score || 0) + 2 * (b.numComments || 0) + 5 * (b.keywords ? b.keywords.length : 0);
+      return eB - eA;
+    });
+
+    // Count total signals across all files
     let totalSignals = 0;
-    for (const f of files) {
+    for (const f of allFiles) {
       try {
         const data = JSON.parse(fs.readFileSync(path.join(PATHS.signals, f), "utf-8"));
-        totalSignals += data.length;
+        totalSignals += Array.isArray(data) ? data.length : 0;
       } catch {}
     }
-    return { signals, file: latestFile, totalFiles: files.length, totalSignals };
-  } catch { return { signals: [], file: null, totalFiles: 0, totalSignals: 0 }; }
+
+    const latestFile = redditFiles[0] || hnFiles[0] || devtoFiles[0];
+    return {
+      signals: combined,
+      file: latestFile,
+      totalFiles: allFiles.length,
+      totalSignals,
+      sources: {
+        reddit: redditSigs.length,
+        hackernews: hnSigs.length,
+        devto: devtoSigs.length,
+      },
+    };
+  } catch { return { signals: [], file: null, totalFiles: 0, totalSignals: 0, sources: {} }; }
 }
 
 function readInstalledSkills() {

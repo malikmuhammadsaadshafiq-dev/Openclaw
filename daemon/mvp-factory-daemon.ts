@@ -533,6 +533,7 @@ interface RedditSignal {
   url: string;
   createdUtc: number;
   keywords: string[];
+  source?: "reddit" | "hackernews" | "devto";
 }
 
 interface Idea {
@@ -713,6 +714,128 @@ async function scrapeReddit(): Promise<RedditSignal[]> {
   const topSignals = signals.slice(0, 30);
   await logger.log(`Reddit scraping complete: ${signals.length} total signals, using top ${topSignals.length}`);
   return topSignals;
+}
+
+// ============= HACKERNEWS SCRAPING =============
+
+async function scrapeHackerNews(): Promise<RedditSignal[]> {
+  await logger.log("Scraping Hacker News for market signals...");
+  const signals: RedditSignal[] = [];
+  const signalKeywords = CONFIG.reddit.signalKeywords;
+
+  try {
+    // Fetch top story IDs
+    const idsResp = await fetch("https://hacker-news.firebaseio.com/v0/topstories.json", {
+      headers: { "User-Agent": "MVPFactory/1.0" },
+    });
+    if (!idsResp.ok) throw new Error(`HN top stories HTTP ${idsResp.status}`);
+    const ids = (await idsResp.json() as number[]).slice(0, 60);
+
+    // Also fetch "ask HN" stories (great signal for "need a tool")
+    const askResp = await fetch("https://hacker-news.firebaseio.com/v0/askstories.json", {
+      headers: { "User-Agent": "MVPFactory/1.0" },
+    });
+    const askIds = askResp.ok ? (await askResp.json() as number[]).slice(0, 40) : [];
+    const allIds = [...new Set([...ids, ...askIds])].slice(0, 80);
+
+    const fetchItem = async (id: number) => {
+      try {
+        const r = await fetch(`https://hacker-news.firebaseio.com/v0/item/${id}.json`, {
+          headers: { "User-Agent": "MVPFactory/1.0" },
+        });
+        if (!r.ok) return null;
+        return await r.json() as any;
+      } catch { return null; }
+    };
+
+    // Batch fetch with concurrency limit
+    const batchSize = 10;
+    for (let i = 0; i < allIds.length; i += batchSize) {
+      const batch = allIds.slice(i, i + batchSize);
+      const items = await Promise.all(batch.map(fetchItem));
+      for (const item of items) {
+        if (!item || item.dead || item.deleted) continue;
+        const title = (item.title || "").toLowerCase();
+        const body = (item.text || "").substring(0, 500).toLowerCase();
+        const combined = `${title} ${body}`;
+        const matchedKeywords = signalKeywords.filter(kw => combined.includes(kw));
+        const score = item.score || 0;
+        const numComments = item.descendants || 0;
+        const highEngagement = score >= 50;
+        if ((score >= 10 && matchedKeywords.length > 0) || highEngagement || item.type === "story" && title.startsWith("ask hn")) {
+          signals.push({
+            subreddit: item.type === "ask" ? "Ask HN" : "Hacker News",
+            postTitle: item.title || "",
+            postBody: (item.text || "").substring(0, 500),
+            score,
+            numComments,
+            url: item.url || `https://news.ycombinator.com/item?id=${item.id}`,
+            createdUtc: item.time || 0,
+            keywords: matchedKeywords,
+            source: "hackernews",
+          });
+        }
+      }
+      await sleep(500);
+    }
+
+    signals.sort((a, b) => (b.score + 2 * b.numComments) - (a.score + 2 * a.numComments));
+    await logger.log(`HackerNews scraping complete: ${signals.length} signals found`);
+  } catch (error) {
+    await logger.log(`HackerNews scraping failed: ${error}`, "WARN");
+  }
+  return signals.slice(0, 20);
+}
+
+// ============= DEV.TO SCRAPING =============
+
+async function scrapeDevTo(): Promise<RedditSignal[]> {
+  await logger.log("Scraping Dev.to for market signals...");
+  const signals: RedditSignal[] = [];
+  const signalKeywords = CONFIG.reddit.signalKeywords;
+  const tags = ["showdev", "opensource", "buildinpublic", "sideproject", "webdev", "startup", "productivity"];
+
+  try {
+    for (const tag of tags) {
+      try {
+        const resp = await fetch(`https://dev.to/api/articles?tag=${tag}&top=1&per_page=15`, {
+          headers: { "User-Agent": "MVPFactory/1.0", "api-key": process.env.DEVTO_API_KEY || "" },
+        });
+        if (!resp.ok) { await logger.log(`Dev.to tag ${tag}: HTTP ${resp.status}`, "WARN"); continue; }
+        const articles = await resp.json() as any[];
+        for (const article of articles) {
+          const title = (article.title || "").toLowerCase();
+          const body = (article.description || "").toLowerCase();
+          const combined = `${title} ${body}`;
+          const matchedKeywords = signalKeywords.filter(kw => combined.includes(kw));
+          const score = (article.positive_reactions_count || 0) + (article.public_reactions_count || 0);
+          const numComments = article.comments_count || 0;
+          const highEngagement = score >= 20;
+          if ((score >= 5 && matchedKeywords.length > 0) || highEngagement) {
+            signals.push({
+              subreddit: `Dev.to/${tag}`,
+              postTitle: article.title || "",
+              postBody: (article.description || "").substring(0, 500),
+              score,
+              numComments,
+              url: article.url || `https://dev.to${article.path}`,
+              createdUtc: Math.floor(new Date(article.published_at || 0).getTime() / 1000),
+              keywords: matchedKeywords,
+              source: "devto",
+            });
+          }
+        }
+        await sleep(1000);
+      } catch (tagErr) {
+        await logger.log(`Dev.to tag ${tag} error: ${tagErr}`, "WARN");
+      }
+    }
+    signals.sort((a, b) => (b.score + 2 * b.numComments) - (a.score + 2 * a.numComments));
+    await logger.log(`Dev.to scraping complete: ${signals.length} signals found`);
+  } catch (error) {
+    await logger.log(`Dev.to scraping failed: ${error}`, "WARN");
+  }
+  return signals.slice(0, 20);
 }
 
 async function getStats(): Promise<DailyStats> {
@@ -2515,30 +2638,73 @@ async function getNextIdea(): Promise<Idea | null> {
 async function runResearchCycle() {
   await logger.log("\n📡 RESEARCH CYCLE");
 
-  // Step 1: Scrape Reddit for market signals
+  const signalsDir = path.join(CONFIG.paths.output, "signals");
+  await fs.mkdir(signalsDir, { recursive: true });
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+
+  // Step 1a: Scrape Reddit for market signals
   let redditSignals: RedditSignal[] = [];
   try {
     redditSignals = await scrapeReddit();
+    redditSignals = redditSignals.map(s => ({ ...s, source: "reddit" as const }));
     if (redditSignals.length > 0) {
-      // Save raw signals for auditing
-      const signalsDir = path.join(CONFIG.paths.output, "signals");
-      await fs.mkdir(signalsDir, { recursive: true });
-      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
       await fs.writeFile(
         path.join(signalsDir, `reddit-${timestamp}.json`),
         JSON.stringify(redditSignals, null, 2)
       );
-      await logger.log(`Saved ${redditSignals.length} Reddit signals to signals/reddit-${timestamp}.json`);
+      await logger.log(`Saved ${redditSignals.length} Reddit signals`);
     }
   } catch (error) {
-    await logger.log(`Reddit scraping failed, falling back to AI-only: ${error}`, "WARN");
+    await logger.log(`Reddit scraping failed: ${error}`, "WARN");
   }
 
-  // Step 2: Generate ideas (from Reddit signals or pure AI)
-  const ideas = await researchIdeas(redditSignals.length > 0 ? redditSignals : undefined);
+  // Step 1b: Scrape Hacker News
+  let hnSignals: RedditSignal[] = [];
+  try {
+    hnSignals = await scrapeHackerNews();
+    if (hnSignals.length > 0) {
+      await fs.writeFile(
+        path.join(signalsDir, `hackernews-${timestamp}.json`),
+        JSON.stringify(hnSignals, null, 2)
+      );
+      await logger.log(`Saved ${hnSignals.length} HackerNews signals`);
+    }
+  } catch (error) {
+    await logger.log(`HackerNews scraping failed: ${error}`, "WARN");
+  }
+
+  // Step 1c: Scrape Dev.to
+  let devtoSignals: RedditSignal[] = [];
+  try {
+    devtoSignals = await scrapeDevTo();
+    if (devtoSignals.length > 0) {
+      await fs.writeFile(
+        path.join(signalsDir, `devto-${timestamp}.json`),
+        JSON.stringify(devtoSignals, null, 2)
+      );
+      await logger.log(`Saved ${devtoSignals.length} Dev.to signals`);
+    }
+  } catch (error) {
+    await logger.log(`Dev.to scraping failed: ${error}`, "WARN");
+  }
+
+  // Combine all signals and take top 30 by engagement
+  const allSignals = [...redditSignals, ...hnSignals, ...devtoSignals];
+  allSignals.sort((a, b) => {
+    const eA = a.score + 2 * a.numComments + 5 * a.keywords.length;
+    const eB = b.score + 2 * b.numComments + 5 * b.keywords.length;
+    return eB - eA;
+  });
+  const topSignals = allSignals.slice(0, 30);
+  await logger.log(`Combined signals: ${allSignals.length} total → top ${topSignals.length} selected`);
+
+  // Step 2: Generate ideas (from multi-source signals or pure AI)
+  const ideas = await researchIdeas(topSignals.length > 0 ? topSignals : undefined);
   if (ideas.length > 0) {
     await saveIdeas(ideas);
-    const sourceLabel = redditSignals.length > 0 ? "(from Reddit signals)" : "(AI-generated)";
+    const sourceLabel = topSignals.length > 0
+      ? `(Reddit: ${redditSignals.length}, HN: ${hnSignals.length}, Dev.to: ${devtoSignals.length})`
+      : "(AI-generated)";
     await sendTelegram(`📡 Discovered ${ideas.length} ideas ${sourceLabel}:\n${ideas.map(i => `• ${i.title} (${i.type})`).join('\n')}`);
   }
 }
