@@ -123,6 +123,7 @@ interface ValidatedIdea {
   targetUsers: string;
   features: string[];
   type: 'web' | 'mobile' | 'saas' | 'api' | 'extension';
+  monetizationType: 'free_ads' | 'freemium' | 'saas' | 'one_time';
   category: 'ai-assisted' | 'utility' | 'data-tool' | 'automation' | 'saas-platform';
   validation: {
     marketDemand: number;        // 1-10
@@ -1266,11 +1267,23 @@ ALSO PROVIDE:
 - Concrete features list (5-8 REAL features with server-side logic)
 - Tech stack recommendation
 - Type: choose the BEST fit:
-  * web = landing page + dashboard, works in browser (Next.js)
-  * saas = multi-user platform with auth, billing, subscriptions
+  * web = single-page utility tool OR simple dashboard, works in browser (Next.js)
+  * saas = multi-user platform with auth, user accounts, billing, subscriptions
   * api = developer tool, headless service, no frontend needed
   * mobile = native mobile app (React Native + Expo) — for on-the-go use cases, camera, GPS, push notifications
   * extension = Chrome extension (Manifest V3) — for browser productivity, page enhancement, tab management, content scripts
+
+- monetizationType: choose the BEST business model:
+  * free_ads = FREE to use, monetized by Google AdSense ads — best for: utility tools, calculators, converters,
+    generators, checkers, formatters, planners, any tool a layman/consumer uses occasionally.
+    Examples: PDF merger, meal planner, budget calculator, resume builder, habit tracker, quiz maker
+  * freemium = free tier with upgrade CTA — best for: productivity apps, tools with limits (X uses/month free)
+  * saas = paid subscription ($5-50/month) — best for: professional tools with recurring workflows,
+    business management, team collaboration, recurring data processing
+  * one_time = single purchase or donation — best for: templates, scripts, niche generators
+
+  BIAS: For consumer/lifestyle/health/education products aimed at non-developers → prefer free_ads.
+  For B2B, professional, or high-value workflow tools → prefer saas or freemium.
 
 CRITICAL: Only recommend "build" if overall weighted score >= 6.5/10 AND competition gap >= 5
 Products that would just be "another X but with AI" get automatic SKIP unless the AI angle is truly novel.
@@ -1283,6 +1296,7 @@ Return ONLY valid JSON:
   "targetUsers": "Exact audience",
   "features": ["real feature 1 with server logic", "real feature 2", ...],
   "type": "web|mobile|saas|api|extension",
+  "monetizationType": "free_ads|freemium|saas|one_time",
   "category": "ai-assisted|utility|data-tool|automation|saas-platform",
   "techStack": "Next.js 14 + API Routes + specific tools (or 'Chrome Extension: Manifest V3 + vanilla JS' for extensions, or 'React Native + Expo' for mobile)",
   "estimatedHours": 12-24,
@@ -1333,6 +1347,14 @@ Return ONLY valid JSON:
     if (v.overallScore < 6.5 || v.competitionGap < 5) {
       v.verdict = 'skip';
       v.reasoning = `Score ${v.overallScore}/10 (need 6.5+) or competition gap ${v.competitionGap}/10 (need 5+): ${v.reasoning}`;
+    }
+
+    // Default monetizationType based on type if LLM omitted it
+    if (!parsed.monetizationType) {
+      parsed.monetizationType = parsed.type === 'saas' ? 'saas'
+        : parsed.category === 'utility' ? 'free_ads'
+        : parsed.type === 'api' ? 'freemium'
+        : 'free_ads';
     }
 
     return {
@@ -1566,7 +1588,157 @@ Return ONLY the JSON array, no markdown.`;
     if (idea.type === 'mobile') {
       return this.generateMobileFiles(idea, spec);
     }
+    // Free-with-ads utility tool: ilovepdf-style single-page tool
+    if (idea.monetizationType === 'free_ads') {
+      return this.generateFreeAdsFrontend(idea, spec);
+    }
+    // SaaS: auth + pricing page included
+    if (idea.monetizationType === 'saas' || idea.type === 'saas') {
+      return this.generateSaasFrontend(idea, spec);
+    }
+    // Default: freemium / one-time web app
+    return this.generateWebAppFrontend(idea, spec);
+  }
 
+  // ilovepdf-style: free utility tool with Google AdSense, no login required
+  private async generateFreeAdsFrontend(idea: ValidatedIdea, spec: FrontendSpec): Promise<Array<{ path: string; content: string }>> {
+    const prompt = `Generate a COMPLETE, PRODUCTION-QUALITY free utility tool website (like iLovePDF or TinyPNG) for this product.
+
+PRODUCT: ${idea.title}
+DESCRIPTION: ${idea.description}
+TARGET USERS: ${idea.targetUsers}
+FEATURES: ${idea.features.join(', ')}
+PRIMARY COLOR: ${spec.designSystem.primaryColor}
+STYLE: ${spec.designSystem.style}
+
+MONETIZATION: Free to use. Revenue from Google AdSense ads. NO login required. Anyone can use it immediately.
+
+DESIGN REQUIREMENTS:
+- Clean, professional, trustworthy look (like ilovepdf.com, smallpdf.com, tinypng.com)
+- Large clear headline that explains the tool in one sentence
+- The TOOL itself is front-and-center on the homepage — no separate dashboard
+- Ad slots: top banner (728x90), right sidebar (300x250), bottom banner (728x90)
+- "Other free tools" section at bottom linking to similar tools
+- Footer with privacy policy, terms, contact links
+- Responsive — works great on mobile (ads collapse gracefully)
+- Color scheme using ${spec.designSystem.primaryColor} as the brand color
+
+TECHNICAL REQUIREMENTS:
+1. Next.js 14 App Router, TypeScript, TailwindCSS ONLY (no framer-motion, no heavy deps)
+2. The main tool logic must be REAL and WORKING — not placeholder
+3. API calls to /api/[tool] for server-side processing
+4. File upload with drag-and-drop if relevant (use native HTML5 File API)
+5. Progress indicator while processing
+6. Download/copy result button after processing
+7. Google AdSense integration (use placeholder publisher ID: ca-pub-XXXXXXXXXX, slot: 1234567890)
+8. SEO meta tags, Open Graph, structured data for the tool type
+
+ADSENSE AD COMPONENT (use this exact pattern):
+\`\`\`tsx
+// src/components/AdBanner.tsx
+'use client';
+export default function AdBanner({ slot, format = 'auto' }: { slot: string; format?: string }) {
+  return (
+    <div className="ad-container my-4 text-center">
+      <ins className="adsbygoogle"
+        style={{ display: 'block' }}
+        data-ad-client="ca-pub-XXXXXXXXXX"
+        data-ad-slot={slot}
+        data-ad-format={format}
+        data-full-width-responsive="true" />
+    </div>
+  );
+}
+\`\`\`
+Add the AdSense script in layout.tsx:
+\`\`\`tsx
+<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-XXXXXXXXXX" crossOrigin="anonymous" />
+\`\`\`
+
+FILES TO GENERATE:
+- src/app/layout.tsx (AdSense script, metadata, font, global styles)
+- src/app/page.tsx (THE MAIN TOOL — full working implementation with ad slots)
+- src/app/globals.css (TailwindCSS + brand CSS variables)
+- src/components/AdBanner.tsx (AdSense component)
+- src/components/ToolHeader.tsx (tool name + description + breadcrumb)
+- src/components/OtherTools.tsx (grid of 6 related free tools with icons)
+
+Do NOT generate: package.json, API routes, next.config.js
+
+Return ONLY a JSON array: [{"path":"...","content":"..."}]`;
+
+    const response = await kimi.complete(prompt, {
+      maxTokens: 25000,
+      temperature: 0.3,
+      systemPrompt: `You are a senior frontend engineer who builds high-quality free utility tools. Your sites look professional and trustworthy — like ilovepdf.com or smallpdf.com. You use clean, semantic HTML with TailwindCSS. The tool logic actually works. Ad slots are properly integrated. You write production Next.js/TypeScript.`,
+    });
+    const files = extractJSON(response, 'array');
+    if (!files || !files.length) throw new Error('Free-ads frontend generation returned no files');
+    return files.filter((f: any) => f?.path && f?.content);
+  }
+
+  // SaaS: landing + auth + dashboard + pricing
+  private async generateSaasFrontend(idea: ValidatedIdea, spec: FrontendSpec): Promise<Array<{ path: string; content: string }>> {
+    const prompt = `Generate a COMPLETE, PRODUCTION-QUALITY SaaS application frontend for this product.
+
+PRODUCT: ${idea.title}
+DESCRIPTION: ${idea.description}
+TARGET USERS: ${idea.targetUsers}
+FEATURES: ${idea.features.join(', ')}
+PRIMARY COLOR: ${spec.designSystem.primaryColor}
+STYLE: ${spec.designSystem.style}
+
+MONETIZATION: Paid subscription SaaS. Include pricing page with 3 tiers (Free/Pro/Business).
+
+PAGES TO BUILD:
+1. Landing page (/) — Hero, features grid, social proof, pricing preview, CTA
+2. Pricing page (/pricing) — 3 tiers: Free ($0), Pro ($12/mo), Business ($49/mo)
+3. Login/Signup page (/auth) — email+password form, Google OAuth button placeholder
+4. Dashboard (/dashboard) — main app UI with sidebar, core feature implementation
+
+DESIGN REQUIREMENTS:
+- Modern SaaS aesthetic: clean, professional, conversion-optimized
+- Use ${spec.designSystem.primaryColor} as brand color throughout
+- Hero has a clear value proposition + demo/screenshot area
+- Pricing cards with feature comparison, "Most Popular" badge on Pro tier
+- Dashboard sidebar navigation with user avatar/name
+- Loading states, error states, empty states all handled
+
+TECHNICAL:
+1. Next.js 14 App Router, TypeScript, TailwindCSS
+2. Simple CSS transitions (no framer-motion — keeps build reliable)
+3. Lucide-react for icons ONLY
+4. fetch('/api/...') for all data operations
+5. localStorage for demo auth state (real auth goes in backend)
+6. Responsive — mobile hamburger menu
+
+FILES TO GENERATE:
+- src/app/layout.tsx
+- src/app/page.tsx (landing page)
+- src/app/pricing/page.tsx
+- src/app/auth/page.tsx (login/signup toggle)
+- src/app/dashboard/page.tsx (the core product experience)
+- src/app/globals.css
+- src/components/Navbar.tsx
+- src/components/PricingCard.tsx
+- src/components/DashboardSidebar.tsx
+
+Do NOT generate: package.json, API routes, next.config.js
+
+Return ONLY a JSON array: [{"path":"...","content":"..."}]`;
+
+    const response = await kimi.complete(prompt, {
+      maxTokens: 30000,
+      temperature: 0.3,
+      systemPrompt: `You are a senior SaaS frontend engineer. You build clean, conversion-optimized SaaS applications. Your landing pages convert well, your dashboards are intuitive, and your pricing pages are persuasive. TypeScript, TailwindCSS, Next.js App Router. Production quality.`,
+    });
+    const files = extractJSON(response, 'array');
+    if (!files || !files.length) throw new Error('SaaS frontend generation returned no files');
+    return files.filter((f: any) => f?.path && f?.content);
+  }
+
+  // Standard web app (freemium / one-time)
+  private async generateWebAppFrontend(idea: ValidatedIdea, spec: FrontendSpec): Promise<Array<{ path: string; content: string }>> {
     const pagesDescription = spec.pages.map(p =>
       `- Route: ${p.route} | Purpose: ${p.purpose} | Components: ${p.components.join(', ')} | Flow: ${p.userFlow}`
     ).join('\n');
@@ -1575,6 +1747,7 @@ Return ONLY the JSON array, no markdown.`;
 
 PRODUCT: ${idea.title}
 DESCRIPTION: ${idea.description}
+TARGET USERS: ${idea.targetUsers}
 FEATURES: ${idea.features.join(', ')}
 
 DESIGN SYSTEM:
@@ -1585,63 +1758,39 @@ DESIGN SYSTEM:
 - Dark Mode: ${spec.designSystem.darkMode}
 - Style: ${spec.designSystem.style}
 
-UX PATTERNS: ${spec.uxPatterns.join(', ')}
-CONVERSION: ${spec.conversionElements.join(', ')}
-PSYCHOLOGY: ${spec.psychologyTactics.join(', ')}
-
 PAGES TO BUILD:
 ${pagesDescription}
 
-STRICT REQUIREMENTS:
-1. Use Next.js 14 App Router (src/app/ directory)
-2. TypeScript with 'use client' directive on interactive components
-3. TailwindCSS + Framer Motion for animations + lucide-react for icons + clsx for conditional classes
-4. CUSTOM design matching the design system above (not generic dark gradient)
-5. Every feature button must call a real API route (fetch('/api/...'))
-6. Loading states with skeleton/spinner for all async operations
-7. Error states with retry buttons
-8. Responsive design (mobile-first with md: and lg: breakpoints)
-9. Animations using Framer Motion: use motion.div, motion.button, AnimatePresence, useAnimation, spring physics. Wrap interactive elements with motion components. Add staggered entrance animations with variants.
-10. Form validation with clear error messages
-11. Toast/notification system for user feedback
-12. Proper state management with React hooks
-13. Icons from lucide-react ONLY (import { Zap, Check, X, ChevronRight, ArrowRight, Star, Users, Sparkles } from lucide-react)
-14. Use clsx() for conditional classNames (import clsx from clsx)
-15. Smooth page transitions with Framer Motion AnimatePresence
+REQUIREMENTS:
+1. Next.js 14 App Router (src/app/ directory), TypeScript
+2. TailwindCSS — CUSTOM design matching the design system (not generic)
+3. Simple CSS transitions for animations (no framer-motion — reduces build failures)
+4. Lucide-react for icons ONLY
+5. Every feature calls a real API route (fetch('/api/...'))
+6. Loading states, error states, responsive design (mobile-first)
+7. Form validation with clear error messages
+8. Freemium upgrade CTA at key moments — "Upgrade for unlimited access"
 
-CRITICAL CSS RULES:
-- Use the EXACT colors from the design system (${spec.designSystem.primaryColor}, ${spec.designSystem.secondaryColor})
-- Match the style (${spec.designSystem.style}) throughout
-- ${spec.designSystem.darkMode ? 'Dark background with light text' : 'Light background with dark text'}
-- Border radius: ${spec.designSystem.borderRadius}
-- Font: ${spec.designSystem.fontFamily} (import from Google Fonts in layout.tsx)
-
-Generate ONLY these frontend files:
-- src/app/layout.tsx (with proper metadata, font import, global styles)
-- src/app/page.tsx (landing page with immediate value demo)
-- src/app/globals.css (TailwindCSS + custom CSS variables for design system)
-- src/components/*.tsx (all reusable components)
+Generate ONLY:
+- src/app/layout.tsx
+- src/app/page.tsx
+- src/app/globals.css
+- src/components/*.tsx (all needed components)
 ${spec.pages.filter(p => p.route !== '/').map(p => `- src/app${p.route}/page.tsx`).join('\n')}
 
-Do NOT generate:
-- package.json (backend agent handles this)
-- API routes (backend agent handles this)
-- Config files (PM agent handles this)
+Do NOT generate: package.json, API routes, next.config.js
 
-Return ONLY a JSON array:
-[{"path": "src/app/layout.tsx", "content": "full code..."}, ...]`;
+Return ONLY a JSON array: [{"path":"...","content":"..."}]`;
 
     const response = await kimi.complete(prompt, {
-      maxTokens: 30000,
-      temperature: 0.4,
-      systemPrompt: `You are an elite frontend developer who builds stunning, conversion-optimized interfaces with Framer Motion animations and micro-interactions. Your code is clean, accessible, and performant. You use motion.div with AnimatePresence, spring physics, and staggered variants. Icons from lucide-react. You NEVER use plain CSS transitions or generic dark gradients - every interface has smooth animations uniquely tailored to the target audience. Style: ${spec.designSystem.style}. You write production-quality React/TypeScript.`,
+      maxTokens: 28000,
+      temperature: 0.35,
+      systemPrompt: `You are an elite frontend developer. Clean, accessible, performant React/TypeScript with TailwindCSS. No framer-motion. Production-quality code that actually builds. Style: ${spec.designSystem.style}.`,
     });
-
     const files = extractJSON(response, 'array');
     if (!files || !Array.isArray(files) || files.length === 0) {
       throw new Error('Frontend generation returned no files');
     }
-
     return files.filter((f: any) => f && typeof f.path === 'string' && typeof f.content === 'string');
   }
 }
@@ -2142,7 +2291,7 @@ class PMAgent {
 
       const remaining = ideas.filter(i => (failTracker[i.id]?.count || 0) < 3);
       await logger.agent(this.name, `SELECTED: "${buildable.title}" (score: ${buildable.validation.overallScore}/10) | ${remaining.length} remaining in queue after this`);
-      await logger.agent(this.name, `Idea details: type=${buildable.type} | audience=${buildable.audienceProfile?.demographics?.slice(0, 80)} | stack=${buildable.techStack?.slice(0, 60)}`);
+      await logger.agent(this.name, `Idea details: type=${buildable.type} | monetization=${buildable.monetizationType || 'free_ads'} | audience=${buildable.audienceProfile?.demographics?.slice(0, 80)} | stack=${buildable.techStack?.slice(0, 60)}`);
 
       await fs.writeFile(progressPath, JSON.stringify({
         phase: 'building',
@@ -2239,8 +2388,18 @@ class PMAgent {
       postcss: KNOWN_PACKAGES['postcss'],
     };
 
+    // Packages that cause build instability for certain monetization types
+    const monetizationExclusions: Record<string, string[]> = {
+      free_ads:  ['framer-motion', 'react-spring', '@react-spring/web', 'react-three-fiber', 'three'],
+      freemium:  ['framer-motion'],
+      one_time:  ['framer-motion'],
+      saas:      [], // SaaS gets everything
+    };
+    const excluded = new Set(monetizationExclusions[idea.monetizationType] || monetizationExclusions.free_ads);
+
     for (const imp of allImports) {
       if (builtins.has(imp)) continue;
+      if (excluded.has(imp)) continue; // drop animation deps for non-SaaS
       if (!deps[imp] && !devDeps[imp]) {
         deps[imp] = KNOWN_PACKAGES[imp] || 'latest';
       }

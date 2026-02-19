@@ -849,6 +849,33 @@ body{
           <div class="stat-sub">ideas waiting</div>
         </div>
       </div>
+      <!-- MONETIZATION ROW -->
+      <div class="stats-row" style="grid-template-columns:repeat(4,1fr);margin-top:0;margin-bottom:1.25rem">
+        <div class="card stat-card ani d2" style="padding:0.9rem 0.75rem 0.75rem">
+          <div class="stat-icon" style="width:32px;height:32px;font-size:0.9rem;background:rgba(16,185,129,0.12)">&#128178;</div>
+          <div class="stat-value" id="vFreeAds" style="font-size:1.6rem;color:#6ee7b7">--</div>
+          <div class="stat-label">Free + Ads</div>
+          <div class="stat-sub">ilovepdf-style</div>
+        </div>
+        <div class="card stat-card ani d3" style="padding:0.9rem 0.75rem 0.75rem">
+          <div class="stat-icon" style="width:32px;height:32px;font-size:0.9rem;background:rgba(59,130,246,0.12)">&#128640;</div>
+          <div class="stat-value" id="vFreemium" style="font-size:1.6rem;color:#93c5fd">--</div>
+          <div class="stat-label">Freemium</div>
+          <div class="stat-sub">free tier + upgrade</div>
+        </div>
+        <div class="card stat-card ani d4" style="padding:0.9rem 0.75rem 0.75rem">
+          <div class="stat-icon" style="width:32px;height:32px;font-size:0.9rem;background:rgba(139,92,246,0.12)">&#128184;</div>
+          <div class="stat-value" id="vSaasM" style="font-size:1.6rem;color:#c4b5fd">--</div>
+          <div class="stat-label">SaaS Paid</div>
+          <div class="stat-sub">subscription</div>
+        </div>
+        <div class="card stat-card ani d5" style="padding:0.9rem 0.75rem 0.75rem">
+          <div class="stat-icon" style="width:32px;height:32px;font-size:0.9rem;background:rgba(245,158,11,0.12)">&#127381;</div>
+          <div class="stat-value" id="vOneTime" style="font-size:1.6rem;color:#fcd34d">--</div>
+          <div class="stat-label">One-Time</div>
+          <div class="stat-sub">single purchase</div>
+        </div>
+      </div>
 
       <!-- CURRENT BUILD -->
       <div class="current-build-card ani d5" id="currentCard">
@@ -1270,6 +1297,7 @@ function relTime(iso){if(!iso)return"";const d=Date.now()-new Date(iso).getTime(
 function esc(s){return String(s).replace(/</g,"&lt;").replace(/>/g,"&gt;")}
 function badgeCls(t){return({web:"badge-web",saas:"badge-saas",mobile:"badge-mobile",extension:"badge-extension",api:"badge-api"})[t]||"badge-web"}
 function badgeLbl(t){return({web:"Web",saas:"SaaS",mobile:"Mobile",extension:"Ext",api:"API"})[t]||t||"Web"}
+function monetizeBadge(m){const map={free_ads:["#10b981","Ads"],freemium:["#3b82f6","Free+"],saas:["#8b5cf6","Paid"],one_time:["#f59e0b","Once"]};const r=map[m];if(!r)return"";return'<span style="font-size:0.5rem;padding:0.1rem 0.35rem;border-radius:3px;background:'+r[0]+'18;color:'+r[0]+';border:1px solid '+r[0]+'44;font-weight:700">'+r[1]+'</span>'}
 function scoreCls(pct){return pct>=75?"score-high":pct>=50?"score-mid":"score-low"}
 function detectAgent(l){if(l.includes("[ResearchAgent]"))return"RA";if(l.includes("[ValidationAgent]"))return"VA";if(l.includes("[FrontendAgent]"))return"FA";if(l.includes("[BackendAgent]"))return"BA";if(l.includes("[PMAgent]"))return"PM";return null}
 const agentMeta={RA:{cls:"log-research",label:"RA",bg:"rgba(245,158,11,0.15)",color:"#f59e0b"},VA:{cls:"log-validation",label:"VA",bg:"rgba(239,68,68,0.15)",color:"#ef4444"},FA:{cls:"log-frontend",label:"FA",bg:"rgba(59,130,246,0.15)",color:"#3b82f6"},BA:{cls:"log-backend",label:"BA",bg:"rgba(16,185,129,0.15)",color:"#10b981"},PM:{cls:"log-pm",label:"PM",bg:"rgba(139,92,246,0.15)",color:"#8b5cf6"}};
@@ -1640,6 +1668,8 @@ function applySSEEvent(type,data){
           setVal("vTotal",data.totalBuilt||0);setVal("vWeb",data.webCount||0);setVal("vSaas",data.saasCount||0);
           setVal("vMobile",data.mobileCount||0);setVal("vExtension",data.extensionCount||0);setVal("vApi",data.apiCount||0);
           setVal("vLive",data.liveCount||0);
+          setVal("vFreeAds",data.freeAdsCount||0);setVal("vFreemium",data.freemiumCount||0);
+          setVal("vSaasM",data.saasMonetizeCount||0);setVal("vOneTime",data.oneTimeCount||0);
           const st=document.getElementById("subTotal");if(st)st.textContent=data.githubCount?(data.githubCount+" on GitHub"):"unique products";
           if(data.dirProjectCount&&data.dirProjectCount>data.jsonMetadataCount+5&&st)st.textContent=data.githubCount+" on GitHub ("+data.dirProjectCount+" dirs)";
         }
@@ -1757,6 +1787,7 @@ function renderBuiltList(el,limit){
     return'<div class="list-item" style="animation:fade-in-up 0.4s var(--ease-out-expo) '+(i*0.03)+'s both">'
       +'<span class="list-rank">'+(i+1)+'</span>'
       +'<span class="badge '+badgeCls(b.type)+'">'+badgeLbl(b.type)+'</span>'
+      +monetizeBadge(b.monetizationType)
       +dirBadge
       +'<div class="list-info"><div class="list-title" title="'+esc(b.title||"")+'">'+esc(b.title||"Untitled")+'</div>'
       +'<div class="list-meta">'+(b._dirOnly?'<span style="color:#4a5568">no metadata</span>':'<span>Score: '+score+'/8</span>')+(time?'<span>'+time+'</span>':'')+'</div>'

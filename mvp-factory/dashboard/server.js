@@ -46,10 +46,13 @@ function readStats() {
   const liveCount = builtItems.filter(b => b.vercelUrl || b.liveUrl).length;
 
   const typeCounts = { web: 0, saas: 0, mobile: 0, extension: 0, api: 0 };
+  const monetizeCounts = { free_ads: 0, freemium: 0, saas: 0, one_time: 0 };
   for (const b of builtItems) {
     const t = (b.type || "web").toLowerCase();
     if (typeCounts.hasOwnProperty(t)) typeCounts[t]++;
     else typeCounts.web++;
+    const m = (b.monetizationType || "free_ads").toLowerCase();
+    if (monetizeCounts.hasOwnProperty(m)) monetizeCounts[m]++;
   }
 
   // Count actual project directories — more reliable than JSON metadata
@@ -105,6 +108,10 @@ function readStats() {
     githubCount,
     queueCount,
     validatedCount,
+    freeAdsCount: monetizeCounts.free_ads,
+    freemiumCount: monetizeCounts.freemium,
+    saasMonetizeCount: monetizeCounts.saas,
+    oneTimeCount: monetizeCounts.one_time,
     avgValidationScore: Math.round(avgValidationScore * 10) / 10,
     functionalityScore: functionalityScore || fileStats.functionalityScore || 0,
     // source-of-truth counts for debugging
