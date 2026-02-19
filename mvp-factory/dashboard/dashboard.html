@@ -1293,7 +1293,7 @@ async function refreshAll(){
   }
   if(sys){const loadEl=document.getElementById("sysLoad");if(sys.load){loadEl.textContent="Load: "+sys.load;loadEl.style.display="inline"}else loadEl.style.display="none"}
 
-  // Stats
+  // Stats — vTotal is overwritten by built.length below for accuracy
   if(stats){
     setVal("vTotal",stats.totalBuilt||0);
     setVal("vWeb",stats.webCount||0);
@@ -1305,6 +1305,10 @@ async function refreshAll(){
     document.getElementById("subTotal").textContent=stats.githubCount?(stats.githubCount+" on GitHub"):"unique products";
     document.getElementById("subWeb").textContent=stats.buildsToday?(stats.buildsToday+" built today"):"Next.js projects";
     document.getElementById("subLive").textContent=stats.lastBuildAt?("Last: "+relTime(stats.lastBuildAt)):"deployed";
+    // Show dir vs JSON discrepancy hint in subTotal if significant
+    if(stats.dirProjectCount&&stats.dirProjectCount>stats.jsonMetadataCount+5){
+      document.getElementById("subTotal").textContent=stats.githubCount+" on GitHub ("+stats.dirProjectCount+" dirs)";
+    }
   }
 
   // Validated Queue — show validated ideas as the primary build queue
@@ -1342,18 +1346,28 @@ async function refreshAll(){
 
   // Built
   if(built){
+    setVal("vTotal",built.length);
     const renderB=(el,limit)=>{
       if(!built.length){el.innerHTML='<div class="empty"><div class="empty-icon">&#128640;</div>No builds shipped yet</div>';return}
       el.innerHTML=built.slice(0,limit).map((b,i)=>{
         let links='<div class="link-row">';
         if(b.githubUrl)links+='<a href="'+esc(b.githubUrl)+'" target="_blank" class="link-btn" title="GitHub">GH</a>';
-        if(b.liveUrl)links+='<a href="'+esc(b.liveUrl)+'" target="_blank" class="link-btn link-live" title="Live">&#9889;</a>';
+        if(b.liveUrl||b.vercelUrl)links+='<a href="'+esc(b.liveUrl||b.vercelUrl)+'" target="_blank" class="link-btn link-live" title="Live">&#9889;</a>';
         links+='</div>';
-        return'<div class="list-item" style="animation:fade-in-up 0.4s var(--ease-out-expo) '+(i*0.03)+'s both"><span class="list-rank">'+(i+1)+'</span><span class="badge '+badgeCls(b.type)+'">'+badgeLbl(b.type)+'</span><div class="list-info"><div class="list-title" title="'+esc(b.title||"")+'">'+esc(b.title||"Untitled")+'</div><div class="list-meta"><span>Score: '+(b.functionalityScore||"?")+'/8</span><span>'+relTime(b.builtAt)+'</span></div></div>'+links+'</div>'
+        const dirBadge=b._dirOnly?'<span style="font-size:0.5rem;padding:0.1rem 0.3rem;border-radius:3px;background:rgba(139,92,246,0.15);color:#a78bfa;border:1px solid rgba(139,92,246,0.2)">dir</span>':'';
+        const score=b._dirOnly?'—':(b.functionalityScore||b.qualityScore||'?');
+        const time=b.builtAt?relTime(b.builtAt):'';
+        return'<div class="list-item" style="animation:fade-in-up 0.4s var(--ease-out-expo) '+(i*0.03)+'s both">'
+          +'<span class="list-rank">'+(i+1)+'</span>'
+          +'<span class="badge '+badgeCls(b.type)+'">'+badgeLbl(b.type)+'</span>'
+          +dirBadge
+          +'<div class="list-info"><div class="list-title" title="'+esc(b.title||"")+'">'+esc(b.title||"Untitled")+'</div>'
+          +'<div class="list-meta">'+(b._dirOnly?'<span style="color:#4a5568">no metadata</span>':'<span>Score: '+score+'/8</span>')+(time?'<span>'+time+'</span>':'')+'</div>'
+          +'</div>'+links+'</div>'
       }).join("")
     };
     renderB(document.getElementById("builtList"),25);
-    renderB(document.getElementById("fullBuiltList"),100);
+    renderB(document.getElementById("fullBuiltList"),200);
   }
 
   // Current Build

@@ -42,9 +42,7 @@ function readStats() {
   catch { fileStats = { date: "", buildsToday: 0, researchesToday: 0, totalBuilt: 0, functionalityScore: 0 }; }
 
   const builtItems = readJsonDir(PATHS.built);
-  const totalBuilt = builtItems.length;
   const liveCount = builtItems.filter(b => b.vercelUrl || b.liveUrl).length;
-  const githubCount = builtItems.filter(b => b.githubUrl).length;
 
   const typeCounts = { web: 0, saas: 0, mobile: 0, extension: 0, api: 0 };
   for (const b of builtItems) {
@@ -53,11 +51,26 @@ function readStats() {
     else typeCounts.web++;
   }
 
+  // Count actual project directories — more reliable than JSON metadata
+  // (metadata files can be missing for older/cleaned-up builds)
   let dirWebCount = 0, dirMobileCount = 0;
   try { dirWebCount = fs.readdirSync(PATHS.web).filter(f => fs.statSync(path.join(PATHS.web, f)).isDirectory()).length; } catch {}
   try { dirMobileCount = fs.readdirSync(PATHS.mobile).filter(f => fs.statSync(path.join(PATHS.mobile, f)).isDirectory()).length; } catch {}
 
-  const webCount = Math.max(typeCounts.web, dirWebCount - typeCounts.saas - typeCounts.extension - typeCounts.api);
+  const dirTotal = dirWebCount + dirMobileCount;
+
+  // Use highest of: JSON metadata count, actual directory count, stats.json count
+  const totalBuilt = Math.max(builtItems.length, dirTotal, fileStats.totalBuilt || 0);
+
+  // githubCount: every project dir was pushed to GitHub, so dir count is the floor
+  const jsonGithubCount = builtItems.filter(b => b.githubUrl).length;
+  const githubCount = Math.max(jsonGithubCount, dirTotal);
+
+  // Type breakdown: if dir count exceeds JSON count, attribute the extras to web
+  const jsonTotal = typeCounts.web + typeCounts.saas + typeCounts.mobile + typeCounts.extension + typeCounts.api;
+  const extraProjects = Math.max(0, dirTotal - jsonTotal);
+
+  const webCount = Math.max(typeCounts.web, dirWebCount - typeCounts.saas - typeCounts.extension - typeCounts.api) + extraProjects;
   const mobileCount = Math.max(typeCounts.mobile, dirMobileCount);
 
   let functionalityScore = 0;
@@ -91,6 +104,9 @@ function readStats() {
     validatedCount,
     avgValidationScore: Math.round(avgValidationScore * 10) / 10,
     functionalityScore: functionalityScore || fileStats.functionalityScore || 0,
+    // source-of-truth counts for debugging
+    jsonMetadataCount: builtItems.length,
+    dirProjectCount: dirTotal,
     version: "v11-multiagent",
   };
 }
@@ -210,6 +226,50 @@ function installSkill(name) {
   installed[name] = true;
   writeInstalledSkills(installed);
   return { success: true, name, message: name + " installed successfully" };
+}
+
+// Returns all built projects — merges JSON metadata with bare project directories
+// so projects that lost their metadata (or were never given any) still appear.
+function readAllBuilt() {
+  const jsonItems = readJsonDir(PATHS.built);
+  const jsonSlugs = new Set(jsonItems.map(b => (b.slug || b.title || "").toLowerCase().replace(/[^a-z0-9]+/g, "-")));
+
+  const extras = [];
+
+  const scanDir = (dir, type) => {
+    try {
+      const entries = fs.readdirSync(dir).filter(f => {
+        try { return fs.statSync(path.join(dir, f)).isDirectory(); } catch { return false; }
+      });
+      for (const name of entries) {
+        const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+        if (!jsonSlugs.has(slug) && !jsonSlugs.has(name.toLowerCase())) {
+          // Try to read a package.json for a title
+          let title = name;
+          try {
+            const pkg = JSON.parse(fs.readFileSync(path.join(dir, name, "package.json"), "utf-8"));
+            if (pkg.name) title = pkg.name;
+          } catch {}
+          extras.push({
+            title,
+            slug,
+            type,
+            builtAt: null,
+            githubUrl: null,
+            liveUrl: null,
+            vercelUrl: null,
+            functionalityScore: null,
+            _dirOnly: true,
+          });
+        }
+      }
+    } catch {}
+  };
+
+  scanDir(PATHS.web, "web");
+  scanDir(PATHS.mobile, "mobile");
+
+  return [...jsonItems, ...extras].sort((a, b) => (b.builtAt || "").localeCompare(a.builtAt || ""));
 }
 
 function uninstallSkill(name) {
@@ -442,7 +502,7 @@ function handleApi(url, res) {
     case "/api/stats": data = readStats(); break;
     case "/api/queue": data = readJsonDir(PATHS.ideas).sort((a, b) => (b.viabilityScore || 0) - (a.viabilityScore || 0)); break;
     case "/api/validated": data = getValidatedQueue(); break;
-    case "/api/built": data = readJsonDir(PATHS.built).sort((a, b) => (b.builtAt || "").localeCompare(a.builtAt || "")); break;
+    case "/api/built": data = readAllBuilt(); break;
     case "/api/logs": data = readLogs(200); break;
     case "/api/current": data = getCurrentBuild(); break;
     case "/api/system": data = getSystemInfo(); break;
