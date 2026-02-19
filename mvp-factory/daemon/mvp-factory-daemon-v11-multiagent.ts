@@ -561,39 +561,63 @@ class ResearchAgent {
   private name = 'ResearchAgent';
   private rateLimiter = new RateLimiter(2000); // 2s between requests
 
-  private redditSubreddits = [
-    // Core startup & idea communities
-    'SideProject', 'startups', 'SaaS', 'AppIdeas', 'indiehackers',
-    'Entrepreneur', 'EntrepreneurRideAlong', 'microsaas', 'solopreneur',
-    'smallbusiness', 'WorkOnline', 'passive_income', 'freelance',
+  // Subreddits grouped by category bucket — we sample from each bucket every cycle
+  // so consumer/lifestyle/domain ideas get equal airtime as dev tools
+  private readonly subredditBuckets: Record<string, string[]> = {
+    startup: ['SideProject', 'startups', 'SaaS', 'AppIdeas', 'indiehackers',
+              'Entrepreneur', 'EntrepreneurRideAlong', 'microsaas', 'solopreneur',
+              'buildinpublic', 'smallbusiness', 'WorkOnline', 'passive_income'],
+    dev_tools: ['webdev', 'reactjs', 'nextjs', 'javascript', 'typescript',
+                'node', 'Python', 'devops', 'selfhosted', 'aws'],
+    mobile:    ['FlutterDev', 'androiddev', 'iOSProgramming', 'reactnative',
+                'androidapps', 'shortcuts'],
+    ai:        ['artificial', 'MachineLearning', 'LocalLLaMA', 'ChatGPT',
+                'AI_Agents', 'datascience', 'StableDiffusion'],
+    finance:   ['PersonalFinance', 'investing', 'povertyfinance', 'Frugal',
+                'financialindependence', 'CryptoCurrency', 'StockMarket',
+                'RealEstate', 'personalfinanceindia'],
+    health:    ['loseit', 'fitness', 'nutrition', 'HealthyFood', 'running',
+                'yoga', 'mentalhealth', 'sleep', 'intermittentfasting',
+                'diabetes', 'ADHD'],
+    lifestyle: ['productivity', 'LifeAdvice', 'LifeProTips', 'relationship_advice',
+                'selfimprovement', 'minimalism', 'zerowaste', 'simpleliving',
+                'declutter', 'organization'],
+    creative:  ['learnart', 'graphic_design', 'writing', 'photography',
+                'VideoEditing', 'podcasting', 'music', 'gamedev', 'gamedesign'],
+    education: ['Teachers', 'languagelearning', 'learnprogramming',
+                'HomeschoolRecovery', 'GradSchool', 'college',
+                'studytips', 'GetStudying'],
+    business:  ['sales', 'marketing', 'ecommerce', 'dropship', 'Etsy',
+                'AmazonSeller', 'Flipping', 'legaladvice', 'Accounting',
+                'humanresources', 'CustomerService'],
+    domain:    ['realestate', 'travel', 'solotravel', 'digitalnomad',
+                'remotework', 'nursing', 'veterinary', 'Teachers',
+                'parenting', 'weddingplanning', 'homeowners', 'petowners',
+                'cooking', 'MealPrepSunday'],
+  };
 
-    // Builders & product
-    'buildinpublic', 'nocode', 'lowcode', 'ProductManagement',
-    'growmybusiness', 'GrowthHacking', 'marketing', 'SEO',
-
-    // Web & frontend
-    'webdev', 'reactjs', 'nextjs', 'vuejs', 'svelte',
-    'javascript', 'typescript', 'node',
-
-    // Mobile
-    'FlutterDev', 'androiddev', 'iOSProgramming', 'reactnative',
-
-    // AI & ML
-    'artificial', 'MachineLearning', 'datascience', 'LocalLLaMA',
-    'ChatGPT', 'AI_Agents', 'singularity', 'computervision',
-
-    // Backend & infra
-    'Python', 'golang', 'rust', 'devops', 'selfhosted', 'homelab',
-    'sysadmin', 'aws', 'googlecloud',
-
-    // Domain verticals
-    'fintech', 'edtech', 'healthtech', 'cybersecurity', 'privacy',
-    'gamedev', 'ecommerce', 'dropship', 'digitalnomad',
-
-    // Finance & lifestyle
-    'PersonalFinance', 'investing', 'Fitness', 'QuantifiedSelf',
-    'productivity', 'learnprogramming', 'technology', 'cryptocurrency',
-  ];
+  private get redditSubreddits(): string[] {
+    // Each cycle: pick 4 from startup/dev, then 2-3 from every other bucket
+    // Shuffle within each bucket so different subs get sampled across cycles
+    const shuffle = <T>(arr: T[]): T[] => {
+      const a = [...arr];
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+      return a;
+    };
+    const result: string[] = [];
+    // Core buckets get 4 each (startup ideas + dev tools are still relevant)
+    for (const bucket of ['startup', 'dev_tools']) {
+      result.push(...shuffle(this.subredditBuckets[bucket]).slice(0, 4));
+    }
+    // All other buckets get 2 each — ensures consumer/domain content appears every cycle
+    for (const bucket of Object.keys(this.subredditBuckets).filter(b => b !== 'startup' && b !== 'dev_tools')) {
+      result.push(...shuffle(this.subredditBuckets[bucket]).slice(0, 2));
+    }
+    return shuffle(result); // Final shuffle so the order is unpredictable
+  }
 
   // Rotate user agents to avoid blocking
   private userAgents = [
@@ -1031,48 +1055,72 @@ class ResearchAgent {
   }
 
   private async analyzePostsForIdeas(posts: RawIdea[]): Promise<RawIdea[]> {
-    // Take top posts by engagement across all platforms
-    const topPosts = posts
-      .sort((a, b) => b.upvotes - a.upvotes)
-      .slice(0, 40);
+    // Stratified sampling: group posts by subreddit/source tag, take top 2-3 from each group.
+    // This prevents high-traffic dev communities from drowning out consumer/lifestyle posts.
+    const groups = new Map<string, RawIdea[]>();
+    for (const p of posts) {
+      const key = p.tags?.[0] || p.sourcePlatform || 'other';
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(p);
+    }
+    // Sort each group by upvotes, take top 2, then fill up to 60 total
+    const stratified: RawIdea[] = [];
+    for (const group of groups.values()) {
+      stratified.push(...group.sort((a, b) => b.upvotes - a.upvotes).slice(0, 2));
+    }
+    // If under 60, pad with remaining high-engagement posts not yet included
+    const included = new Set(stratified.map(p => p.sourcePost));
+    const extras = posts
+      .filter(p => !included.has(p.sourcePost))
+      .sort((a, b) => b.upvotes - a.upvotes);
+    const topPosts = [...stratified, ...extras].slice(0, 60);
 
     const postSummaries = topPosts
-      .map(p => `[${p.sourcePlatform}] [${p.upvotes} upvotes, ${p.commentCount} comments] ${p.title}\n${p.description.slice(0, 200)}\nSource: ${p.sourcePost}`)
+      .map(p => `[${p.sourcePlatform}${p.tags?.[0] ? '/r/'+p.tags[0] : ''}] [${p.upvotes}↑ ${p.commentCount}💬] ${p.title}\n${p.description.slice(0, 200)}\nSource: ${p.sourcePost}`)
       .join('\n---\n');
 
-    const prompt = `You are a product research analyst. Analyze these REAL posts from Reddit, HackerNews, Dev.to, and GitHub and extract CONCRETE, BUILDABLE product ideas.
+    const prompt = `You are a product research analyst. Analyze these REAL posts from Reddit, HackerNews, Dev.to, and GitHub and extract CONCRETE, BUILDABLE software product ideas.
 
-CRITICAL: These are REAL posts. Your ideas must be directly grounded in the problems, tools, and discussions in these posts. Do NOT invent ideas unrelated to the posts.
+CRITICAL: These are REAL posts from many different communities. Your ideas must be directly grounded in the problems visible in these posts.
 
 REAL POSTS:
 ${postSummaries}
 
-Extract 8 product ideas that solve REAL problems visible in these posts. Each idea must:
-1. Address a SPECIFIC pain point from the actual posts above (cite which post inspired it)
-2. Be buildable as a working web app in 12-24 hours
-3. Have REAL server-side functionality (not just a UI)
-4. Be something people would actually PAY for
-5. NOT be generic (no "todo app", "AI writer", "portfolio site")
+Extract 12 product ideas that solve REAL problems visible in these posts. Each idea must:
+1. Address a SPECIFIC pain point from the actual posts above
+2. Be buildable as a software product (web app, mobile app, Chrome extension, SaaS, API, or browser tool) in 12-24 hours
+3. Have REAL functionality (not just a UI shell)
+4. Be something people would actually PAY for or regularly use
+
+DIVERSITY REQUIREMENT — you MUST cover a range of audiences. Do NOT only extract developer tools.
+Aim for a mix like:
+- 3-4 consumer/lifestyle products (health, finance, relationships, parenting, cooking, fitness, travel)
+- 2-3 business/professional tools (sales, HR, legal, accounting, real estate, teaching)
+- 2-3 creative/hobbyist tools (art, writing, music, gaming, photography)
+- 2-3 developer or technical tools (only if clearly visible in the posts)
+If the posts contain pain points from non-developer communities, PRIORITIZE those — they are underserved by existing apps.
+
+BAD examples (too generic): "AI writing assistant", "task manager", "portfolio builder", "code snippet tool"
+GOOD examples: "meal prep optimizer for diabetics", "landlord-tenant dispute tracker", "Etsy seller profit calculator", "band rehearsal scheduler", "IEP goal tracker for special ed teachers"
 
 For each idea, determine:
 - The core PROBLEM being solved (from the actual posts)
-- WHO specifically would use it
+- WHO specifically would use it (be precise — not "anyone" or "everyone")
 - What PAIN LEVEL it addresses (mild/moderate/severe)
-- Which source post inspired this idea
 
 Return ONLY valid JSON array:
 [{
   "title": "Unique catchy product name",
   "description": "What it does - specific functionality",
   "problem": "The exact pain point from the posts",
-  "targetUsers": "Specific audience (e.g., 'freelance developers who manage multiple clients')",
+  "targetUsers": "Specific audience (e.g., 'special education teachers managing IEP goals for 30+ students')",
   "painLevel": "mild|moderate|severe",
   "tags": ["category1", "category2"]
 }]`;
 
     try {
       const response = await retryLoop(
-        () => kimi.complete(prompt, { maxTokens: 6000, temperature: 0.7 }),
+        () => kimi.complete(prompt, { maxTokens: 9000, temperature: 0.7 }),
         { maxRetries: 2, baseDelay: 5000, label: 'AI idea extraction' }
       );
 
@@ -1196,8 +1244,9 @@ VALIDATE THIS IDEA ON 5 DIMENSIONS (score each 1-10):
 
 3. TECHNICAL FEASIBILITY (weight: 15%)
    - Can this be built as a working MVP in 12-24 hours?
-   - Does it need complex infrastructure or simple API calls?
-   - Can it deliver real value with just Next.js + API routes?
+   - Does it need complex infrastructure or simple API calls + data storage?
+   - Can it deliver real value with standard web tech (Next.js, React Native, Chrome extension)?
+   - NOTE: Consumer/lifestyle apps are equally feasible — don't penalize non-developer audiences.
 
 4. MONETIZATION POTENTIAL (weight: 15%)
    - Would users pay for this? (free-only vs paid)
@@ -1205,9 +1254,11 @@ VALIDATE THIS IDEA ON 5 DIMENSIONS (score each 1-10):
    - What's the realistic MRR potential?
 
 5. AUDIENCE FIT (weight: 15%)
-   - Is the target audience clearly defined?
-   - Can we reach them (marketing channels)?
-   - What's their tech savviness and willingness to try new tools?
+   - Is the target audience clearly defined and reachable?
+   - Can we reach them (marketing channels, communities)?
+   - NOTE: Non-technical audiences (parents, teachers, nurses, small business owners) are NOT
+     penalized for lower tech savviness — they often represent underserved, high-value markets.
+   - Score based on audience SIZE and PAIN INTENSITY, not tech sophistication.
 
 ALSO PROVIDE:
 - Audience profile (demographics, psychographics, motivations, pain points)
