@@ -488,6 +488,8 @@ async function loadExistingProducts(): Promise<ExistingProduct[]> {
     loadFromDir(CONFIG.paths.validated, 'validated'),
     loadFromDir(CONFIG.paths.built, 'built'),
     loadFromOutputDir(path.join(CONFIG.paths.output, 'web')),
+    loadFromOutputDir(path.join(CONFIG.paths.output, 'mobile')),
+    loadFromOutputDir(path.join(CONFIG.paths.output, 'extension')),
   ]);
   return products;
 }
@@ -1459,10 +1461,59 @@ Return ONLY the JSON array, no markdown.`;
     return files;
   }
 
+  private async generateMobileFiles(idea: ValidatedIdea, spec: FrontendSpec): Promise<Array<{ path: string; content: string }>> {
+    const prompt = `Generate a COMPLETE, PRODUCTION-QUALITY React Native + Expo mobile app for this product.
+
+PRODUCT: ${idea.title}
+DESCRIPTION: ${idea.description}
+FEATURES: ${idea.features.join(', ')}
+DESIGN: primary=${spec.designSystem.primaryColor}, font=${spec.designSystem.fontFamily}, style=${spec.designSystem.style}
+
+Generate these files as a JSON array:
+[
+  {"path":"app.json","content":"..."},
+  {"path":"App.tsx","content":"..."},
+  {"path":"src/screens/HomeScreen.tsx","content":"..."},
+  {"path":"src/screens/DetailScreen.tsx","content":"..."},
+  {"path":"src/components/Header.tsx","content":"..."},
+  {"path":"src/navigation/AppNavigator.tsx","content":"..."},
+  {"path":"src/styles/theme.ts","content":"..."},
+  {"path":"package.json","content":"..."}
+]
+
+REQUIREMENTS:
+1. app.json: Expo config with proper name, slug, icon, splash, permissions
+2. App.tsx: Root component with NavigationContainer, status bar, safe area
+3. HomeScreen.tsx: Main screen with FlatList/ScrollView, real feature implementation, pull-to-refresh
+4. DetailScreen.tsx: Detail/action screen with the core user interaction for this product
+5. Header.tsx: Reusable header component with back button, title, right action
+6. AppNavigator.tsx: Stack/Tab navigator using @react-navigation/native, typed routes
+7. theme.ts: Colors (use ${spec.designSystem.primaryColor} as primary), spacing, typography constants
+8. package.json: All deps: expo ~51, react-native, @react-navigation/native, @react-navigation/stack, expo-status-bar, react-native-safe-area-context
+
+USE:
+- TypeScript throughout with proper interfaces
+- StyleSheet.create for all styles, no inline styles
+- Functional components with hooks (useState, useEffect, useCallback)
+- AsyncStorage for local persistence
+- Expo APIs where needed (expo-notifications, expo-camera, expo-location if relevant)
+
+Return ONLY the JSON array, no markdown.`;
+
+    const response = await kimi.complete(prompt, { maxTokens: 10000, temperature: 0.2 });
+    const files = extractJSON(response, 'array') as Array<{ path: string; content: string }>;
+    if (!files || !files.length) throw new Error('Mobile file generation returned empty');
+    return files;
+  }
+
   private async generateFrontendFiles(idea: ValidatedIdea, spec: FrontendSpec): Promise<Array<{ path: string; content: string }>> {
     // Chrome extension: different file structure
     if (idea.type === 'extension') {
       return this.generateExtensionFiles(idea, spec);
+    }
+    // Mobile app: React Native + Expo structure
+    if (idea.type === 'mobile') {
+      return this.generateMobileFiles(idea, spec);
     }
 
     const pagesDescription = spec.pages.map(p =>
@@ -2514,7 +2565,8 @@ export async function GET() {
 
     // Write files to disk
     const projectSlug = toSlug(idea.title);
-    const projectPath = path.join(CONFIG.paths.output, 'web', projectSlug);
+    const typeDir = idea.type === 'mobile' ? 'mobile' : idea.type === 'extension' ? 'extension' : 'web';
+    const projectPath = path.join(CONFIG.paths.output, typeDir, projectSlug);
     await fs.mkdir(projectPath, { recursive: true });
 
     for (const file of files) {
@@ -2524,43 +2576,46 @@ export async function GET() {
     }
     await logger.agent(this.name, `Wrote ${files.length} files to ${projectPath}`);
 
-    // npm install
-    try {
-      await execAsync('npm install --legacy-peer-deps', { cwd: projectPath, timeout: 180000 });
-      await logger.agent(this.name, 'Dependencies installed');
-    } catch (err) {
-      await logger.agent(this.name, `npm install warning: ${err}`);
+    // npm install + build (web/saas/api only — mobile uses Expo, extension has no build step)
+    if (idea.type !== 'mobile' && idea.type !== 'extension') {
       try {
-        await execAsync('npm install', { cwd: projectPath, timeout: 180000 });
-      } catch {}
-    }
-
-    // Build test before deployment (ensures no broken MVPs reach production)
-    await logger.agent(this.name, 'Running npm build test...');
-    try {
-      await execAsync('npm run build', { cwd: projectPath, timeout: 300000 });
-      await logger.agent(this.name, 'Build test PASSED - proceeding to deploy');
-    } catch (buildErr: any) {
-      const errMsg = String(buildErr).slice(0, 400);
-      await logger.agent(this.name, 'Build failed, applying auto-fix (ignoreBuildErrors)...');
-      try {
-        const fixedConfig = [
-          "/** @type {import('next').NextConfig} */",
-          "const nextConfig = {",
-          "  reactStrictMode: false,",
-          "  typescript: { ignoreBuildErrors: true },",
-          "  eslint: { ignoreDuringBuilds: true },",
-          "  images: { unoptimized: true },",
-          "}",
-          "module.exports = nextConfig",
-          "",
-        ].join('\n');
-        await fs.writeFile(path.join(projectPath, 'next.config.js'), fixedConfig);
-        await execAsync('npm run build', { cwd: projectPath, timeout: 300000 });
-        await logger.agent(this.name, 'Build PASSED after auto-fix');
-      } catch (retryErr: any) {
-        await logger.agent(this.name, `Build still failing after auto-fix: ${String(retryErr).slice(0, 200)} - deploying anyway`);
+        await execAsync('npm install --legacy-peer-deps', { cwd: projectPath, timeout: 180000 });
+        await logger.agent(this.name, 'Dependencies installed');
+      } catch (err) {
+        await logger.agent(this.name, `npm install warning: ${err}`);
+        try {
+          await execAsync('npm install', { cwd: projectPath, timeout: 180000 });
+        } catch {}
       }
+
+      // Build test before deployment (ensures no broken MVPs reach production)
+      await logger.agent(this.name, 'Running npm build test...');
+      try {
+        await execAsync('npm run build', { cwd: projectPath, timeout: 300000 });
+        await logger.agent(this.name, 'Build test PASSED - proceeding to deploy');
+      } catch (buildErr: any) {
+        await logger.agent(this.name, 'Build failed, applying auto-fix (ignoreBuildErrors)...');
+        try {
+          const fixedConfig = [
+            "/** @type {import('next').NextConfig} */",
+            "const nextConfig = {",
+            "  reactStrictMode: false,",
+            "  typescript: { ignoreBuildErrors: true },",
+            "  eslint: { ignoreDuringBuilds: true },",
+            "  images: { unoptimized: true },",
+            "}",
+            "module.exports = nextConfig",
+            "",
+          ].join('\n');
+          await fs.writeFile(path.join(projectPath, 'next.config.js'), fixedConfig);
+          await execAsync('npm run build', { cwd: projectPath, timeout: 300000 });
+          await logger.agent(this.name, 'Build PASSED after auto-fix');
+        } catch (retryErr: any) {
+          await logger.agent(this.name, `Build still failing after auto-fix: ${String(retryErr).slice(0, 200)} - deploying anyway`);
+        }
+      }
+    } else {
+      await logger.agent(this.name, `${idea.type === 'mobile' ? 'React Native/Expo' : 'Chrome Extension'} — skipping npm build step`);
     }
 
     // Push to GitHub

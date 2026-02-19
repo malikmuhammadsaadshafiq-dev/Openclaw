@@ -14,6 +14,7 @@ const PATHS = {
   skipped: "/root/mvp-projects/skipped",
   web: "/root/mvp-projects/web",
   mobile: "/root/mvp-projects/mobile",
+  extension: "/root/mvp-projects/extension",
   signals: "/root/mvp-projects/signals",
   installedSkills: "/root/mvp-projects/installed-skills.json",
   pipelineProgress: "/root/mvp-projects/pipeline-progress.json",
@@ -53,11 +54,12 @@ function readStats() {
 
   // Count actual project directories — more reliable than JSON metadata
   // (metadata files can be missing for older/cleaned-up builds)
-  let dirWebCount = 0, dirMobileCount = 0;
+  let dirWebCount = 0, dirMobileCount = 0, dirExtCount = 0;
   try { dirWebCount = fs.readdirSync(PATHS.web).filter(f => fs.statSync(path.join(PATHS.web, f)).isDirectory()).length; } catch {}
   try { dirMobileCount = fs.readdirSync(PATHS.mobile).filter(f => fs.statSync(path.join(PATHS.mobile, f)).isDirectory()).length; } catch {}
+  try { dirExtCount = fs.readdirSync(PATHS.extension).filter(f => fs.statSync(path.join(PATHS.extension, f)).isDirectory()).length; } catch {}
 
-  const dirTotal = dirWebCount + dirMobileCount;
+  const dirTotal = dirWebCount + dirMobileCount + dirExtCount;
 
   // Use highest of: JSON metadata count, actual directory count, stats.json count
   const totalBuilt = Math.max(builtItems.length, dirTotal, fileStats.totalBuilt || 0);
@@ -70,8 +72,9 @@ function readStats() {
   const jsonTotal = typeCounts.web + typeCounts.saas + typeCounts.mobile + typeCounts.extension + typeCounts.api;
   const extraProjects = Math.max(0, dirTotal - jsonTotal);
 
-  const webCount = Math.max(typeCounts.web, dirWebCount - typeCounts.saas - typeCounts.extension - typeCounts.api) + extraProjects;
+  const webCount = Math.max(typeCounts.web, dirWebCount - typeCounts.saas) + extraProjects;
   const mobileCount = Math.max(typeCounts.mobile, dirMobileCount);
+  const extensionCount = Math.max(typeCounts.extension, dirExtCount);
 
   let functionalityScore = 0;
   for (const b of builtItems) {
@@ -96,7 +99,7 @@ function readStats() {
     webCount,
     saasCount: typeCounts.saas,
     mobileCount,
-    extensionCount: typeCounts.extension,
+    extensionCount,
     apiCount: typeCounts.api,
     liveCount,
     githubCount,
