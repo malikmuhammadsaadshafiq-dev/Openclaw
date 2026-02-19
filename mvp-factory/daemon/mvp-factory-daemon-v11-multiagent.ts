@@ -19,6 +19,44 @@ import { promisify } from 'util';
 const execAsync = promisify(exec);
 
 // ============================================================
+// Retry Loop Utility (exponential backoff)
+// ============================================================
+async function retryLoop<T>(
+  fn: () => Promise<T>,
+  options: { maxRetries?: number; baseDelay?: number; label?: string } = {}
+): Promise<T> {
+  const maxRetries = options.maxRetries || 3;
+  const baseDelay = options.baseDelay || 2000;
+  const label = options.label || 'operation';
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error: any) {
+      if (attempt === maxRetries) throw error;
+      const delay = baseDelay * Math.pow(2, attempt - 1) + Math.random() * 1000;
+      console.log(`[RetryLoop] ${label} attempt ${attempt}/${maxRetries} failed, retrying in ${Math.round(delay)}ms...`);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+  throw new Error(`${label} failed after ${maxRetries} attempts`);
+}
+
+// Rate limiter to avoid getting blocked
+class RateLimiter {
+  private lastCall: number = 0;
+  private minDelay: number;
+  constructor(minDelayMs: number = 1500) { this.minDelay = minDelayMs; }
+  async wait(): Promise<void> {
+    const elapsed = Date.now() - this.lastCall;
+    if (elapsed < this.minDelay) {
+      await new Promise(r => setTimeout(r, this.minDelay - elapsed));
+    }
+    this.lastCall = Date.now();
+  }
+}
+
+// ============================================================
 // Configuration
 // ============================================================
 const CONFIG = {
@@ -515,10 +553,11 @@ const KNOWN_PACKAGES: Record<string, string> = {
 
 
 // ============================================================
-// AGENT 1: RESEARCH AGENT
+// AGENT 1: RESEARCH AGENT (REAL DATA ONLY - NO PLACEHOLDERS)
 // ============================================================
 class ResearchAgent {
   private name = 'ResearchAgent';
+  private rateLimiter = new RateLimiter(2000); // 2s between requests
 
   private redditSubreddits = [
     'SideProject', 'startups', 'SaaS', 'AppIdeas', 'indiehackers',
@@ -528,220 +567,229 @@ class ResearchAgent {
     'PersonalFinance', 'Fitness', 'QuantifiedSelf',
   ];
 
-  private xSearchQueries = [
-    '"I wish there was an app"',
-    '"someone should build"',
-    '"why isn\'t there a tool for"',
-    '"would pay for"',
-    '"need a tool that"',
-    '"frustrated with"',
-    '"looking for a SaaS"',
-    '"build in public"',
-    '"pain point"',
-    '"shut up and take my money"',
+  // Rotate user agents to avoid blocking
+  private userAgents = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15',
+    'Mozilla/5.0 (X11; Linux x86_64; rv:122.0) Gecko/20100101 Firefox/122.0',
   ];
+  private uaIndex = 0;
 
-  private hackerNewsCategories = ['show', 'ask', 'top'];
+  private getUA(): string { return this.userAgents[this.uaIndex++ % this.userAgents.length]; }
 
   async run(): Promise<RawIdea[]> {
-    await logger.agent(this.name, 'Starting deep research cycle across Reddit, X, and HackerNews...');
-    const allIdeas: RawIdea[] = [];
+    await logger.agent(this.name, 'Starting REAL research cycle across Reddit, HackerNews, Dev.to, GitHub Trending...');
+    const allPosts: RawIdea[] = [];
 
-    // Run research across all platforms in parallel
-    const [redditIdeas, xIdeas, hnIdeas] = await Promise.all([
+    // Run research across all REAL platforms in parallel
+    const results = await Promise.allSettled([
       this.researchReddit(),
-      this.researchX(),
       this.researchHackerNews(),
+      this.researchHNAlgolia(),
+      this.researchDevTo(),
+      this.researchGitHubTrending(),
     ]);
 
-    allIdeas.push(...redditIdeas, ...xIdeas, ...hnIdeas);
-    await logger.agent(this.name, `Raw ideas collected: Reddit=${redditIdeas.length}, X=${xIdeas.length}, HN=${hnIdeas.length}, Total=${allIdeas.length}`);
+    const labels = ['Reddit', 'HN-Firebase', 'HN-Algolia', 'Dev.to', 'GitHub'];
+    for (let i = 0; i < results.length; i++) {
+      if (results[i].status === 'fulfilled') {
+        const posts = (results[i] as PromiseFulfilledResult<RawIdea[]>).value;
+        allPosts.push(...posts);
+        await logger.agent(this.name, `${labels[i]}: ${posts.length} real posts collected`);
+      } else {
+        await logger.agent(this.name, `${labels[i]}: FAILED - ${(results[i] as PromiseRejectedResult).reason}`);
+      }
+    }
 
-    // Deduplicate within batch
-    const unique = this.deduplicateRawIdeas(allIdeas);
-    await logger.agent(this.name, `After dedup: ${unique.length} unique raw ideas`);
+    await logger.agent(this.name, `Total real posts collected: ${allPosts.length} across ${labels.length} platforms`);
 
-    return unique;
+    if (allPosts.length === 0) {
+      await logger.agent(this.name, 'ZERO real posts collected from any platform. Cannot proceed without real data.');
+      return [];
+    }
+
+    // Deduplicate raw posts
+    const uniquePosts = this.deduplicateRawIdeas(allPosts);
+    await logger.agent(this.name, `After dedup: ${uniquePosts.length} unique posts`);
+
+    // Use AI to analyze REAL posts and extract product ideas (grounded in real data)
+    const ideas = await this.analyzePostsForIdeas(uniquePosts);
+    await logger.agent(this.name, `Extracted ${ideas.length} product ideas from ${uniquePosts.length} real posts`);
+
+    return ideas;
   }
 
   private async researchReddit(): Promise<RawIdea[]> {
     const ideas: RawIdea[] = [];
 
+    // Strategy 1: OAuth API if credentials available
     if (CONFIG.reddit.clientId && CONFIG.reddit.clientSecret) {
-      // Real Reddit API
       try {
-        const authResp = await fetch('https://www.reddit.com/api/v1/access_token', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Basic ${Buffer.from(`${CONFIG.reddit.clientId}:${CONFIG.reddit.clientSecret}`).toString('base64')}`,
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-          body: 'grant_type=client_credentials',
-        });
-
-        if (authResp.ok) {
-          const { access_token } = await authResp.json();
-          // Fetch from multiple subreddits in parallel
-          const batchSize = 5;
-          for (let i = 0; i < this.redditSubreddits.length; i += batchSize) {
-            const batch = this.redditSubreddits.slice(i, i + batchSize);
-            const results = await Promise.all(
-              batch.map(sub => this.fetchSubreddit(sub, access_token))
-            );
-            for (const posts of results) {
-              ideas.push(...posts);
-            }
-          }
-          await logger.agent(this.name, `Reddit API: fetched ${ideas.length} potential posts`);
-          return ideas;
-        }
+        const oauthIdeas = await this.redditOAuth();
+        if (oauthIdeas.length > 0) return oauthIdeas;
       } catch (err) {
-        await logger.agent(this.name, `Reddit API error: ${err}, falling back to web scrape`);
+        await logger.agent(this.name, `Reddit OAuth failed: ${err}, trying public JSON...`);
       }
     }
 
-    // Fallback: scrape Reddit JSON endpoints (no auth needed)
-    try {
-      const targetSubs = this.redditSubreddits.slice(0, 8);
-      for (const sub of targetSubs) {
+    // Strategy 2: Public JSON endpoints with proper headers and rate limiting
+    const endpoints = [
+      { base: 'https://www.reddit.com', suffix: '.json?raw_json=1&limit=25' },
+      { base: 'https://old.reddit.com', suffix: '.json?limit=25' },
+    ];
+
+    for (const endpoint of endpoints) {
+      if (ideas.length >= 20) break; // We have enough
+
+      // Process subs sequentially with rate limiting to avoid 429s
+      for (const sub of this.redditSubreddits.slice(0, 10)) {
+        if (ideas.length >= 50) break;
+        await this.rateLimiter.wait();
+
         try {
-          const resp = await fetch(`https://www.reddit.com/r/${sub}/hot.json?limit=25`, {
-            headers: { 'User-Agent': 'MVPFactory/2.0 (research bot)' },
-          });
-          if (resp.ok) {
-            const data = await resp.json();
-            const posts = data?.data?.children?.map((c: any) => c.data) || [];
-            for (const post of posts) {
-              if (post.score > 10 && post.selftext) {
-                ideas.push({
-                  title: post.title,
-                  description: (post.selftext || '').slice(0, 500),
-                  problem: '',
-                  targetUsers: '',
-                  sourcePost: `https://reddit.com${post.permalink}`,
-                  sourcePlatform: 'reddit',
-                  upvotes: post.score || 0,
-                  commentCount: post.num_comments || 0,
-                  painLevel: post.score > 100 ? 'severe' : post.score > 30 ? 'moderate' : 'mild',
-                  tags: [sub],
-                });
-              }
-            }
-          }
-        } catch {}
-      }
-      await logger.agent(this.name, `Reddit scrape: ${ideas.length} posts collected`);
-    } catch (err) {
-      await logger.agent(this.name, `Reddit scrape failed: ${err}`);
-    }
-
-    // If no real data, use AI-enhanced research that generates ideas grounded in real trends
-    if (ideas.length === 0) {
-      return this.aiEnhancedResearch('reddit');
-    }
-
-    // Analyze collected posts with AI to extract actual product ideas
-    return this.analyzePostsForIdeas(ideas, 'reddit');
-  }
-
-  private async fetchSubreddit(subreddit: string, accessToken: string): Promise<RawIdea[]> {
-    const ideas: RawIdea[] = [];
-    try {
-      const resp = await fetch(`https://oauth.reddit.com/r/${subreddit}/hot?limit=30`, {
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'User-Agent': 'MVPFactory/2.0',
-        },
-      });
-      if (resp.ok) {
-        const data = await resp.json();
-        for (const child of (data?.data?.children || [])) {
-          const post = child.data;
-          if (post.score > 5) {
-            ideas.push({
-              title: post.title,
-              description: (post.selftext || '').slice(0, 500),
-              problem: '',
-              targetUsers: '',
-              sourcePost: `https://reddit.com${post.permalink}`,
-              sourcePlatform: 'reddit',
-              upvotes: post.score || 0,
-              commentCount: post.num_comments || 0,
-              painLevel: post.score > 100 ? 'severe' : post.score > 30 ? 'moderate' : 'mild',
-              tags: [subreddit],
-            });
-          }
-        }
-      }
-    } catch {}
-    return ideas;
-  }
-
-  private async researchX(): Promise<RawIdea[]> {
-    const ideas: RawIdea[] = [];
-
-    if (CONFIG.twitter.bearerToken) {
-      // Real X/Twitter API v2
-      for (const query of this.xSearchQueries.slice(0, 5)) {
-        try {
-          const resp = await fetch(
-            `https://api.twitter.com/2/tweets/search/recent?query=${encodeURIComponent(query)}&max_results=20&tweet.fields=created_at,public_metrics,context_annotations`,
-            { headers: { 'Authorization': `Bearer ${CONFIG.twitter.bearerToken}` } }
+          const url = `${endpoint.base}/r/${sub}/hot${endpoint.suffix}`;
+          const resp = await retryLoop(
+            () => fetch(url, {
+              headers: {
+                'User-Agent': this.getUA(),
+                'Accept': 'application/json',
+                'Accept-Language': 'en-US,en;q=0.9',
+              },
+              signal: AbortSignal.timeout(15000),
+            }),
+            { maxRetries: 2, baseDelay: 3000, label: `Reddit r/${sub}` }
           );
-          if (resp.ok) {
-            const data = await resp.json();
-            for (const tweet of (data.data || [])) {
-              const metrics = tweet.public_metrics || {};
+
+          if (!resp.ok) {
+            if (resp.status === 429) {
+              await logger.agent(this.name, `Reddit rate limited on r/${sub}, waiting 10s...`);
+              await new Promise(r => setTimeout(r, 10000));
+              continue;
+            }
+            continue;
+          }
+
+          const data = await resp.json();
+          const posts = data?.data?.children?.map((c: any) => c.data) || [];
+
+          for (const post of posts) {
+            if (post.score >= 5 && (post.selftext || post.title)) {
               ideas.push({
-                title: tweet.text.slice(0, 100),
-                description: tweet.text,
+                title: post.title,
+                description: (post.selftext || '').slice(0, 500),
                 problem: '',
                 targetUsers: '',
-                sourcePost: `https://x.com/i/status/${tweet.id}`,
-                sourcePlatform: 'x',
-                upvotes: (metrics.like_count || 0) + (metrics.retweet_count || 0),
-                commentCount: metrics.reply_count || 0,
-                painLevel: metrics.like_count > 50 ? 'severe' : metrics.like_count > 10 ? 'moderate' : 'mild',
-                tags: ['twitter'],
+                sourcePost: `https://reddit.com${post.permalink}`,
+                sourcePlatform: 'reddit',
+                upvotes: post.score || 0,
+                commentCount: post.num_comments || 0,
+                painLevel: post.score > 100 ? 'severe' : post.score > 30 ? 'moderate' : 'mild',
+                tags: [sub],
               });
             }
           }
-        } catch {}
+        } catch (err) {
+          // Silently skip individual sub failures
+        }
       }
-      await logger.agent(this.name, `X API: ${ideas.length} tweets collected`);
+
+      if (ideas.length > 0) break; // First working endpoint is sufficient
     }
 
-    if (ideas.length === 0) {
-      return this.aiEnhancedResearch('x');
+    await logger.agent(this.name, `Reddit: ${ideas.length} real posts collected`);
+    return ideas;
+  }
+
+  private async redditOAuth(): Promise<RawIdea[]> {
+    const ideas: RawIdea[] = [];
+
+    const authResp = await retryLoop(
+      () => fetch('https://www.reddit.com/api/v1/access_token', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Basic ${Buffer.from(`${CONFIG.reddit.clientId}:${CONFIG.reddit.clientSecret}`).toString('base64')}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'User-Agent': 'MVPFactory/2.0 by mvp-factory',
+        },
+        body: 'grant_type=client_credentials',
+        signal: AbortSignal.timeout(10000),
+      }),
+      { maxRetries: 2, label: 'Reddit OAuth' }
+    );
+
+    if (!authResp.ok) throw new Error(`Reddit OAuth ${authResp.status}`);
+    const { access_token } = await authResp.json();
+
+    // Process subreddits with rate limiting
+    for (const sub of this.redditSubreddits) {
+      await this.rateLimiter.wait();
+      try {
+        const resp = await fetch(`https://oauth.reddit.com/r/${sub}/hot?limit=30`, {
+          headers: {
+            'Authorization': `Bearer ${access_token}`,
+            'User-Agent': 'MVPFactory/2.0 by mvp-factory',
+          },
+          signal: AbortSignal.timeout(10000),
+        });
+
+        if (resp.ok) {
+          const data = await resp.json();
+          for (const child of (data?.data?.children || [])) {
+            const post = child.data;
+            if (post.score >= 5) {
+              ideas.push({
+                title: post.title,
+                description: (post.selftext || '').slice(0, 500),
+                problem: '',
+                targetUsers: '',
+                sourcePost: `https://reddit.com${post.permalink}`,
+                sourcePlatform: 'reddit',
+                upvotes: post.score || 0,
+                commentCount: post.num_comments || 0,
+                painLevel: post.score > 100 ? 'severe' : post.score > 30 ? 'moderate' : 'mild',
+                tags: [sub],
+              });
+            }
+          }
+        }
+      } catch {}
     }
 
-    return this.analyzePostsForIdeas(ideas, 'x');
+    return ideas;
   }
 
   private async researchHackerNews(): Promise<RawIdea[]> {
     const ideas: RawIdea[] = [];
 
-    try {
-      // HN has a free, no-auth API
-      for (const category of ['showstories', 'askstories']) {
-        try {
-          const resp = await fetch(`https://hacker-news.firebaseio.com/v0/${category}.json`);
-          if (!resp.ok) continue;
-          const storyIds: number[] = await resp.json();
+    for (const category of ['showstories', 'askstories', 'topstories']) {
+      try {
+        const resp = await retryLoop(
+          () => fetch(`https://hacker-news.firebaseio.com/v0/${category}.json`, {
+            signal: AbortSignal.timeout(10000),
+          }),
+          { maxRetries: 2, label: `HN ${category}` }
+        );
 
-          // Fetch top 15 stories from each category
-          const topIds = storyIds.slice(0, 15);
+        if (!resp.ok) continue;
+        const storyIds: number[] = await resp.json();
+
+        // Fetch top 20 stories in batches of 5
+        const topIds = storyIds.slice(0, 20);
+        for (let i = 0; i < topIds.length; i += 5) {
+          const batch = topIds.slice(i, i + 5);
           const stories = await Promise.all(
-            topIds.map(async (id) => {
+            batch.map(async (id) => {
               try {
-                const sr = await fetch(`https://hacker-news.firebaseio.com/v0/item/${id}.json`);
+                const sr = await fetch(`https://hacker-news.firebaseio.com/v0/item/${id}.json`, {
+                  signal: AbortSignal.timeout(8000),
+                });
                 return sr.ok ? sr.json() : null;
               } catch { return null; }
             })
           );
 
           for (const story of stories) {
-            if (story && story.score > 10 && story.title) {
+            if (story && story.score > 5 && story.title) {
               ideas.push({
                 title: story.title,
                 description: (story.text || story.url || '').slice(0, 500),
@@ -752,46 +800,177 @@ class ResearchAgent {
                 upvotes: story.score || 0,
                 commentCount: story.descendants || 0,
                 painLevel: story.score > 100 ? 'severe' : story.score > 30 ? 'moderate' : 'mild',
-                tags: [category === 'showstories' ? 'Show HN' : 'Ask HN'],
+                tags: [category.replace('stories', '')],
               });
             }
           }
-        } catch {}
-      }
-      await logger.agent(this.name, `HackerNews: ${ideas.length} stories collected`);
-    } catch (err) {
-      await logger.agent(this.name, `HackerNews error: ${err}`);
+        }
+      } catch {}
     }
 
-    if (ideas.length === 0) {
-      return this.aiEnhancedResearch('hackernews');
-    }
-
-    return this.analyzePostsForIdeas(ideas, 'hackernews');
+    return ideas;
   }
 
-  private async analyzePostsForIdeas(posts: RawIdea[], platform: string): Promise<RawIdea[]> {
-    const postSummaries = posts
+  // HN Algolia Search API - search for pain points and product requests
+  private async researchHNAlgolia(): Promise<RawIdea[]> {
+    const ideas: RawIdea[] = [];
+    const queries = [
+      'need a tool for',
+      'wish there was',
+      'frustrated with',
+      'looking for alternative',
+      'side project idea',
+      'would pay for',
+    ];
+
+    for (const query of queries.slice(0, 4)) {
+      await this.rateLimiter.wait();
+      try {
+        const url = `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(query)}&tags=ask_hn&numericFilters=points>10&hitsPerPage=15`;
+        const resp = await fetch(url, { signal: AbortSignal.timeout(10000) });
+        if (!resp.ok) continue;
+
+        const data = await resp.json();
+        for (const hit of (data.hits || [])) {
+          if (hit.title && hit.points > 5) {
+            ideas.push({
+              title: hit.title,
+              description: (hit.story_text || hit.comment_text || hit.url || '').slice(0, 500),
+              problem: '',
+              targetUsers: '',
+              sourcePost: `https://news.ycombinator.com/item?id=${hit.objectID}`,
+              sourcePlatform: 'hackernews',
+              upvotes: hit.points || 0,
+              commentCount: hit.num_comments || 0,
+              painLevel: hit.points > 100 ? 'severe' : hit.points > 30 ? 'moderate' : 'mild',
+              tags: ['algolia-search', query.split(' ').slice(0, 2).join('-')],
+            });
+          }
+        }
+      } catch {}
+    }
+
+    return ideas;
+  }
+
+  // Dev.to public API - trending developer articles
+  private async researchDevTo(): Promise<RawIdea[]> {
+    const ideas: RawIdea[] = [];
+
+    try {
+      // Fetch top articles this week
+      const resp = await retryLoop(
+        () => fetch('https://dev.to/api/articles?top=7&per_page=30', {
+          headers: { 'User-Agent': this.getUA() },
+          signal: AbortSignal.timeout(10000),
+        }),
+        { maxRetries: 2, label: 'Dev.to articles' }
+      );
+
+      if (resp.ok) {
+        const articles = await resp.json();
+        for (const article of articles) {
+          if (article.positive_reactions_count > 10) {
+            ideas.push({
+              title: article.title,
+              description: (article.description || '').slice(0, 500),
+              problem: '',
+              targetUsers: '',
+              sourcePost: article.url || article.canonical_url || `https://dev.to/${article.path}`,
+              sourcePlatform: 'hackernews' as any, // categorize as tech source
+              upvotes: article.positive_reactions_count || 0,
+              commentCount: article.comments_count || 0,
+              painLevel: article.positive_reactions_count > 100 ? 'severe' : article.positive_reactions_count > 30 ? 'moderate' : 'mild',
+              tags: (article.tag_list || []).slice(0, 4),
+            });
+          }
+        }
+      }
+    } catch (err) {
+      await logger.agent(this.name, `Dev.to error: ${err}`);
+    }
+
+    return ideas;
+  }
+
+  // GitHub Trending - discover trending projects and tools
+  private async researchGitHubTrending(): Promise<RawIdea[]> {
+    const ideas: RawIdea[] = [];
+
+    // Use GitHub Search API (no auth needed for basic queries)
+    const searchQueries = [
+      'stars:>50 created:>2026-02-01 topic:saas',
+      'stars:>30 created:>2026-02-01 topic:developer-tools',
+      'stars:>20 created:>2026-02-01 topic:productivity',
+    ];
+
+    for (const q of searchQueries) {
+      await this.rateLimiter.wait();
+      try {
+        const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(q)}&sort=stars&order=desc&per_page=10`;
+        const headers: Record<string, string> = {
+          'User-Agent': this.getUA(),
+          'Accept': 'application/vnd.github.v3+json',
+        };
+        if (CONFIG.github.token) {
+          headers['Authorization'] = `Bearer ${CONFIG.github.token}`;
+        }
+
+        const resp = await fetch(url, { headers, signal: AbortSignal.timeout(10000) });
+        if (!resp.ok) continue;
+
+        const data = await resp.json();
+        for (const repo of (data.items || [])) {
+          if (repo.stargazers_count > 10) {
+            ideas.push({
+              title: repo.name + ': ' + (repo.description || '').slice(0, 80),
+              description: (repo.description || '') + (repo.topics ? ` [${repo.topics.join(', ')}]` : ''),
+              problem: '',
+              targetUsers: '',
+              sourcePost: repo.html_url || '',
+              sourcePlatform: 'hackernews' as any, // categorize as tech
+              upvotes: repo.stargazers_count || 0,
+              commentCount: repo.forks_count || 0,
+              painLevel: repo.stargazers_count > 500 ? 'severe' : repo.stargazers_count > 100 ? 'moderate' : 'mild',
+              tags: (repo.topics || []).slice(0, 4),
+            });
+          }
+        }
+      } catch {}
+    }
+
+    return ideas;
+  }
+
+  private async analyzePostsForIdeas(posts: RawIdea[]): Promise<RawIdea[]> {
+    // Take top posts by engagement across all platforms
+    const topPosts = posts
       .sort((a, b) => b.upvotes - a.upvotes)
-      .slice(0, 30)
-      .map(p => `[${p.upvotes} upvotes, ${p.commentCount} comments] ${p.title}\n${p.description.slice(0, 200)}`)
+      .slice(0, 40);
+
+    const postSummaries = topPosts
+      .map(p => `[${p.sourcePlatform}] [${p.upvotes} upvotes, ${p.commentCount} comments] ${p.title}\n${p.description.slice(0, 200)}\nSource: ${p.sourcePost}`)
       .join('\n---\n');
 
-    const prompt = `You are a product research analyst. Analyze these REAL ${platform} posts and extract CONCRETE, BUILDABLE product ideas.
+    const prompt = `You are a product research analyst. Analyze these REAL posts from Reddit, HackerNews, Dev.to, and GitHub and extract CONCRETE, BUILDABLE product ideas.
 
-REAL POSTS FROM ${platform.toUpperCase()}:
+CRITICAL: These are REAL posts. Your ideas must be directly grounded in the problems, tools, and discussions in these posts. Do NOT invent ideas unrelated to the posts.
+
+REAL POSTS:
 ${postSummaries}
 
-Extract 5 product ideas that solve REAL problems mentioned in these posts. Each idea must:
-1. Address a SPECIFIC pain point from the posts (not generic)
+Extract 8 product ideas that solve REAL problems visible in these posts. Each idea must:
+1. Address a SPECIFIC pain point from the actual posts above (cite which post inspired it)
 2. Be buildable as a working web app in 12-24 hours
 3. Have REAL server-side functionality (not just a UI)
 4. Be something people would actually PAY for
+5. NOT be generic (no "todo app", "AI writer", "portfolio site")
 
 For each idea, determine:
 - The core PROBLEM being solved (from the actual posts)
 - WHO specifically would use it
 - What PAIN LEVEL it addresses (mild/moderate/severe)
+- Which source post inspired this idea
 
 Return ONLY valid JSON array:
 [{
@@ -804,15 +983,20 @@ Return ONLY valid JSON array:
 }]`;
 
     try {
-      const response = await kimi.complete(prompt, { maxTokens: 4000, temperature: 0.7 });
+      const response = await retryLoop(
+        () => kimi.complete(prompt, { maxTokens: 6000, temperature: 0.7 }),
+        { maxRetries: 2, baseDelay: 5000, label: 'AI idea extraction' }
+      );
+
       const parsed = extractJSON(response, 'array');
-      if (parsed && Array.isArray(parsed)) {
-        return parsed.map((idea: any) => ({
+      if (parsed && Array.isArray(parsed) && parsed.length > 0) {
+        // Map back to RawIdea format but keep reference to REAL source posts
+        return parsed.map((idea: any, idx: number) => ({
           ...idea,
-          sourcePost: posts[0]?.sourcePost || `https://${platform}.com`,
-          sourcePlatform: platform as any,
-          upvotes: 0,
-          commentCount: 0,
+          sourcePost: topPosts[Math.min(idx, topPosts.length - 1)]?.sourcePost || topPosts[0]?.sourcePost || '',
+          sourcePlatform: topPosts[Math.min(idx, topPosts.length - 1)]?.sourcePlatform || 'hackernews',
+          upvotes: topPosts[Math.min(idx, topPosts.length - 1)]?.upvotes || 0,
+          commentCount: topPosts[Math.min(idx, topPosts.length - 1)]?.commentCount || 0,
           painLevel: idea.painLevel || 'moderate',
           tags: idea.tags || [],
         }));
@@ -820,78 +1004,10 @@ Return ONLY valid JSON array:
     } catch (err) {
       await logger.agent(this.name, `Post analysis failed: ${err}`);
     }
-    return [];
-  }
 
-  private async aiEnhancedResearch(platform: string): Promise<RawIdea[]> {
-    const currentDate = new Date().toISOString().split('T')[0];
-    const prompt = `You are a product research analyst monitoring ${platform} trends in real-time.
-
-Date: ${currentDate}
-
-Based on current ${platform} trends, viral posts, and community discussions, identify 5 SPECIFIC product opportunities.
-
-RULES:
-1. Each idea must address a REAL, current pain point (not hypothetical)
-2. Focus on problems with HIGH engagement (many complaints/requests)
-3. Ideas must be DIFFERENTIATED (not "yet another todo app" or "AI writing assistant #500")
-4. Each must be buildable as a full-stack web app in 12-24 hours
-5. Must have REAL utility (actual data processing, AI analysis, or automation)
-6. Must be something people are CURRENTLY asking for, not evergreen generic ideas
-
-AVOID THESE OVERUSED CATEGORIES:
-- Generic AI writing/content tools
-- Basic todo/task managers
-- Simple calculators
-- Generic portfolio websites
-- Basic chatbots
-- Generic CRM systems
-- Simple note-taking apps
-
-FOCUS ON THESE HIGH-DEMAND AREAS:
-- Developer tools & automation
-- Data analysis & visualization
-- AI-powered niche tools (specific use cases, not generic)
-- Workflow automation for specific industries
-- Financial analysis & crypto tools
-- Health & fitness analytics
-- E-commerce optimization tools
-- Content creator toolkits
-- API testing & monitoring
-- Document processing & extraction
-
-Return ONLY valid JSON array:
-[{
-  "title": "Unique specific product name",
-  "description": "Exactly what it does with real functionality",
-  "problem": "The specific pain point it solves (be concrete)",
-  "targetUsers": "Exact audience (e.g., 'Shopify store owners with 100-1000 SKUs')",
-  "painLevel": "moderate|severe",
-  "tags": ["niche1", "niche2"]
-}]`;
-
-    try {
-      const response = await kimi.complete(prompt, {
-        maxTokens: 4000,
-        temperature: 0.85,
-        systemPrompt: 'You are an expert product researcher who identifies high-potential micro-SaaS opportunities. You focus on niche, specific problems with clear monetization paths. Never suggest generic or oversaturated ideas.',
-      });
-      const parsed = extractJSON(response, 'array');
-      if (parsed && Array.isArray(parsed)) {
-        return parsed.map((idea: any) => ({
-          ...idea,
-          sourcePost: `https://${platform}.com/trending/${currentDate}`,
-          sourcePlatform: platform as any,
-          upvotes: 0,
-          commentCount: 0,
-          painLevel: idea.painLevel || 'moderate',
-          tags: idea.tags || [],
-        }));
-      }
-    } catch (err) {
-      await logger.agent(this.name, `AI research for ${platform} failed: ${err}`);
-    }
-    return [];
+    // If AI analysis fails, return raw posts as-is (still REAL data)
+    await logger.agent(this.name, 'AI analysis failed, returning raw posts as ideas');
+    return topPosts.slice(0, 10);
   }
 
   private deduplicateRawIdeas(ideas: RawIdea[]): RawIdea[] {
@@ -929,7 +1045,10 @@ class ValidationAgent {
       }
 
       try {
-        const result = await this.validateIdea(rawIdea);
+        const result = await retryLoop(
+          () => this.validateIdea(rawIdea),
+          { maxRetries: 2, baseDelay: 5000, label: `Validate "${rawIdea.title.slice(0, 30)}"` }
+        );
         if (result.validation.verdict === 'build') {
           validated.push(result);
           await logger.agent(this.name, `APPROVED: "${result.title}" (score: ${result.validation.overallScore}/10, angle: ${result.validation.uniqueAngle})`);
@@ -1033,12 +1152,12 @@ Return ONLY valid JSON:
     const response = await kimi.complete(prompt, {
       maxTokens: 4000,
       temperature: 0.3,
-      systemPrompt: 'You are a ruthless startup validator. You reject mediocre ideas and only approve products with genuine market potential. Your validation is data-driven and your scores are honest, not inflated.',
+      systemPrompt: 'You are a ruthless startup validator. You reject mediocre ideas and only approve products with genuine market potential. Your validation is data-driven and your scores are honest, not inflated. Always return valid JSON.',
     });
 
     const parsed = extractJSON(response, 'object');
     if (!parsed || !parsed.validation) {
-      throw new Error('Invalid validation response');
+      throw new Error('Validation AI returned invalid format - no validation object found');
     }
 
     // Recalculate weighted score for honesty
@@ -1078,12 +1197,18 @@ class FrontendAgent {
   async run(idea: ValidatedIdea): Promise<{ spec: FrontendSpec; files: Array<{ path: string; content: string }> }> {
     await logger.agent(this.name, `Designing frontend for "${idea.title}" targeting ${idea.audienceProfile.demographics}...`);
 
-    // Step 1: Design the UX based on audience psychology
-    const spec = await this.designUX(idea);
+    // Step 1: Design the UX based on audience psychology (with retry)
+    const spec = await retryLoop(
+      () => this.designUX(idea),
+      { maxRetries: 3, baseDelay: 5000, label: 'Frontend UX design' }
+    );
     await logger.agent(this.name, `UX design: ${spec.designSystem.style} style, ${spec.pages.length} pages, ${spec.psychologyTactics.length} psychology tactics`);
 
-    // Step 2: Generate all frontend files
-    const files = await this.generateFrontendFiles(idea, spec);
+    // Step 2: Generate all frontend files (with retry)
+    const files = await retryLoop(
+      () => this.generateFrontendFiles(idea, spec),
+      { maxRetries: 3, baseDelay: 5000, label: 'Frontend code generation' }
+    );
     await logger.agent(this.name, `Generated ${files.length} frontend files`);
 
     return { spec, files };
@@ -1164,25 +1289,7 @@ Return ONLY valid JSON:
 
     const parsed = extractJSON(response, 'object');
     if (!parsed || !parsed.designSystem) {
-      // Fallback design
-      return {
-        designSystem: {
-          primaryColor: '#6366F1',
-          secondaryColor: '#EC4899',
-          fontFamily: 'Inter',
-          borderRadius: '8px',
-          darkMode: idea.audienceProfile.techSavviness === 'high',
-          style: idea.audienceProfile.techSavviness === 'high' ? 'tech' : 'minimal',
-        },
-        uxPatterns: ['Progressive disclosure', 'Immediate value demo', 'Minimal onboarding'],
-        conversionElements: ['Free tier CTA', 'Feature comparison', 'Social proof'],
-        pages: [
-          { route: '/', purpose: 'Landing + demo', components: ['Hero', 'Demo', 'Features'], userFlow: 'Land -> Demo -> Signup' },
-          { route: '/dashboard', purpose: 'Main workspace', components: ['Sidebar', 'MainContent', 'Actions'], userFlow: 'Navigate -> Use features' },
-        ],
-        psychologyTactics: ['Reciprocity: free value first', 'Commitment: progressive feature unlock'],
-        accessibilityLevel: 'AA',
-      };
+      throw new Error('Frontend UX design AI failed to return valid design - will retry');
     }
 
     return parsed as FrontendSpec;
@@ -1275,12 +1382,18 @@ class BackendAgent {
   async run(idea: ValidatedIdea): Promise<{ spec: BackendSpec; files: Array<{ path: string; content: string }> }> {
     await logger.agent(this.name, `Designing backend for "${idea.title}" (${idea.category})...`);
 
-    // Step 1: Design the complete backend architecture
-    const spec = await this.designBackend(idea);
+    // Step 1: Design the complete backend architecture (with retry)
+    const spec = await retryLoop(
+      () => this.designBackend(idea),
+      { maxRetries: 3, baseDelay: 5000, label: 'Backend architecture design' }
+    );
     await logger.agent(this.name, `Backend design: ${spec.apiRoutes.length} API routes, ${spec.dataModels.length} data models, ${spec.integrations.length} integrations`);
 
-    // Step 2: Generate all backend files with REAL implementations
-    const files = await this.generateBackendFiles(idea, spec);
+    // Step 2: Generate all backend files with REAL implementations (with retry)
+    const files = await retryLoop(
+      () => this.generateBackendFiles(idea, spec),
+      { maxRetries: 3, baseDelay: 5000, label: 'Backend code generation' }
+    );
     await logger.agent(this.name, `Generated ${files.length} backend files`);
 
     return { spec, files };
@@ -1371,24 +1484,7 @@ Return ONLY valid JSON:
 
     const parsed = extractJSON(response, 'object');
     if (!parsed || !parsed.apiRoutes) {
-      // Fallback
-      return {
-        apiRoutes: [{
-          method: 'POST',
-          path: '/api/process',
-          purpose: 'Main processing endpoint',
-          inputSchema: '{ input: string }',
-          outputSchema: '{ result: any }',
-          implementation: 'Process user input and return results',
-        }],
-        dataModels: [{ name: 'Item', fields: ['id: string', 'data: any', 'createdAt: Date'], relationships: 'none' }],
-        integrations: idea.category === 'ai-assisted'
-          ? [{ service: 'NVIDIA Kimi K2.5', purpose: 'AI processing', apiEndpoint: 'https://integrate.api.nvidia.com/v1/chat/completions', authMethod: 'Bearer token' }]
-          : [],
-        authentication: 'none',
-        errorHandling: 'Try-catch with structured error responses',
-        realTimeFeatures: [],
-      };
+      throw new Error('Backend architecture AI failed to return valid design - will retry');
     }
 
     return parsed as BackendSpec;

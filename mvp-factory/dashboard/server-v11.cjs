@@ -260,7 +260,7 @@ function getSquadronAgents() {
   }
 
   return [
-    { name: "ResearchAgent", role: "Research", desc: "Reddit, X, HackerNews scraping", status: getAgentStatus("ResearchAgent"), avatar: "RA", color: "#f59e0b", lastAction: getLastAction("ResearchAgent"), skills: ["Reddit API", "X API", "HN API", "Post Analysis"] },
+    { name: "ResearchAgent", role: "Research", desc: "Reddit, HN, Dev.to, GitHub Trending", status: getAgentStatus("ResearchAgent"), avatar: "RA", color: "#f59e0b", lastAction: getLastAction("ResearchAgent"), skills: ["Reddit API", "HN Algolia", "Dev.to API", "GitHub Trending"] },
     { name: "ValidationAgent", role: "Validation", desc: "Market validation & scoring", status: getAgentStatus("ValidationAgent"), avatar: "VA", color: "#ef4444", lastAction: getLastAction("ValidationAgent"), skills: ["Market Analysis", "Competition Gap", "Audience Profiling", "Scoring"] },
     { name: "FrontendAgent", role: "Frontend", desc: "Psychology-driven UI design", status: getAgentStatus("FrontendAgent"), avatar: "FA", color: "#3b82f6", lastAction: getLastAction("FrontendAgent"), skills: ["UX Psychology", "Design Systems", "Conversion", "Responsive"] },
     { name: "BackendAgent", role: "Backend", desc: "Working APIs & integrations", status: getAgentStatus("BackendAgent"), avatar: "BA", color: "#10b981", lastAction: getLastAction("BackendAgent"), skills: ["API Routes", "AI Integration", "Data Processing", "Auth"] },
