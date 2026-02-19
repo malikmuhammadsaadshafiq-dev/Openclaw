@@ -1670,8 +1670,14 @@ function applySSEEvent(type,data){
           setVal("vLive",data.liveCount||0);
           setVal("vFreeAds",data.freeAdsCount||0);setVal("vFreemium",data.freemiumCount||0);
           setVal("vSaasM",data.saasMonetizeCount||0);setVal("vOneTime",data.oneTimeCount||0);
-          const st=document.getElementById("subTotal");if(st)st.textContent=data.githubCount?(data.githubCount+" on GitHub"):"unique products";
-          if(data.dirProjectCount&&data.dirProjectCount>data.jsonMetadataCount+5&&st)st.textContent=data.githubCount+" on GitHub ("+data.dirProjectCount+" dirs)";
+          const st=document.getElementById("subTotal");
+          const ghRaw=data.githubRepoCount||0;
+          const ghCount=data.githubCount||0;
+          if(st){
+            if(ghRaw>0)st.textContent=ghRaw+" repos on GitHub live";
+            else if(ghCount>0)st.textContent=ghCount+" on GitHub";
+            else st.textContent="unique products";
+          }
         }
         break;
       case"validated":

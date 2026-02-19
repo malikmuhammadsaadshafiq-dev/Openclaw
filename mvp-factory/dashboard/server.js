@@ -1,7 +1,55 @@
 const http = require("http");
+const https = require("https");
 const fs = require("fs");
 const path = require("path");
 const { execSync } = require("child_process");
+
+// ── GitHub live stats cache ──────────────────────────────────────────────────
+let _ghCache = { repoCount: 0, lastFetched: 0 };
+
+function readEnvValue(key) {
+  if (process.env[key]) return process.env[key];
+  const envPaths = ["/root/mvp-projects/.env", "/root/.env", "/root/openclaw/.env"];
+  for (const p of envPaths) {
+    try {
+      const content = fs.readFileSync(p, "utf-8");
+      const match = content.match(new RegExp(`^${key}\\s*=\\s*["']?([^"'\\n]+)["']?`, "m"));
+      if (match) return match[1].trim();
+    } catch {}
+  }
+  return "";
+}
+
+function refreshGithubStats() {
+  const token = readEnvValue("GITHUB_TOKEN");
+  const username = readEnvValue("GITHUB_USERNAME") || "malikmuhammadsaadshafiq-dev";
+  const headers = {
+    "User-Agent": "mvp-factory-dashboard/1.0",
+    "Accept": "application/vnd.github.v3+json",
+  };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  const options = { hostname: "api.github.com", path: `/users/${encodeURIComponent(username)}`, method: "GET", headers };
+  const req = https.request(options, (resp) => {
+    let data = "";
+    resp.on("data", (chunk) => { data += chunk; });
+    resp.on("end", () => {
+      try {
+        const user = JSON.parse(data);
+        if (user.public_repos !== undefined) {
+          _ghCache = { repoCount: user.public_repos, lastFetched: Date.now() };
+        }
+      } catch {}
+    });
+  });
+  req.on("error", () => {});
+  req.setTimeout(15000, () => req.destroy());
+  req.end();
+}
+
+// Initial GitHub fetch on startup, then refresh every 5 minutes
+refreshGithubStats();
+setInterval(refreshGithubStats, 5 * 60 * 1000);
 
 const PORT = 3000;
 const PATHS = {
@@ -64,12 +112,16 @@ function readStats() {
 
   const dirTotal = dirWebCount + dirMobileCount + dirExtCount;
 
-  // Use highest of: JSON metadata count, actual directory count, stats.json count
-  const totalBuilt = Math.max(builtItems.length, dirTotal, fileStats.totalBuilt || 0);
+  // GitHub API live count (public_repos minus the main Openclaw repo itself)
+  const ghRepoCount = _ghCache.repoCount;
+  const ghMvpEstimate = ghRepoCount > 1 ? ghRepoCount - 1 : ghRepoCount;
 
-  // githubCount: every project dir was pushed to GitHub, so dir count is the floor
+  // Use highest of: JSON metadata count, actual directory count, stats.json count, GitHub API count
+  const totalBuilt = Math.max(builtItems.length, dirTotal, fileStats.totalBuilt || 0, ghMvpEstimate);
+
+  // githubCount: use GitHub API repo count as source of truth, with local data as floor
   const jsonGithubCount = builtItems.filter(b => b.githubUrl).length;
-  const githubCount = Math.max(jsonGithubCount, dirTotal);
+  const githubCount = Math.max(jsonGithubCount, dirTotal, ghMvpEstimate);
 
   // Type breakdown: if dir count exceeds JSON count, attribute the extras to web
   const jsonTotal = typeCounts.web + typeCounts.saas + typeCounts.mobile + typeCounts.extension + typeCounts.api;
@@ -117,6 +169,8 @@ function readStats() {
     // source-of-truth counts for debugging
     jsonMetadataCount: builtItems.length,
     dirProjectCount: dirTotal,
+    githubRepoCount: ghRepoCount,
+    githubLastFetched: _ghCache.lastFetched,
     version: "v11-multiagent",
   };
 }
