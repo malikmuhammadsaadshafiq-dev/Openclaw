@@ -1197,11 +1197,35 @@ class FrontendAgent {
   async run(idea: ValidatedIdea): Promise<{ spec: FrontendSpec; files: Array<{ path: string; content: string }> }> {
     await logger.agent(this.name, `Designing frontend for "${idea.title}" targeting ${idea.audienceProfile.demographics}...`);
 
-    // Step 1: Design the UX based on audience psychology (with retry)
-    const spec = await retryLoop(
-      () => this.designUX(idea),
-      { maxRetries: 3, baseDelay: 5000, label: 'Frontend UX design' }
-    );
+    // Step 1: Design the UX based on audience psychology (with retry + simplified fallback)
+    let spec: FrontendSpec;
+    try {
+      spec = await retryLoop(
+        () => this.designUX(idea),
+        { maxRetries: 3, baseDelay: 5000, label: 'Frontend UX design' }
+      );
+    } catch (err) {
+      await logger.agent(this.name, `Complex UX design failed, using audience-matched defaults...`);
+      const isDev = idea.audienceProfile.techSavviness === 'high';
+      spec = {
+        designSystem: {
+          primaryColor: isDev ? '#6366F1' : '#3B82F6',
+          secondaryColor: isDev ? '#EC4899' : '#10B981',
+          fontFamily: isDev ? 'JetBrains Mono' : 'Inter',
+          borderRadius: isDev ? '6px' : '12px',
+          darkMode: isDev,
+          style: isDev ? 'tech' : 'minimal',
+        },
+        uxPatterns: ['Progressive disclosure', 'Immediate value demo', 'Minimal onboarding'],
+        conversionElements: ['Free trial CTA', 'Feature comparison', 'Social proof'],
+        pages: [
+          { route: '/', purpose: 'Landing + demo', components: ['Hero', 'Demo', 'Features', 'CTA'], userFlow: 'Land -> See value -> Try demo -> Sign up' },
+          { route: '/dashboard', purpose: 'Main workspace', components: ['Sidebar', 'MainContent', 'ActionBar'], userFlow: 'Navigate -> Use features -> See results' },
+        ],
+        psychologyTactics: ['Reciprocity: show free value first', 'Commitment: progressive feature unlock'],
+        accessibilityLevel: 'AA',
+      };
+    }
     await logger.agent(this.name, `UX design: ${spec.designSystem.style} style, ${spec.pages.length} pages, ${spec.psychologyTactics.length} psychology tactics`);
 
     // Step 2: Generate all frontend files (with retry)
@@ -1382,11 +1406,17 @@ class BackendAgent {
   async run(idea: ValidatedIdea): Promise<{ spec: BackendSpec; files: Array<{ path: string; content: string }> }> {
     await logger.agent(this.name, `Designing backend for "${idea.title}" (${idea.category})...`);
 
-    // Step 1: Design the complete backend architecture (with retry)
-    const spec = await retryLoop(
-      () => this.designBackend(idea),
-      { maxRetries: 3, baseDelay: 5000, label: 'Backend architecture design' }
-    );
+    // Step 1: Design the complete backend architecture (with retry + simplified fallback)
+    let spec: BackendSpec;
+    try {
+      spec = await retryLoop(
+        () => this.designBackend(idea),
+        { maxRetries: 3, baseDelay: 5000, label: 'Backend architecture design' }
+      );
+    } catch (err) {
+      await logger.agent(this.name, `Complex backend design failed, trying simplified prompt...`);
+      spec = await this.designBackendSimplified(idea);
+    }
     await logger.agent(this.name, `Backend design: ${spec.apiRoutes.length} API routes, ${spec.dataModels.length} data models, ${spec.integrations.length} integrations`);
 
     // Step 2: Generate all backend files with REAL implementations (with retry)
@@ -1487,6 +1517,38 @@ Return ONLY valid JSON:
       throw new Error('Backend architecture AI failed to return valid design - will retry');
     }
 
+    return parsed as BackendSpec;
+  }
+
+  private async designBackendSimplified(idea: ValidatedIdea): Promise<BackendSpec> {
+    const prompt = `Design a simple backend for "${idea.title}" (${idea.category}).
+Features: ${idea.features.join(', ')}
+
+Return ONLY this JSON (no markdown, no explanation):
+{"apiRoutes":[{"method":"POST","path":"/api/analyze","purpose":"Main processing","inputSchema":"{ input: string }","outputSchema":"{ result: object }","implementation":"Process input and return results"},{"method":"GET","path":"/api/health","purpose":"Health check","inputSchema":"none","outputSchema":"{ status: string }","implementation":"Return service status"}],"dataModels":[{"name":"Item","fields":["id: string","data: string","createdAt: string"],"relationships":"standalone"}],"integrations":[],"authentication":"none","errorHandling":"try-catch with JSON error responses","realTimeFeatures":[]}`;
+
+    const response = await kimi.complete(prompt, { maxTokens: 2000, temperature: 0.2 });
+    const parsed = extractJSON(response, 'object');
+    if (!parsed || !parsed.apiRoutes) {
+      // Absolute minimum fallback - still real architecture, not placeholder content
+      return {
+        apiRoutes: idea.features.slice(0, 4).map((f, i) => ({
+          method: 'POST' as const,
+          path: `/api/${toSlug(f.split(' ').slice(0, 3).join('-'))}`,
+          purpose: f,
+          inputSchema: '{ input: string, options?: object }',
+          outputSchema: '{ result: object, metadata: object }',
+          implementation: `Process: ${f}. Validate input, apply logic, return structured result.`,
+        })),
+        dataModels: [{ name: 'Item', fields: ['id: string', 'data: any', 'createdAt: Date'], relationships: 'none' }],
+        integrations: idea.category === 'ai-assisted'
+          ? [{ service: 'NVIDIA Kimi K2.5', purpose: 'AI processing', apiEndpoint: 'https://integrate.api.nvidia.com/v1/chat/completions', authMethod: 'Bearer token' }]
+          : [],
+        authentication: 'none',
+        errorHandling: 'Try-catch with structured JSON error responses',
+        realTimeFeatures: [],
+      };
+    }
     return parsed as BackendSpec;
   }
 
