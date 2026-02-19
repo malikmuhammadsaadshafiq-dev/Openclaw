@@ -681,9 +681,11 @@ const server = http.createServer((req, res) => {
     // Periodic full-state push every 30s as a safety net
     const fullPush = setInterval(() => {
       if (!sseClients.has(res)) { clearInterval(fullPush); return; }
-      broadcast("stats",    readStats());
-      broadcast("status",   getDaemonStatus());
-      broadcast("squadron", getSquadronAgents());
+      broadcast("stats",     readStats());
+      broadcast("status",    getDaemonStatus());
+      broadcast("validated", getValidatedQueue());
+      broadcast("built",     readAllBuilt());
+      broadcast("squadron",  getSquadronAgents());
     }, 30000);
 
     function cleanup() {

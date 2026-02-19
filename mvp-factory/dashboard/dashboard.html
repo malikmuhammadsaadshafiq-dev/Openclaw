@@ -1253,7 +1253,7 @@ body{
         <div class="card" style="padding:1.25rem">
           <div class="card-header"><div class="card-title">&#9654;&#65039; Cycle Flow</div></div>
           <div style="display:flex;flex-direction:column;gap:0">
-            <div class="arch-cycle-step"><span class="arch-cycle-num">1</span>Research cycle triggers every <strong>30 min</strong></div>
+            <div class="arch-cycle-step"><span class="arch-cycle-num">1</span>Research cycle triggers every <strong>15 min</strong></div>
             <div class="arch-cycle-step"><span class="arch-cycle-num">2</span>Scrapes up to <strong>200 posts</strong> across 55 subreddits + HN + Dev.to</div>
             <div class="arch-cycle-step"><span class="arch-cycle-num">3</span>LLM validates each idea &mdash; approved ideas enter build queue</div>
             <div class="arch-cycle-step"><span class="arch-cycle-num">4</span>Build cycle picks next idea from the validated queue</div>
@@ -1682,12 +1682,12 @@ function applySSEEvent(type,data){
         break;
       case"validated":
         if(Array.isArray(data)){
-          const vq=data;setVal("vQueue",vq.length);
-          const pc=document.getElementById("pipeCount");if(pc)pc.textContent=vq.length+" validated";
-          const nb=document.getElementById("navQueueCount");if(nb)nb.textContent=vq.length;
+          window._validatedData=data; // set FIRST so renderValidatedQ reads fresh data
+          setVal("vQueue",data.length);
+          const pc=document.getElementById("pipeCount");if(pc)pc.textContent=data.length+" validated";
+          const nb=document.getElementById("navQueueCount");if(nb)nb.textContent=data.length;
           renderValidatedQ(document.getElementById("queueList"),40);
           renderValidatedQ(document.getElementById("fullQueueList"),100);
-          window._validatedData=vq;
         }
         break;
       case"built":
@@ -1830,7 +1830,7 @@ function applyCurrentBuild(current){
     updatePollInterval(4000);
   }else{
     card.classList.remove("active");phase.textContent="idle";phase.style.color="";
-    content.innerHTML='<div class="build-idle"><div class="idle-icon">&#128564;</div><div class="idle-text">Idle &mdash; waiting for next build cycle</div><div class="idle-sub">The daemon checks the queue every 30 minutes</div></div>';
+    content.innerHTML='<div class="build-idle"><div class="idle-icon">&#128564;</div><div class="idle-text">Idle &mdash; waiting for next build cycle</div><div class="idle-sub">The daemon checks the queue every 5 minutes</div></div>';
   }
 }
 
