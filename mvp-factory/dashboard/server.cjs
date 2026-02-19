@@ -284,11 +284,32 @@ function getClawHubSkills() {
 }
 
 function getSquadronAgents() {
+  const logs = readLogs(100);
+
+  function getAgentStatus(agentName) {
+    for (let i = logs.length - 1; i >= 0; i--) {
+      if (logs[i].includes("[" + agentName + "]")) return "active";
+    }
+    return "idle";
+  }
+
+  function getLastAction(agentName) {
+    for (let i = logs.length - 1; i >= 0; i--) {
+      if (logs[i].includes("[" + agentName + "]")) {
+        const parts = logs[i].split("] ");
+        const msg = parts[parts.length - 1] || "";
+        return msg.replace("[" + agentName + "] ", "").slice(0, 80);
+      }
+    }
+    return "Waiting for pipeline...";
+  }
+
   return [
-    { name: "FrontendClaw", role: "Frontend", wallet: "0xdb1b...e5fb", status: "active", avatar: "FC", color: "#3b82f6" },
-    { name: "BackendClaw", role: "Backend", wallet: "0x0868...EC98", status: "active", avatar: "BC", color: "#10b981" },
-    { name: "ContractClaw", role: "Contract", wallet: "0xa84b...A529", status: "idle", avatar: "CC", color: "#f59e0b" },
-    { name: "PMClaw", role: "PM", wallet: "0x5A0E...AaDf", status: "active", avatar: "PM", color: "#8b5cf6" },
+    { name: "ResearchAgent", role: "Research", desc: "Reddit, HN, Dev.to, GitHub Trending", status: getAgentStatus("ResearchAgent"), avatar: "RA", color: "#f59e0b", lastAction: getLastAction("ResearchAgent"), skills: ["Reddit API", "HN Algolia", "Dev.to API", "GitHub Trending"] },
+    { name: "ValidationAgent", role: "Validation", desc: "Market validation & scoring", status: getAgentStatus("ValidationAgent"), avatar: "VA", color: "#ef4444", lastAction: getLastAction("ValidationAgent"), skills: ["Market Analysis", "Competition Gap", "Audience Profiling", "Scoring"] },
+    { name: "FrontendAgent", role: "Frontend", desc: "Psychology-driven UI design", status: getAgentStatus("FrontendAgent"), avatar: "FA", color: "#3b82f6", lastAction: getLastAction("FrontendAgent"), skills: ["UX Psychology", "Design Systems", "Conversion", "Responsive"] },
+    { name: "BackendAgent", role: "Backend", desc: "Working APIs & integrations", status: getAgentStatus("BackendAgent"), avatar: "BA", color: "#10b981", lastAction: getLastAction("BackendAgent"), skills: ["API Routes", "AI Integration", "Data Processing", "Auth"] },
+    { name: "PMAgent", role: "PM", desc: "Pipeline orchestration & QA", status: getAgentStatus("PMAgent"), avatar: "PM", color: "#8b5cf6", lastAction: getLastAction("PMAgent"), skills: ["Orchestration", "Quality Gate", "Deploy", "Monitoring"] },
   ];
 }
 
