@@ -676,18 +676,20 @@ class ResearchAgent {
     ];
 
     const subsToFetch = this.redditSubreddits;
-    const totalSubs = subsToFetch.length;
+    const MAX_SUBS = 30;          // fetch up to 30 subreddits per cycle
+    const MAX_PER_SUB = 8;        // cap posts per subreddit so no single sub dominates
+    const MAX_TOTAL = 200;        // overall ceiling
 
     for (const endpoint of endpoints) {
-      if (ideas.length >= 20) break; // We have enough
+      if (ideas.length >= MAX_TOTAL) break;
 
       // Process subs sequentially with rate limiting to avoid 429s
-      for (let subIdx = 0; subIdx < Math.min(10, subsToFetch.length); subIdx++) {
+      for (let subIdx = 0; subIdx < Math.min(MAX_SUBS, subsToFetch.length); subIdx++) {
         const sub = subsToFetch[subIdx];
-        if (ideas.length >= 50) break;
+        if (ideas.length >= MAX_TOTAL) break;
         await this.rateLimiter.wait();
 
-        await logger.agent(this.name, `Fetching r/${sub} (${subIdx + 1}/${Math.min(10, totalSubs)}) — ${ideas.length} posts so far`);
+        await logger.agent(this.name, `Fetching r/${sub} (${subIdx + 1}/${Math.min(MAX_SUBS, subsToFetch.length)}) — ${ideas.length} posts so far`);
 
         try {
           const url = `${endpoint.base}/r/${sub}/hot${endpoint.suffix}`;
@@ -718,6 +720,7 @@ class ResearchAgent {
           let subCount = 0;
 
           for (const post of posts) {
+            if (subCount >= MAX_PER_SUB) break; // cap per sub so no single subreddit dominates
             if (post.score >= 5 && (post.selftext || post.title)) {
               ideas.push({
                 title: post.title,
@@ -734,7 +737,7 @@ class ResearchAgent {
               subCount++;
             }
           }
-          await logger.agent(this.name, `r/${sub} → ${subCount} posts (score≥5), running total: ${ideas.length}`);
+          await logger.agent(this.name, `r/${sub} → ${subCount} posts (score≥5, capped at ${MAX_PER_SUB}), running total: ${ideas.length}`);
         } catch (err) {
           await logger.agent(this.name, `r/${sub} fetch error: ${String(err).slice(0, 80)}`);
           // Silently skip individual sub failures
@@ -768,11 +771,13 @@ class ResearchAgent {
     if (!authResp.ok) throw new Error(`Reddit OAuth ${authResp.status}`);
     const { access_token } = await authResp.json();
 
+    const OAUTH_MAX_PER_SUB = 8;
     // Process subreddits with rate limiting
     for (const sub of this.redditSubreddits) {
+      if (ideas.length >= 200) break;
       await this.rateLimiter.wait();
       try {
-        const resp = await fetch(`https://oauth.reddit.com/r/${sub}/hot?limit=30`, {
+        const resp = await fetch(`https://oauth.reddit.com/r/${sub}/hot?limit=25`, {
           headers: {
             'Authorization': `Bearer ${access_token}`,
             'User-Agent': 'MVPFactory/2.0 by mvp-factory',
@@ -782,7 +787,9 @@ class ResearchAgent {
 
         if (resp.ok) {
           const data = await resp.json();
+          let subCount = 0;
           for (const child of (data?.data?.children || [])) {
+            if (subCount >= OAUTH_MAX_PER_SUB) break;
             const post = child.data;
             if (post.score >= 5) {
               ideas.push({
@@ -797,6 +804,7 @@ class ResearchAgent {
                 painLevel: post.score > 100 ? 'severe' : post.score > 30 ? 'moderate' : 'mild',
                 tags: [sub],
               });
+              subCount++;
             }
           }
         }
