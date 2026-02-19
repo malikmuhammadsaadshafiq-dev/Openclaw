@@ -586,8 +586,16 @@ body{
 .d1{animation-delay:0.04s}.d2{animation-delay:0.08s}.d3{animation-delay:0.12s}
 .d4{animation-delay:0.16s}.d5{animation-delay:0.2s}.d6{animation-delay:0.24s}
 .d7{animation-delay:0.28s}.d8{animation-delay:0.32s}
-@keyframes count-pop{0%{transform:scale(1)}50%{transform:scale(1.12)}100%{transform:scale(1)}}
-.count-changed{animation:count-pop 0.3s var(--ease-spring)}
+@keyframes count-pop{0%{transform:scale(1)}50%{transform:scale(1.15)}100%{transform:scale(1)}}
+.count-changed{animation:count-pop 0.35s var(--ease-spring)}
+@keyframes card-live-pulse{0%,100%{box-shadow:0 0 0 0 rgba(139,92,246,0)}50%{box-shadow:0 0 0 3px rgba(139,92,246,0.25)}}
+.card-updated{animation:card-live-pulse 0.6s var(--ease-out)}
+@keyframes val-glow{0%{text-shadow:0 0 0 transparent}40%{text-shadow:0 0 12px rgba(139,92,246,0.6)}100%{text-shadow:none}}
+.stat-value.count-changed{animation:count-pop 0.35s var(--ease-spring),val-glow 0.6s var(--ease-out)}
+/* Live indicator dot */
+.live-dot{width:7px;height:7px;border-radius:50%;background:#10b981;display:inline-block;margin-right:4px;box-shadow:0 0 0 0 rgba(16,185,129,0.5);animation:live-ping 2s ease-in-out infinite}
+.live-dot.disconnected{background:#ef4444;animation:none;box-shadow:none}
+@keyframes live-ping{0%,100%{box-shadow:0 0 0 0 rgba(16,185,129,0.5)}50%{box-shadow:0 0 0 5px rgba(16,185,129,0)}}
 @keyframes spin{to{transform:rotate(360deg)}}
 /* Subtle glow pulse for active elements */
 @keyframes glow-pulse{0%,100%{box-shadow:0 0 12px rgba(139,92,246,0.1)}50%{box-shadow:0 0 24px rgba(139,92,246,0.2)}}
@@ -719,7 +727,7 @@ body{
       </div>
       <span class="sys-badge" id="sysMem" title="Daemon memory"></span>
       <span class="sys-badge" id="sysLoad" title="System load"></span>
-      <span class="meta-time" id="lastUpdate"></span>
+      <span class="live-dot" id="liveDot" title="SSE stream status"></span><span class="meta-time" id="lastUpdate"></span>
       <button class="topbar-btn" onclick="doRefresh()" id="refreshBtn" title="Refresh">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
       </button>
@@ -1050,7 +1058,36 @@ document.addEventListener("mousemove",e=>{document.querySelectorAll(".card").for
 
 /* ========== ANIMATED COUNTER ========== */
 const prevVals={};
-function setVal(id,val){const el=document.getElementById(id);if(!el)return;const s=String(val);if(prevVals[id]!==s){el.textContent=s;el.classList.remove("count-changed");void el.offsetWidth;el.classList.add("count-changed");prevVals[id]=s}}
+function animateNum(el,from,to,duration=700){
+  if(from===to)return;
+  const start=performance.now();
+  const diff=to-from;
+  const step=now=>{
+    const t=Math.min((now-start)/duration,1);
+    const ease=1-Math.pow(1-t,3);
+    el.textContent=Math.round(from+diff*ease);
+    if(t<1)requestAnimationFrame(step);
+    else el.textContent=to;
+  };
+  requestAnimationFrame(step);
+}
+function setVal(id,val){
+  const el=document.getElementById(id);if(!el)return;
+  const s=String(val);
+  if(prevVals[id]===s)return;
+  const oldNum=parseInt(prevVals[id]);
+  const newNum=parseInt(s);
+  if(!isNaN(oldNum)&&!isNaN(newNum)&&oldNum!==newNum&&prevVals[id]!==undefined){
+    animateNum(el,oldNum,newNum);
+  }else{
+    el.textContent=s;
+  }
+  el.classList.remove("count-changed");void el.offsetWidth;el.classList.add("count-changed");
+  // Flash the parent card too
+  const card=el.closest(".stat-card,.card");
+  if(card){card.classList.remove("card-updated");void card.offsetWidth;card.classList.add("card-updated")}
+  prevVals[id]=s;
+}
 
 /* ========== NAVIGATION ========== */
 let currentPage="dashboard";
@@ -1275,175 +1312,6 @@ async function api(path){try{const r=await fetch(path);return await r.json()}cat
 
 /* ========== MAIN REFRESH ========== */
 let firstLoad=true;
-async function refreshAll(){
-  const [status,stats,queue,built,logs,current,sys,signals,squadron,pipeProgress,validated]=await Promise.all([
-    api("/api/status"),api("/api/stats"),api("/api/queue"),
-    api("/api/built"),api("/api/logs"),api("/api/current"),api("/api/system"),
-    api("/api/signals"),api("/api/squadron"),api("/api/pipeline-progress"),api("/api/validated"),
-  ]);
-
-  // Status
-  if(status){
-    const dot=document.getElementById("sDot");const txt=document.getElementById("sText");
-    const cls=status.status==="active"?"green":status.status==="activating"?"amber":"red";
-    dot.className="status-dot "+cls;
-    txt.textContent=status.status==="active"?"Running":status.status;
-    document.getElementById("sysMem").textContent=status.memory||"";
-    document.getElementById("sysMem").style.display=status.memory?"inline":"none";
-  }
-  if(sys){const loadEl=document.getElementById("sysLoad");if(sys.load){loadEl.textContent="Load: "+sys.load;loadEl.style.display="inline"}else loadEl.style.display="none"}
-
-  // Stats — vTotal is overwritten by built.length below for accuracy
-  if(stats){
-    setVal("vTotal",stats.totalBuilt||0);
-    setVal("vWeb",stats.webCount||0);
-    setVal("vSaas",stats.saasCount||0);
-    setVal("vMobile",stats.mobileCount||0);
-    setVal("vExtension",stats.extensionCount||0);
-    setVal("vApi",stats.apiCount||0);
-    setVal("vLive",stats.liveCount||0);
-    document.getElementById("subTotal").textContent=stats.githubCount?(stats.githubCount+" on GitHub"):"unique products";
-    document.getElementById("subWeb").textContent=stats.buildsToday?(stats.buildsToday+" built today"):"Next.js projects";
-    document.getElementById("subLive").textContent=stats.lastBuildAt?("Last: "+relTime(stats.lastBuildAt)):"deployed";
-    // Show dir vs JSON discrepancy hint in subTotal if significant
-    if(stats.dirProjectCount&&stats.dirProjectCount>stats.jsonMetadataCount+5){
-      document.getElementById("subTotal").textContent=stats.githubCount+" on GitHub ("+stats.dirProjectCount+" dirs)";
-    }
-  }
-
-  // Validated Queue — show validated ideas as the primary build queue
-  const vQueue=(validated&&validated.length)?validated:[];
-  const rawQueueLen=queue?queue.length:0;
-  setVal("vQueue",vQueue.length);
-  document.getElementById("pipeCount").textContent=vQueue.length+" validated";
-  document.getElementById("navQueueCount").textContent=vQueue.length;
-  document.getElementById("fullPipeCount").textContent=vQueue.length+" validated"+(rawQueueLen?" | "+rawQueueLen+" raw":"");
-  const renderValidatedQ=(el,limit)=>{
-    if(!vQueue.length){el.innerHTML='<div class="empty"><div class="empty-icon">&#9989;</div>No validated ideas yet &mdash; awaiting research cycle</div>';return}
-    el.innerHTML=vQueue.slice(0,limit).map((idea,i)=>{
-      const v=idea.validation||{};const score=v.overallScore||0;const pct=Math.min(100,(score/10)*100);
-      const src=idea.sourcePlatform||"reddit";
-      const srcColor=src==="hackernews"?"#ff6600":src==="devto"?"#60a5fa":"#ff6200";
-      const srcLabel=src==="hackernews"?"HN":src==="devto"?"Dev.to":"Reddit";
-      const verdictColor=(v.verdict==="build")?"#10b981":(v.verdict==="revisit")?"#f59e0b":"#ef4444";
-      const subScores=v.marketDemand?('<span title="Market demand">&#128200; '+v.marketDemand+'</span>'+'<span title="Competition gap">&#129354; '+v.competitionGap+'</span>'+'<span title="Feasibility">&#9881; '+v.technicalFeasibility+'</span>'):'';
-      const angle=v.uniqueAngle?('<div style="font-size:0.65rem;color:#a78bfa;margin-top:0.15rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px" title="'+esc(v.uniqueAngle)+'">&#9889; '+esc((v.uniqueAngle||'').slice(0,60))+'</div>'):'';
-      return'<div class="list-item" style="animation:fade-in-up 0.4s var(--ease-out-expo) '+(i*0.03)+'s both">'
-       +'<span class="list-rank">'+(i+1)+'</span>'
-       +'<span style="font-size:0.55rem;font-weight:700;padding:0.1rem 0.35rem;border-radius:4px;background:'+srcColor+'18;color:'+srcColor+';border:1px solid '+srcColor+'33;white-space:nowrap">'+srcLabel+'</span>'
-       +'<span class="badge '+badgeCls(idea.type)+'">'+badgeLbl(idea.type)+'</span>'
-       +'<div class="list-info"><div class="list-title" title="'+esc(idea.title||'')+'">'+esc(idea.title||'Untitled')+'</div>'
-       +'<div class="list-meta">'+( idea.features?'<span>'+idea.features.length+' features</span>':'')+( idea.estimatedHours?'<span>~'+idea.estimatedHours+'h</span>':'')+subScores+'</div>'
-       +angle+'</div>'
-       +'<div class="score-wrap"><span class="score-num" style="color:'+verdictColor+'">'+score.toFixed(1)+'</span>'
-       +'<div class="score-bar"><div class="score-fill '+scoreCls(pct)+'" style="width:'+pct+'%"></div></div>'
-       +'<span style="font-size:0.55rem;color:'+verdictColor+';font-weight:600;text-transform:uppercase;margin-top:0.1rem">'+(v.verdict||'build')+'</span></div>'
-       +'</div>';
-    }).join("")
-  };
-  renderValidatedQ(document.getElementById("queueList"),40);
-  renderValidatedQ(document.getElementById("fullQueueList"),100);
-
-  // Built
-  if(built){
-    setVal("vTotal",built.length);
-    const renderB=(el,limit)=>{
-      if(!built.length){el.innerHTML='<div class="empty"><div class="empty-icon">&#128640;</div>No builds shipped yet</div>';return}
-      el.innerHTML=built.slice(0,limit).map((b,i)=>{
-        let links='<div class="link-row">';
-        if(b.githubUrl)links+='<a href="'+esc(b.githubUrl)+'" target="_blank" class="link-btn" title="GitHub">GH</a>';
-        if(b.liveUrl||b.vercelUrl)links+='<a href="'+esc(b.liveUrl||b.vercelUrl)+'" target="_blank" class="link-btn link-live" title="Live">&#9889;</a>';
-        links+='</div>';
-        const dirBadge=b._dirOnly?'<span style="font-size:0.5rem;padding:0.1rem 0.3rem;border-radius:3px;background:rgba(139,92,246,0.15);color:#a78bfa;border:1px solid rgba(139,92,246,0.2)">dir</span>':'';
-        const score=b._dirOnly?'—':(b.functionalityScore||b.qualityScore||'?');
-        const time=b.builtAt?relTime(b.builtAt):'';
-        return'<div class="list-item" style="animation:fade-in-up 0.4s var(--ease-out-expo) '+(i*0.03)+'s both">'
-          +'<span class="list-rank">'+(i+1)+'</span>'
-          +'<span class="badge '+badgeCls(b.type)+'">'+badgeLbl(b.type)+'</span>'
-          +dirBadge
-          +'<div class="list-info"><div class="list-title" title="'+esc(b.title||"")+'">'+esc(b.title||"Untitled")+'</div>'
-          +'<div class="list-meta">'+(b._dirOnly?'<span style="color:#4a5568">no metadata</span>':'<span>Score: '+score+'/8</span>')+(time?'<span>'+time+'</span>':'')+'</div>'
-          +'</div>'+links+'</div>'
-      }).join("")
-    };
-    renderB(document.getElementById("builtList"),25);
-    renderB(document.getElementById("fullBuiltList"),200);
-  }
-
-  // Current Build
-  const card=document.getElementById("currentCard");const content=document.getElementById("currentContent");const phase=document.getElementById("buildPhase");
-  if(current){
-    card.classList.add("active");phase.textContent="building";phase.style.color="#a78bfa";
-    content.innerHTML='<div class="build-active"><div class="build-spinner"></div><div class="build-info"><h3>'+esc(current.title)+'</h3><p>Started '+relTime(current.startedAt)+' &bull; Generating code, testing, deploying...</p></div></div><div class="build-progress"><div class="build-progress-bar"></div></div>';
-  }else{
-    card.classList.remove("active");phase.textContent="idle";phase.style.color="";
-    content.innerHTML='<div class="build-idle"><div class="idle-icon">&#128564;</div><div class="idle-text">Idle &mdash; waiting for next build cycle</div><div class="idle-sub">The daemon checks the queue every 30 minutes</div></div>';
-  }
-
-  // Logs - store raw + render with agent formatting and filter
-  if(logs&&logs.length){
-    rawLogs=logs;
-    renderFilteredLogs("logViewer");
-    renderFilteredLogs("fullLogViewer");
-  }
-
-  // Squadron agents (dynamic 5-agent cards)
-  if(squadron&&squadron.length){
-    squadronData=squadron;
-    renderSquadronCards();
-    if(currentPage==="agents")renderAgentsPage();
-  }
-
-  // Signals (multi-source)
-  if(signals){
-    const allSigs=signals.signals||[];
-    window._allSignals=allSigs;
-    if(document.getElementById("vSignals"))setVal("vSignals",allSigs.length);
-    if(document.getElementById("subSignals"))document.getElementById("subSignals").textContent=allSigs.length>0?"Multi-source":"no data";
-    const kwCount=allSigs.filter(s=>s.keywords&&s.keywords.length>0).length;
-    const uniqueSources=[...new Set(allSigs.map(s=>s.source||"reddit"))];
-    setVal("sigTotal",allSigs.length);setVal("sigKw",kwCount);setVal("sigSubs",uniqueSources.length);setVal("sigFiles",signals.totalFiles||0);
-    document.getElementById("sigCount").textContent=allSigs.length+" signals";
-    document.getElementById("flowSource").textContent=allSigs.length>0?"Multi-source":"AI-only";
-    const src=signals.sources||{};
-    const srcREl=document.getElementById("srcCountReddit");if(srcREl)srcREl.textContent=src.reddit?"("+src.reddit+")":"";
-    const srcHEl=document.getElementById("srcCountHN");if(srcHEl)srcHEl.textContent=src.hackernews?"("+src.hackernews+")":"";
-    const srcDEl=document.getElementById("srcCountDevto");if(srcDEl)srcDEl.textContent=src.devto?"("+src.devto+")":"";
-    renderSignalList(allSigs, window._activeSignalFilter||"all");
-    const chartEl=document.getElementById("subChart");
-    if(allSigs.length){
-      const subCounts={};
-      allSigs.forEach(s=>{const lbl=s.source==="hackernews"?"Hacker News":s.source==="devto"?(s.subreddit||"Dev.to"):(s.subreddit?"r/"+s.subreddit:"Reddit");subCounts[lbl]=(subCounts[lbl]||0)+1;});
-      const sorted=Object.entries(subCounts).sort((a,b)=>b[1]-a[1]).slice(0,12);
-      const max=sorted[0]?sorted[0][1]:1;
-      chartEl.innerHTML=sorted.map(([name,count])=>{const pct=Math.round((count/max)*100);const clr=name==="Hacker News"?"#ff6600":(name.startsWith("Dev.to")||(!name.startsWith("r/")))?"#60a5fa":"#ff6200";return'<div class="sub-row"><span class="sub-name" style="max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(name)+'">'+esc(name)+'</span><div class="sub-bar-wrap"><div class="sub-bar" style="width:'+pct+'%;background:'+clr+'"></div></div><span class="sub-count">'+count+'</span></div>';}).join("")
-    }else{chartEl.innerHTML='<div class="empty" style="padding:1rem"><div class="empty-icon">&#128202;</div>No data yet</div>'}
-  }
-
-  document.getElementById("lastUpdate").textContent=new Date().toLocaleTimeString();
-  // Pipeline activity banner
-  if(pipeProgress){
-    const banner=document.getElementById("pipelineActivityBanner");
-    const isActive=pipeProgress.phase!=="idle";
-    banner.style.display=isActive?"flex":"none";
-    if(isActive){
-      banner.className="pipeline-activity "+pipeProgress.phase+" ani";
-      document.getElementById("paPhase").textContent=pipeProgress.phase;
-      const detailEl=document.getElementById("paDetail");
-      const action=pipeProgress.currentAction||pipeProgress.detail||"";
-      detailEl.textContent=action;
-      detailEl.title=action;
-      const cnt=document.getElementById("paCount");
-      if(pipeProgress.stats){
-        const s=pipeProgress.stats;
-        cnt.textContent=(s.validated!=null?s.validated+" ok":"")+(s.rejected!=null?" | "+s.rejected+" rej":"")+(s.found!=null?" / "+s.found:"");
-      } else {
-        cnt.textContent=pipeProgress.ideaCount?(pipeProgress.ideaCount+" ideas"):"";
-      }
-    }
-  }
-
-  if(firstLoad){firstLoad=false;toast("Dashboard connected");loadSkills().then(()=>{renderSkills();document.getElementById("navSkillCount").textContent=skillsData.length})}
 }
 
 window._activeSignalFilter="all";
@@ -1497,9 +1365,243 @@ function doRefresh(){
 // Mobile detection
 if(window.innerWidth<=1024){document.getElementById("mobileMenuBtn").style.display="flex";document.getElementById("sidebar").classList.add("collapsed")}
 
+/* ========== SSE REAL-TIME STREAM ========== */
+let sseActive=false;
+let sseRetryCount=0;
+const MAX_SSE_RETRIES=8;
+
+function applySSEEvent(type,data){
+  try{
+    switch(type){
+      case"status":
+        if(data){const dot=document.getElementById("sDot"),txt=document.getElementById("sText");const cls=data.status==="active"?"green":data.status==="activating"?"amber":"red";dot.className="status-dot "+cls;txt.textContent=data.status==="active"?"Running":data.status;const m=document.getElementById("sysMem");if(m){m.textContent=data.memory||"";m.style.display=data.memory?"inline":"none"}}
+        break;
+      case"stats":
+        if(data){
+          setVal("vTotal",data.totalBuilt||0);setVal("vWeb",data.webCount||0);setVal("vSaas",data.saasCount||0);
+          setVal("vMobile",data.mobileCount||0);setVal("vExtension",data.extensionCount||0);setVal("vApi",data.apiCount||0);
+          setVal("vLive",data.liveCount||0);
+          const st=document.getElementById("subTotal");if(st)st.textContent=data.githubCount?(data.githubCount+" on GitHub"):"unique products";
+          if(data.dirProjectCount&&data.dirProjectCount>data.jsonMetadataCount+5&&st)st.textContent=data.githubCount+" on GitHub ("+data.dirProjectCount+" dirs)";
+        }
+        break;
+      case"validated":
+        if(Array.isArray(data)){
+          const vq=data;setVal("vQueue",vq.length);
+          const pc=document.getElementById("pipeCount");if(pc)pc.textContent=vq.length+" validated";
+          const nb=document.getElementById("navQueueCount");if(nb)nb.textContent=vq.length;
+          renderValidatedQ(document.getElementById("queueList"),40);
+          renderValidatedQ(document.getElementById("fullQueueList"),100);
+          window._validatedData=vq;
+        }
+        break;
+      case"built":
+        if(Array.isArray(data)){
+          window._builtData=data;setVal("vTotal",data.length);
+          renderBuiltList(document.getElementById("builtList"),25);
+          renderBuiltList(document.getElementById("fullBuiltList"),200);
+        }
+        break;
+      case"logs":
+        if(Array.isArray(data)&&JSON.stringify(data)!==window._lastLogsHash){
+          window._lastLogsHash=JSON.stringify(data.slice(-5));
+          rawLogs=data;renderFilteredLogs("logViewer");renderFilteredLogs("fullLogViewer");
+        }
+        break;
+      case"progress":
+        if(data){applyPipelineProgress(data)}
+        break;
+      case"current":
+        if(data!==undefined){applyCurrentBuild(data)}
+        break;
+      case"signals":
+        if(data){applySignals(data)}
+        break;
+      case"squadron":
+        if(Array.isArray(data)&&data.length){squadronData=data;renderSquadronCards();if(currentPage==="agents")renderAgentsPage()}
+        break;
+    }
+    document.getElementById("lastUpdate").textContent=new Date().toLocaleTimeString();
+  }catch(e){}
+}
+
+function connectSSE(){
+  const es=new EventSource("/api/stream");
+  const dot=document.getElementById("liveDot");
+
+  es.onopen=()=>{
+    sseActive=true;sseRetryCount=0;
+    if(dot){dot.classList.remove("disconnected");dot.title="Live (SSE)"}
+  };
+
+  ["status","stats","validated","built","logs","progress","current","signals","squadron"].forEach(ev=>{
+    es.addEventListener(ev,e=>{
+      try{applySSEEvent(ev,JSON.parse(e.data))}catch{}
+    });
+  });
+
+  es.onerror=()=>{
+    sseActive=false;
+    if(dot){dot.classList.add("disconnected");dot.title="Polling (SSE disconnected)"}
+    es.close();
+    sseRetryCount++;
+    if(sseRetryCount<=MAX_SSE_RETRIES){
+      const delay=Math.min(2000*Math.pow(1.5,sseRetryCount-1),30000);
+      setTimeout(connectSSE,delay);
+    }
+  };
+}
+
+/* ========== ADAPTIVE POLLING (fallback + supplement when SSE active) ========== */
+// Extract shared rendering functions so both SSE events and polling can call them
+function renderValidatedQ(el,limit){
+  const vQueue=window._validatedData||[];
+  if(!el)return;
+  if(!vQueue.length){el.innerHTML='<div class="empty"><div class="empty-icon">&#9989;</div>No validated ideas yet &mdash; awaiting research cycle</div>';return}
+  el.innerHTML=vQueue.slice(0,limit).map((idea,i)=>{
+    const v=idea.validation||{};const score=v.overallScore||0;const pct=Math.min(100,(score/10)*100);
+    const src=idea.sourcePlatform||"reddit";
+    const srcColor=src==="hackernews"?"#ff6600":src==="devto"?"#60a5fa":"#ff6200";
+    const srcLabel=src==="hackernews"?"HN":src==="devto"?"Dev.to":"Reddit";
+    const verdictColor=(v.verdict==="build")?"#10b981":(v.verdict==="revisit")?"#f59e0b":"#ef4444";
+    const subScores=v.marketDemand?('<span title="Market demand">&#128200; '+v.marketDemand+'</span>'+'<span title="Competition gap">&#129354; '+v.competitionGap+'</span>'+'<span title="Feasibility">&#9881; '+v.technicalFeasibility+'</span>'):'';
+    const angle=v.uniqueAngle?('<div style="font-size:0.65rem;color:#a78bfa;margin-top:0.15rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px" title="'+esc(v.uniqueAngle)+'">&#9889; '+esc((v.uniqueAngle||'').slice(0,60))+'</div>'):'';
+    return'<div class="list-item" style="animation:fade-in-up 0.4s var(--ease-out-expo) '+(i*0.03)+'s both">'
+     +'<span class="list-rank">'+(i+1)+'</span>'
+     +'<span style="font-size:0.55rem;font-weight:700;padding:0.1rem 0.35rem;border-radius:4px;background:'+srcColor+'18;color:'+srcColor+';border:1px solid '+srcColor+'33;white-space:nowrap">'+srcLabel+'</span>'
+     +'<span class="badge '+badgeCls(idea.type)+'">'+badgeLbl(idea.type)+'</span>'
+     +'<div class="list-info"><div class="list-title" title="'+esc(idea.title||'')+'">'+esc(idea.title||'Untitled')+'</div>'
+     +'<div class="list-meta">'+( idea.features?'<span>'+idea.features.length+' features</span>':'')+( idea.estimatedHours?'<span>~'+idea.estimatedHours+'h</span>':'')+subScores+'</div>'
+     +angle+'</div>'
+     +'<div class="score-wrap"><span class="score-num" style="color:'+verdictColor+'">'+score.toFixed(1)+'</span>'
+     +'<div class="score-bar"><div class="score-fill '+scoreCls(pct)+'" style="width:'+pct+'%"></div></div>'
+     +'<span style="font-size:0.55rem;color:'+verdictColor+';font-weight:600;text-transform:uppercase;margin-top:0.1rem">'+(v.verdict||'build')+'</span></div>'
+     +'</div>';
+  }).join("")
+}
+
+function renderBuiltList(el,limit){
+  const built=window._builtData||[];
+  if(!el)return;
+  if(!built.length){el.innerHTML='<div class="empty"><div class="empty-icon">&#128640;</div>No builds shipped yet</div>';return}
+  el.innerHTML=built.slice(0,limit).map((b,i)=>{
+    let links='<div class="link-row">';
+    if(b.githubUrl)links+='<a href="'+esc(b.githubUrl)+'" target="_blank" class="link-btn" title="GitHub">GH</a>';
+    if(b.liveUrl||b.vercelUrl)links+='<a href="'+esc(b.liveUrl||b.vercelUrl)+'" target="_blank" class="link-btn link-live" title="Live">&#9889;</a>';
+    links+='</div>';
+    const dirBadge=b._dirOnly?'<span style="font-size:0.5rem;padding:0.1rem 0.3rem;border-radius:3px;background:rgba(139,92,246,0.15);color:#a78bfa;border:1px solid rgba(139,92,246,0.2)">dir</span>':'';
+    const score=b._dirOnly?'—':(b.functionalityScore||b.qualityScore||'?');
+    const time=b.builtAt?relTime(b.builtAt):'';
+    return'<div class="list-item" style="animation:fade-in-up 0.4s var(--ease-out-expo) '+(i*0.03)+'s both">'
+      +'<span class="list-rank">'+(i+1)+'</span>'
+      +'<span class="badge '+badgeCls(b.type)+'">'+badgeLbl(b.type)+'</span>'
+      +dirBadge
+      +'<div class="list-info"><div class="list-title" title="'+esc(b.title||"")+'">'+esc(b.title||"Untitled")+'</div>'
+      +'<div class="list-meta">'+(b._dirOnly?'<span style="color:#4a5568">no metadata</span>':'<span>Score: '+score+'/8</span>')+(time?'<span>'+time+'</span>':'')+'</div>'
+      +'</div>'+links+'</div>'
+  }).join("")
+}
+
+function applyPipelineProgress(pipeProgress){
+  const banner=document.getElementById("pipelineActivityBanner");if(!banner)return;
+  const isActive=pipeProgress.phase!=="idle";
+  banner.style.display=isActive?"flex":"none";
+  if(isActive){
+    banner.className="pipeline-activity "+pipeProgress.phase+" ani";
+    document.getElementById("paPhase").textContent=pipeProgress.phase;
+    const detailEl=document.getElementById("paDetail");
+    const action=pipeProgress.currentAction||pipeProgress.detail||"";
+    detailEl.textContent=action;detailEl.title=action;
+    const cnt=document.getElementById("paCount");
+    if(pipeProgress.stats){const s=pipeProgress.stats;cnt.textContent=(s.validated!=null?s.validated+" ok":"")+(s.rejected!=null?" | "+s.rejected+" rej":"")+(s.found!=null?" / "+s.found:"");}
+    else cnt.textContent=pipeProgress.ideaCount?(pipeProgress.ideaCount+" ideas"):"";
+  }
+  // Adaptive polling: faster when pipeline is active
+  updatePollInterval(isActive?4000:15000);
+}
+
+function applyCurrentBuild(current){
+  const card=document.getElementById("currentCard");const content=document.getElementById("currentContent");const phase=document.getElementById("buildPhase");
+  if(!card)return;
+  if(current){
+    card.classList.add("active");phase.textContent="building";phase.style.color="#a78bfa";
+    content.innerHTML='<div class="build-active"><div class="build-spinner"></div><div class="build-info"><h3>'+esc(current.title)+'</h3><p>Started '+relTime(current.startedAt)+' &bull; Generating code, testing, deploying...</p></div></div><div class="build-progress"><div class="build-progress-bar"></div></div>';
+    updatePollInterval(4000);
+  }else{
+    card.classList.remove("active");phase.textContent="idle";phase.style.color="";
+    content.innerHTML='<div class="build-idle"><div class="idle-icon">&#128564;</div><div class="idle-text">Idle &mdash; waiting for next build cycle</div><div class="idle-sub">The daemon checks the queue every 30 minutes</div></div>';
+  }
+}
+
+function applySignals(signals){
+  const allSigs=signals.signals||[];
+  window._allSignals=allSigs;
+  if(document.getElementById("vSignals"))setVal("vSignals",allSigs.length);
+  if(document.getElementById("subSignals"))document.getElementById("subSignals").textContent=allSigs.length>0?"Multi-source":"no data";
+  const kwCount=allSigs.filter(s=>s.keywords&&s.keywords.length>0).length;
+  const uniqueSources=[...new Set(allSigs.map(s=>s.source||"reddit"))];
+  setVal("sigTotal",allSigs.length);setVal("sigKw",kwCount);setVal("sigSubs",uniqueSources.length);setVal("sigFiles",signals.totalFiles||0);
+  const sc=document.getElementById("sigCount");if(sc)sc.textContent=allSigs.length+" signals";
+  const fs2=document.getElementById("flowSource");if(fs2)fs2.textContent=allSigs.length>0?"Multi-source":"AI-only";
+  const src=signals.sources||{};
+  const srcREl=document.getElementById("srcCountReddit");if(srcREl)srcREl.textContent=src.reddit?"("+src.reddit+")":"";
+  const srcHEl=document.getElementById("srcCountHN");if(srcHEl)srcHEl.textContent=src.hackernews?"("+src.hackernews+")":"";
+  const srcDEl=document.getElementById("srcCountDevto");if(srcDEl)srcDEl.textContent=src.devto?"("+src.devto+")":"";
+  renderSignalList(allSigs,window._activeSignalFilter||"all");
+  const chartEl=document.getElementById("subChart");
+  if(allSigs.length&&chartEl){
+    const subCounts={};
+    allSigs.forEach(s=>{const lbl=s.source==="hackernews"?"Hacker News":s.source==="devto"?(s.subreddit||"Dev.to"):(s.subreddit?"r/"+s.subreddit:"Reddit");subCounts[lbl]=(subCounts[lbl]||0)+1;});
+    const sorted=Object.entries(subCounts).sort((a,b)=>b[1]-a[1]).slice(0,12);
+    const max=sorted[0]?sorted[0][1]:1;
+    chartEl.innerHTML=sorted.map(([name,count])=>{const pct=Math.round((count/max)*100);const clr=name==="Hacker News"?"#ff6600":(name.startsWith("Dev.to")||(!name.startsWith("r/")))?"#60a5fa":"#ff6200";return'<div class="sub-row"><span class="sub-name" style="max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(name)+'">'+esc(name)+'</span><div class="sub-bar-wrap"><div class="sub-bar" style="width:'+pct+'%;background:'+clr+'"></div></div><span class="sub-count">'+count+'</span></div>';}).join("")
+  }else if(chartEl){chartEl.innerHTML='<div class="empty" style="padding:1rem"><div class="empty-icon">&#128202;</div>No data yet</div>'}
+}
+
+/* ========== ADAPTIVE POLL INTERVAL ========== */
+let _pollInterval=12000;
+let _pollTimer=null;
+function updatePollInterval(ms){
+  if(_pollInterval===ms)return;
+  _pollInterval=ms;
+  clearInterval(_pollTimer);
+  _pollTimer=setInterval(()=>{if(!sseActive)refreshAll();},_pollInterval);
+}
+
+/* ========== MAIN REFRESH (polling fallback) ========== */
+let _refreshing=false;
+async function refreshAll(){
+  if(_refreshing)return;
+  _refreshing=true;
+  try{
+    const results=await Promise.allSettled([
+      api("/api/status"),api("/api/stats"),api("/api/validated"),
+      api("/api/built"),api("/api/logs"),api("/api/current"),api("/api/system"),
+      api("/api/signals"),api("/api/squadron"),api("/api/pipeline-progress"),
+    ]);
+    const [status,stats,validated,built,logs,current,sys,signals,squadron,pipeProgress]=results.map(r=>r.status==="fulfilled"?r.value:null);
+
+    if(status)applySSEEvent("status",status);
+    if(stats)applySSEEvent("stats",stats);
+    if(validated)applySSEEvent("validated",validated);
+    if(built){window._builtData=built;setVal("vTotal",built.length);renderBuiltList(document.getElementById("builtList"),25);renderBuiltList(document.getElementById("fullBuiltList"),200);}
+    if(logs){rawLogs=logs;renderFilteredLogs("logViewer");renderFilteredLogs("fullLogViewer");}
+    if(current)applyCurrentBuild(current);
+    if(sys){const loadEl=document.getElementById("sysLoad");if(sys.load){loadEl.textContent="Load: "+sys.load;loadEl.style.display="inline"}else loadEl.style.display="none"}
+    if(signals)applySignals(signals);
+    if(squadron&&squadron.length){squadronData=squadron;renderSquadronCards();if(currentPage==="agents")renderAgentsPage();}
+    if(pipeProgress)applyPipelineProgress(pipeProgress);
+
+    document.getElementById("lastUpdate").textContent=new Date().toLocaleTimeString();
+    if(firstLoad){firstLoad=false;toast("Dashboard connected");loadSkills().then(()=>{renderSkills();document.getElementById("navSkillCount").textContent=skillsData.length})}
+  }finally{_refreshing=false;}
+}
+
 // Init
 refreshAll();
-setInterval(refreshAll,12000);
+connectSSE();
+// Polling fallback — only fires if SSE is not active
+_pollTimer=setInterval(()=>{if(!sseActive)refreshAll();},_pollInterval);
 </script>
 </body>
 </html>

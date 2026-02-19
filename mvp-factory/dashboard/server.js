@@ -536,8 +536,101 @@ function getHTML() {
   return HTML_CACHE;
 }
 
+// ── SSE broadcast registry ──────────────────────────────────────────────────
+const sseClients = new Set();
+
+function sseWrite(res, event, data) {
+  try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch {}
+}
+
+function broadcast(event, data) {
+  for (const res of sseClients) sseWrite(res, event, data);
+}
+
+// Debounced file watcher — fires once per burst of writes
+let watchDebounceTimer = null;
+function onFileChange() {
+  clearTimeout(watchDebounceTimer);
+  watchDebounceTimer = setTimeout(() => {
+    if (!sseClients.size) return;
+    broadcast("progress", readPipelineProgress());
+    broadcast("logs",     readLogs(200));
+    broadcast("stats",    readStats());
+    broadcast("status",   getDaemonStatus());
+    broadcast("validated", getValidatedQueue());
+    broadcast("built",    readAllBuilt());
+    broadcast("current",  getCurrentBuild());
+  }, 300);
+}
+
+// Watch log file and pipeline-progress.json for changes
+const watchTargets = [PATHS.logsV11, PATHS.logs, PATHS.pipelineProgress];
+for (const target of watchTargets) {
+  try {
+    fs.watch(target, { persistent: false }, onFileChange);
+  } catch {
+    // File may not exist yet on first run — retry after a delay
+    setTimeout(() => {
+      try { fs.watch(target, { persistent: false }, onFileChange); } catch {}
+    }, 15000);
+  }
+}
+
+// Also watch the built + validated dirs so card counts update on new files
+for (const dir of [PATHS.built, PATHS.validated, PATHS.ideas]) {
+  try { fs.watch(dir, { persistent: false }, onFileChange); } catch {}
+}
+
+// ── HTTP server ─────────────────────────────────────────────────────────────
 const server = http.createServer((req, res) => {
   const url = req.url.split("?")[0];
+
+  // ── SSE stream endpoint ──────────────────────────────────────────────────
+  if (url === "/api/stream") {
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+      "X-Accel-Buffering": "no",  // nginx: disable buffering
+    });
+    res.write(": connected\n\n");
+
+    // Push full state on connect
+    sseWrite(res, "status",    getDaemonStatus());
+    sseWrite(res, "stats",     readStats());
+    sseWrite(res, "progress",  readPipelineProgress());
+    sseWrite(res, "logs",      readLogs(200));
+    sseWrite(res, "validated", getValidatedQueue());
+    sseWrite(res, "built",     readAllBuilt());
+    sseWrite(res, "current",   getCurrentBuild());
+    sseWrite(res, "signals",   readLatestSignals());
+    sseWrite(res, "squadron",  getSquadronAgents());
+
+    sseClients.add(res);
+
+    // Heartbeat every 25s to keep the connection alive through proxies/load balancers
+    const heartbeat = setInterval(() => {
+      try { res.write(": heartbeat\n\n"); } catch { cleanup(); }
+    }, 25000);
+
+    // Periodic full-state push every 30s as a safety net
+    const fullPush = setInterval(() => {
+      if (!sseClients.has(res)) { clearInterval(fullPush); return; }
+      broadcast("stats",    readStats());
+      broadcast("status",   getDaemonStatus());
+      broadcast("squadron", getSquadronAgents());
+    }, 30000);
+
+    function cleanup() {
+      sseClients.delete(res);
+      clearInterval(heartbeat);
+      clearInterval(fullPush);
+      try { res.end(); } catch {}
+    }
+    req.on("close", cleanup);
+    req.on("error", cleanup);
+    return;
+  }
 
   if (req.method === "POST" && (url === "/api/skills/install" || url === "/api/skills/uninstall")) {
     let body = "";
