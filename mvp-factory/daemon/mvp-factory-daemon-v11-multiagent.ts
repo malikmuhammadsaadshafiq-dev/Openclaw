@@ -1818,7 +1818,7 @@ class PMAgent {
       const progressPath = path.join(CONFIG.paths.output, 'pipeline-progress.json');
       await fs.writeFile(progressPath, JSON.stringify({
         phase: 'researching',
-        detail: `Collecting real posts from Reddit (${this.redditSubreddits.length} subreddits), HN, Dev.to, GitHub Trending...`,
+        detail: `Collecting real posts from Reddit (55 subreddits), HN, Dev.to, GitHub Trending...`,
         timestamp: new Date().toISOString(), ideaCount: 0, ideas: [],
       })).catch(() => {});
       const rawIdeas = await this.researchAgent.run();
