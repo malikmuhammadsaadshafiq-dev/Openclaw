@@ -1906,78 +1906,81 @@ Built by MVP Factory v11 (Multi-Agent Architecture)
   }
 
   private generateFallbackAIRoute(idea: ValidatedIdea): string {
-    return `import { NextRequest, NextResponse } from 'next/server';
-
-const NVIDIA_API_KEY = process.env.NVIDIA_API_KEY || '';
-const NVIDIA_API_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
-
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
-    const { input, mode } = body;
-
-    if (!input || typeof input !== 'string' || input.trim().length === 0) {
-      return NextResponse.json({ error: 'Input is required and must be a non-empty string' }, { status: 400 });
-    }
-
-    if (!NVIDIA_API_KEY) {
-      return NextResponse.json({
-        result: fallbackProcess(input, mode),
-        source: 'local-processing',
-        note: 'AI API key not configured. Using local processing.',
-        timestamp: new Date().toISOString(),
-      });
-    }
-
-    const systemPrompt = \`You are ${idea.title}, an AI assistant specialized in: ${idea.description}. ${idea.features.map(f => \`You can: \${f}\`).join('. ')}. Provide detailed, actionable results.\`;
-
-    const response = await fetch(NVIDIA_API_URL, {
-      method: 'POST',
-      headers: {
-        'Authorization': \`Bearer \${NVIDIA_API_KEY}\`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'moonshotai/kimi-k2.5',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: input },
-        ],
-        max_tokens: 4096,
-        temperature: 0.7,
-      }),
-    });
-
-    if (!response.ok) {
-      return NextResponse.json({
-        result: fallbackProcess(input, mode),
-        source: 'fallback',
-        timestamp: new Date().toISOString(),
-      });
-    }
-
-    const data = await response.json();
-    return NextResponse.json({
-      result: data.choices?.[0]?.message?.content || '',
-      source: 'kimi-k2.5',
-      timestamp: new Date().toISOString(),
-    });
-  } catch (error) {
-    console.error('API error:', error);
-    return NextResponse.json({ error: 'Processing failed' }, { status: 500 });
-  }
-}
-
-function fallbackProcess(input: string, mode?: string): string {
-  const words = input.split(/\\s+/);
-  const sentences = input.split(/[.!?]+/).filter(Boolean);
-  return \`Analysis: \${words.length} words, \${sentences.length} sentences. Key terms: \${[...new Set(words.filter(w => w.length > 4))].slice(0, 10).join(', ')}\`;
-}
-
-export async function GET() {
-  return NextResponse.json({ status: 'healthy', service: '${idea.title}', timestamp: new Date().toISOString() });
-}
-`;
+    const featuresStr = idea.features.map(f => 'You can: ' + f).join('. ');
+    const lines = [
+      "import { NextRequest, NextResponse } from 'next/server';",
+      "",
+      "const NVIDIA_API_KEY = process.env.NVIDIA_API_KEY || '';",
+      "const NVIDIA_API_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';",
+      "",
+      "export async function POST(request: NextRequest) {",
+      "  try {",
+      "    const body = await request.json();",
+      "    const { input, mode } = body;",
+      "",
+      "    if (!input || typeof input !== 'string' || input.trim().length === 0) {",
+      "      return NextResponse.json({ error: 'Input is required and must be a non-empty string' }, { status: 400 });",
+      "    }",
+      "",
+      "    if (!NVIDIA_API_KEY) {",
+      "      return NextResponse.json({",
+      "        result: fallbackProcess(input, mode),",
+      "        source: 'local-processing',",
+      "        note: 'AI API key not configured. Using local processing.',",
+      "        timestamp: new Date().toISOString(),",
+      "      });",
+      "    }",
+      "",
+      "    const systemPrompt = 'You are " + idea.title + ", an AI assistant specialized in: " + idea.description.replace(/'/g, "\\'") + ". " + featuresStr.replace(/'/g, "\\'") + ". Provide detailed, actionable results.';",
+      "",
+      "    const response = await fetch(NVIDIA_API_URL, {",
+      "      method: 'POST',",
+      "      headers: {",
+      "        'Authorization': 'Bearer ' + NVIDIA_API_KEY,",
+      "        'Content-Type': 'application/json',",
+      "      },",
+      "      body: JSON.stringify({",
+      "        model: 'moonshotai/kimi-k2.5',",
+      "        messages: [",
+      "          { role: 'system', content: systemPrompt },",
+      "          { role: 'user', content: input },",
+      "        ],",
+      "        max_tokens: 4096,",
+      "        temperature: 0.7,",
+      "      }),",
+      "    });",
+      "",
+      "    if (!response.ok) {",
+      "      return NextResponse.json({",
+      "        result: fallbackProcess(input, mode),",
+      "        source: 'fallback',",
+      "        timestamp: new Date().toISOString(),",
+      "      });",
+      "    }",
+      "",
+      "    const data = await response.json();",
+      "    return NextResponse.json({",
+      "      result: data.choices?.[0]?.message?.content || '',",
+      "      source: 'kimi-k2.5',",
+      "      timestamp: new Date().toISOString(),",
+      "    });",
+      "  } catch (error) {",
+      "    console.error('API error:', error);",
+      "    return NextResponse.json({ error: 'Processing failed' }, { status: 500 });",
+      "  }",
+      "}",
+      "",
+      "function fallbackProcess(input: string, mode?: string): string {",
+      "  const words = input.split(/\\\\s+/);",
+      "  const sentences = input.split(/[.!?]+/).filter(Boolean);",
+      "  return 'Analysis: ' + words.length + ' words, ' + sentences.length + ' sentences. Key terms: ' + [...new Set(words.filter(w => w.length > 4))].slice(0, 10).join(', ');",
+      "}",
+      "",
+      "export async function GET() {",
+      "  return NextResponse.json({ status: 'healthy', service: '" + idea.title + "', timestamp: new Date().toISOString() });",
+      "}",
+    ];
+    return lines.join('\n');
   }
 
   private generateFallbackUtilityRoute(idea: ValidatedIdea): string {
