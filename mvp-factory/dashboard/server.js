@@ -17,6 +17,13 @@ const PATHS = {
   signals: "/root/mvp-projects/signals",
   installedSkills: "/root/mvp-projects/installed-skills.json",
   pipelineProgress: "/root/mvp-projects/pipeline-progress.json",
+  // Reddit-specific signal subdirectories
+  redditHot: "/root/mvp-projects/signals/reddit-hot",
+  redditNew: "/root/mvp-projects/signals/reddit-new",
+  redditTop: "/root/mvp-projects/signals/reddit-top",
+  redditRising: "/root/mvp-projects/signals/reddit-rising",
+  redditComments: "/root/mvp-projects/signals/reddit-comments",
+  redditSubreddits: "/root/mvp-projects/signals/reddit-subreddits",
 };
 
 function readJsonDir(dir) {
@@ -320,6 +327,105 @@ function getValidatedQueue() {
     .sort((a, b) => (b.validation?.overallScore || 0) - (a.validation?.overallScore || 0));
 }
 
+function readRedditCategory(dirPath) {
+  try {
+    const files = fs.readdirSync(dirPath).filter(f => f.endsWith(".json")).sort().reverse();
+    if (!files.length) return [];
+    return JSON.parse(fs.readFileSync(path.join(dirPath, files[0]), "utf-8"));
+  } catch { return []; }
+}
+
+function getRedditHot() {
+  const fromDir = readRedditCategory(PATHS.redditHot);
+  if (fromDir.length) return fromDir;
+  // Fall back to filtering hot-tagged signals from main signals dir
+  try {
+    const allFiles = fs.readdirSync(PATHS.signals).filter(f => f.startsWith("reddit-hot") || f.startsWith("reddit-")).sort().reverse();
+    if (!allFiles.length) return [];
+    return JSON.parse(fs.readFileSync(path.join(PATHS.signals, allFiles[0]), "utf-8"))
+      .filter(s => (s.category || s.type || "").toLowerCase().includes("hot") || !s.category);
+  } catch { return []; }
+}
+
+function getRedditNew() {
+  const fromDir = readRedditCategory(PATHS.redditNew);
+  if (fromDir.length) return fromDir;
+  try {
+    const allFiles = fs.readdirSync(PATHS.signals).filter(f => f.startsWith("reddit-new")).sort().reverse();
+    if (!allFiles.length) return [];
+    return JSON.parse(fs.readFileSync(path.join(PATHS.signals, allFiles[0]), "utf-8"));
+  } catch { return []; }
+}
+
+function getRedditTop() {
+  const fromDir = readRedditCategory(PATHS.redditTop);
+  if (fromDir.length) return fromDir;
+  try {
+    const allFiles = fs.readdirSync(PATHS.signals).filter(f => f.startsWith("reddit-top")).sort().reverse();
+    if (!allFiles.length) return [];
+    return JSON.parse(fs.readFileSync(path.join(PATHS.signals, allFiles[0]), "utf-8"));
+  } catch { return []; }
+}
+
+function getRedditRising() {
+  const fromDir = readRedditCategory(PATHS.redditRising);
+  if (fromDir.length) return fromDir;
+  try {
+    const allFiles = fs.readdirSync(PATHS.signals).filter(f => f.startsWith("reddit-rising")).sort().reverse();
+    if (!allFiles.length) return [];
+    return JSON.parse(fs.readFileSync(path.join(PATHS.signals, allFiles[0]), "utf-8"));
+  } catch { return []; }
+}
+
+function getRedditComments() {
+  const fromDir = readRedditCategory(PATHS.redditComments);
+  if (fromDir.length) return fromDir;
+  try {
+    const allFiles = fs.readdirSync(PATHS.signals).filter(f => f.startsWith("reddit-comments")).sort().reverse();
+    if (!allFiles.length) return [];
+    return JSON.parse(fs.readFileSync(path.join(PATHS.signals, allFiles[0]), "utf-8"));
+  } catch { return []; }
+}
+
+function getRedditSubreddits() {
+  try {
+    const files = fs.readdirSync(PATHS.redditSubreddits).filter(f => f.endsWith(".json")).sort().reverse();
+    if (files.length) return JSON.parse(fs.readFileSync(path.join(PATHS.redditSubreddits, files[0]), "utf-8"));
+  } catch {}
+  // Derive tracked subreddits from existing signal files
+  try {
+    const allFiles = fs.readdirSync(PATHS.signals).filter(f => f.startsWith("reddit-"));
+    const subreddits = new Set();
+    for (const f of allFiles) {
+      try {
+        const data = JSON.parse(fs.readFileSync(path.join(PATHS.signals, f), "utf-8"));
+        if (Array.isArray(data)) data.forEach(s => { if (s.subreddit) subreddits.add(s.subreddit); });
+      } catch {}
+    }
+    return Array.from(subreddits).map(name => ({ name, url: `https://reddit.com/r/${name}` }));
+  } catch { return []; }
+}
+
+function getRedditSummary() {
+  const all = readLatestSignals();
+  const hot = getRedditHot();
+  const top = getRedditTop();
+  const rising = getRedditRising();
+  const subreddits = getRedditSubreddits();
+  return {
+    total: all.sources.reddit || 0,
+    hot: hot.length,
+    top: top.length,
+    rising: rising.length,
+    trackedSubreddits: subreddits.length,
+    subreddits,
+    topByScore: (all.signals || [])
+      .filter(s => (s.source || "") === "reddit")
+      .sort((a, b) => (b.score || 0) - (a.score || 0))
+      .slice(0, 10),
+  };
+}
+
 function readPipelineProgress() {
   try {
     const data = JSON.parse(fs.readFileSync(PATHS.pipelineProgress, "utf-8"));
@@ -345,6 +451,14 @@ function handleApi(url, res) {
     case "/api/squadron": data = getSquadronAgents(); break;
     case "/api/logs/structured": data = parseStructuredLogs(200); break;
     case "/api/pipeline-progress": data = readPipelineProgress(); break;
+    // Reddit-specific endpoints
+    case "/api/reddit": data = getRedditSummary(); break;
+    case "/api/reddit/hot": data = getRedditHot(); break;
+    case "/api/reddit/new": data = getRedditNew(); break;
+    case "/api/reddit/top": data = getRedditTop(); break;
+    case "/api/reddit/rising": data = getRedditRising(); break;
+    case "/api/reddit/comments": data = getRedditComments(); break;
+    case "/api/reddit/subreddits": data = getRedditSubreddits(); break;
     default: return false;
   }
   res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
