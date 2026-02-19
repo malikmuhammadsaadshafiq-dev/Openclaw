@@ -1666,6 +1666,35 @@ class PMAgent {
       await logger.agent(this.name, 'PHASE 1: Research Agent deployed...');
       const rawIdeas = await this.researchAgent.run();
 
+      // Save raw signals to disk for dashboard visibility
+      if (rawIdeas.length > 0) {
+        try {
+          const signalsDir = path.join(CONFIG.paths.output, 'signals');
+          await fs.mkdir(signalsDir, { recursive: true });
+          const ts = new Date().toISOString().replace(/[:.]/g, '-');
+          const byPlatform: Record<string, any[]> = {};
+          for (const r of rawIdeas) {
+            const p = r.sourcePlatform === 'hackernews' ? 'hackernews' : r.sourcePlatform === 'reddit' ? 'reddit' : 'devto';
+            if (!byPlatform[p]) byPlatform[p] = [];
+            byPlatform[p].push({
+              subreddit: r.sourcePlatform === 'reddit' ? (r.sourcePost.match(/\/r\/([^\/]+)/)?.[1] || 'unknown') : (r.sourcePlatform === 'devto' ? 'Dev.to' : 'Hacker News'),
+              postTitle: r.title,
+              postBody: r.description ? r.description.substring(0, 500) : '',
+              score: r.upvotes || 0,
+              numComments: r.commentCount || 0,
+              url: r.sourcePost,
+              createdUtc: Math.floor(Date.now() / 1000),
+              keywords: r.tags || [],
+              source: p,
+            });
+          }
+          for (const [platform, items] of Object.entries(byPlatform)) {
+            await fs.writeFile(path.join(signalsDir, platform+"-"+ts+".json"), JSON.stringify(items, null, 2));
+          }
+          await logger.agent(this.name, "Signals saved for dashboard");
+        } catch (e) { await logger.agent(this.name, "Signal save error: "+String(e).slice(0,100)); }
+      }
+
       if (rawIdeas.length === 0) {
         await logger.agent(this.name, 'No raw ideas found. Research cycle complete.');
         return [];
