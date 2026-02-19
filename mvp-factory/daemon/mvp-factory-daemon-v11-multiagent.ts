@@ -122,7 +122,7 @@ interface ValidatedIdea {
   problem: string;
   targetUsers: string;
   features: string[];
-  type: 'web' | 'mobile' | 'saas' | 'api';
+  type: 'web' | 'mobile' | 'saas' | 'api' | 'extension';
   category: 'ai-assisted' | 'utility' | 'data-tool' | 'automation' | 'saas-platform';
   validation: {
     marketDemand: number;        // 1-10
@@ -648,6 +648,36 @@ class ResearchAgent {
     // Deduplicate raw posts
     const uniquePosts = this.deduplicateRawIdeas(allPosts);
     await logger.agent(this.name, `After dedup: ${uniquePosts.length} unique posts`);
+
+    // Save raw posts as live signals for dashboard BEFORE LLM extraction
+    try {
+      const signalsDir = path.join(CONFIG.paths.output, 'signals');
+      await fs.mkdir(signalsDir, { recursive: true });
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      const byPlatform: Record<string, any[]> = {};
+      for (const r of uniquePosts) {
+        const p = r.sourcePlatform === 'hackernews' ? 'hackernews' : r.sourcePlatform === 'reddit' ? 'reddit' : 'devto';
+        if (!byPlatform[p]) byPlatform[p] = [];
+        const subredditMatch = r.sourcePost?.match(/\/r\/([^\/]+)/);
+        byPlatform[p].push({
+          subreddit: p === 'reddit' ? (r.tags?.[0] || subredditMatch?.[1] || 'unknown') : (p === 'hackernews' ? 'Hacker News' : 'Dev.to'),
+          postTitle: r.title,
+          postBody: r.description ? r.description.substring(0, 400) : '',
+          score: r.upvotes || 0,
+          numComments: r.commentCount || 0,
+          url: r.sourcePost || '',
+          createdUtc: Math.floor(Date.now() / 1000),
+          keywords: r.tags || [],
+          source: p,
+        });
+      }
+      for (const [platform, items] of Object.entries(byPlatform)) {
+        await fs.writeFile(path.join(signalsDir, `${platform}-${ts}.json`), JSON.stringify(items, null, 2));
+      }
+      await logger.agent(this.name, `Saved ${uniquePosts.length} raw signals (Reddit: ${byPlatform['reddit']?.length || 0}, HN: ${byPlatform['hackernews']?.length || 0}, Dev.to: ${byPlatform['devto']?.length || 0})`);
+    } catch (e) {
+      await logger.agent(this.name, `Raw signal save failed: ${String(e).slice(0, 100)}`);
+    }
 
     // Use AI to analyze REAL posts and extract product ideas (grounded in real data)
     const ideas = await this.analyzePostsForIdeas(uniquePosts);
@@ -1182,7 +1212,12 @@ ALSO PROVIDE:
 - Product classification (ai-assisted, utility, data-tool, automation, saas-platform)
 - Concrete features list (5-8 REAL features with server-side logic)
 - Tech stack recommendation
-- Type (web/mobile/saas/api)
+- Type: choose the BEST fit:
+  * web = landing page + dashboard, works in browser (Next.js)
+  * saas = multi-user platform with auth, billing, subscriptions
+  * api = developer tool, headless service, no frontend needed
+  * mobile = native mobile app (React Native + Expo) — for on-the-go use cases, camera, GPS, push notifications
+  * extension = Chrome extension (Manifest V3) — for browser productivity, page enhancement, tab management, content scripts
 
 CRITICAL: Only recommend "build" if overall weighted score >= 6.5/10 AND competition gap >= 5
 Products that would just be "another X but with AI" get automatic SKIP unless the AI angle is truly novel.
@@ -1194,9 +1229,9 @@ Return ONLY valid JSON:
   "problem": "Specific pain point",
   "targetUsers": "Exact audience",
   "features": ["real feature 1 with server logic", "real feature 2", ...],
-  "type": "web|mobile|saas|api",
+  "type": "web|mobile|saas|api|extension",
   "category": "ai-assisted|utility|data-tool|automation|saas-platform",
-  "techStack": "Next.js 14 + API Routes + specific tools",
+  "techStack": "Next.js 14 + API Routes + specific tools (or 'Chrome Extension: Manifest V3 + vanilla JS' for extensions, or 'React Native + Expo' for mobile)",
   "estimatedHours": 12-24,
   "validation": {
     "marketDemand": 1-10,
@@ -1390,7 +1425,46 @@ Return ONLY valid JSON:
     return parsed as FrontendSpec;
   }
 
+  private async generateExtensionFiles(idea: ValidatedIdea, spec: FrontendSpec): Promise<Array<{ path: string; content: string }>> {
+    const prompt = `Generate a COMPLETE, PRODUCTION-QUALITY Chrome Extension (Manifest V3) for this product.
+
+PRODUCT: ${idea.title}
+DESCRIPTION: ${idea.description}
+FEATURES: ${idea.features.join(', ')}
+DESIGN: primary=${spec.designSystem.primaryColor}, font=${spec.designSystem.fontFamily}, style=${spec.designSystem.style}
+
+Generate these files as a JSON array:
+[
+  {"path":"manifest.json","content":"..."},
+  {"path":"popup.html","content":"..."},
+  {"path":"popup.js","content":"..."},
+  {"path":"content.js","content":"..."},
+  {"path":"background.js","content":"..."},
+  {"path":"styles.css","content":"..."}
+]
+
+REQUIREMENTS:
+1. manifest.json: Manifest V3, include permissions, content_scripts, background service_worker, action popup
+2. popup.html: Beautiful 400x500px popup UI using the design system colors, modern CSS, no external deps
+3. popup.js: All popup logic, chrome.storage.sync for state, chrome.tabs for tab control, chrome.runtime messaging
+4. content.js: Page content script - inject UI overlays, read page content, send messages to background
+5. background.js: Service worker - handle messages, chrome.alarms, chrome.notifications, fetch APIs
+6. styles.css: Shared styles for popup and content script injected elements
+
+Return ONLY the JSON array, no markdown.`;
+
+    const response = await kimi.complete(prompt, { maxTokens: 8000, temperature: 0.2 });
+    const files = extractJSON(response, 'array') as Array<{ path: string; content: string }>;
+    if (!files || !files.length) throw new Error('Extension file generation returned empty');
+    return files;
+  }
+
   private async generateFrontendFiles(idea: ValidatedIdea, spec: FrontendSpec): Promise<Array<{ path: string; content: string }>> {
+    // Chrome extension: different file structure
+    if (idea.type === 'extension') {
+      return this.generateExtensionFiles(idea, spec);
+    }
+
     const pagesDescription = spec.pages.map(p =>
       `- Route: ${p.route} | Purpose: ${p.purpose} | Components: ${p.components.join(', ')} | Flow: ${p.userFlow}`
     ).join('\n');
