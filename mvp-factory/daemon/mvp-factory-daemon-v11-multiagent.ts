@@ -675,13 +675,19 @@ class ResearchAgent {
       { base: 'https://old.reddit.com', suffix: '.json?limit=25' },
     ];
 
+    const subsToFetch = this.redditSubreddits;
+    const totalSubs = subsToFetch.length;
+
     for (const endpoint of endpoints) {
       if (ideas.length >= 20) break; // We have enough
 
       // Process subs sequentially with rate limiting to avoid 429s
-      for (const sub of this.redditSubreddits.slice(0, 10)) {
+      for (let subIdx = 0; subIdx < Math.min(10, subsToFetch.length); subIdx++) {
+        const sub = subsToFetch[subIdx];
         if (ideas.length >= 50) break;
         await this.rateLimiter.wait();
+
+        await logger.agent(this.name, `Fetching r/${sub} (${subIdx + 1}/${Math.min(10, totalSubs)}) — ${ideas.length} posts so far`);
 
         try {
           const url = `${endpoint.base}/r/${sub}/hot${endpoint.suffix}`;
@@ -703,11 +709,13 @@ class ResearchAgent {
               await new Promise(r => setTimeout(r, 10000));
               continue;
             }
+            await logger.agent(this.name, `r/${sub} returned HTTP ${resp.status}, skipping`);
             continue;
           }
 
           const data = await resp.json();
           const posts = data?.data?.children?.map((c: any) => c.data) || [];
+          let subCount = 0;
 
           for (const post of posts) {
             if (post.score >= 5 && (post.selftext || post.title)) {
@@ -723,9 +731,12 @@ class ResearchAgent {
                 painLevel: post.score > 100 ? 'severe' : post.score > 30 ? 'moderate' : 'mild',
                 tags: [sub],
               });
+              subCount++;
             }
           }
+          await logger.agent(this.name, `r/${sub} → ${subCount} posts (score≥5), running total: ${ideas.length}`);
         } catch (err) {
+          await logger.agent(this.name, `r/${sub} fetch error: ${String(err).slice(0, 80)}`);
           // Silently skip individual sub failures
         }
       }
@@ -1067,19 +1078,29 @@ Return ONLY valid JSON array:
 class ValidationAgent {
   private name = 'ValidationAgent';
 
-  async run(rawIdeas: RawIdea[]): Promise<ValidatedIdea[]> {
-    await logger.agent(this.name, `Validating ${rawIdeas.length} raw ideas...`);
+  async run(rawIdeas: RawIdea[], onProgress?: (phase: string, detail: string, stats: any) => Promise<void>): Promise<ValidatedIdea[]> {
+    await logger.agent(this.name, `========== VALIDATION START: ${rawIdeas.length} ideas to evaluate ==========`);
 
     const existingProducts = await loadExistingProducts();
     const validated: ValidatedIdea[] = [];
+    let rejected = 0;
+    let skippedDup = 0;
+    let errors = 0;
 
-    for (const rawIdea of rawIdeas) {
+    for (let idx = 0; idx < rawIdeas.length; idx++) {
+      const rawIdea = rawIdeas[idx];
+      const progress = `[${idx + 1}/${rawIdeas.length}]`;
+
       // Skip duplicates against existing products
       const dupCheck = isDuplicate(rawIdea, existingProducts);
       if (dupCheck.duplicate) {
-        await logger.agent(this.name, `SKIP duplicate: "${rawIdea.title}" matches "${dupCheck.matchedWith}"`);
+        skippedDup++;
+        await logger.agent(this.name, `${progress} DUPLICATE SKIP: "${rawIdea.title.slice(0, 60)}" ≈ "${dupCheck.matchedWith}"`);
         continue;
       }
+
+      await logger.agent(this.name, `${progress} Validating: "${rawIdea.title.slice(0, 70)}" [${rawIdea.sourcePlatform}]`);
+      if (onProgress) await onProgress('validating', `${progress} Scoring: "${rawIdea.title.slice(0, 50)}"`, { found: rawIdeas.length, validated: validated.length, rejected, idx });
 
       try {
         const result = await retryLoop(
@@ -1088,19 +1109,24 @@ class ValidationAgent {
         );
         if (result.validation.verdict === 'build') {
           validated.push(result);
-          await logger.agent(this.name, `APPROVED: "${result.title}" (score: ${result.validation.overallScore}/10, angle: ${result.validation.uniqueAngle})`);
+          await logger.agent(this.name, `${progress} ✓ APPROVED: "${result.title.slice(0, 60)}" | score=${result.validation.overallScore}/10 | demand=${result.validation.marketDemand} gap=${result.validation.competitionGap} tech=${result.validation.technicalFeasibility} | "${result.validation.uniqueAngle.slice(0, 80)}"`);
         } else {
-          await logger.agent(this.name, `REJECTED: "${rawIdea.title}" - ${result.validation.reasoning}`);
+          rejected++;
+          await logger.agent(this.name, `${progress} ✗ REJECTED: "${rawIdea.title.slice(0, 60)}" | verdict=${result.validation.verdict} | ${result.validation.reasoning.slice(0, 120)}`);
         }
       } catch (err) {
-        await logger.agent(this.name, `Validation error for "${rawIdea.title}": ${err}`);
+        errors++;
+        await logger.agent(this.name, `${progress} ERROR validating "${rawIdea.title.slice(0, 60)}": ${String(err).slice(0, 100)}`);
       }
     }
 
     // Sort by overall score (best first)
     validated.sort((a, b) => b.validation.overallScore - a.validation.overallScore);
 
-    await logger.agent(this.name, `Validation complete: ${validated.length}/${rawIdeas.length} approved`);
+    await logger.agent(this.name, `========== VALIDATION DONE: ${validated.length} approved | ${rejected} rejected | ${skippedDup} duplicates | ${errors} errors (total: ${rawIdeas.length}) ==========`);
+    if (validated.length > 0) {
+      await logger.agent(this.name, `Top ideas: ${validated.slice(0, 3).map((v, i) => `#${i+1} "${v.title.slice(0,40)}" (${v.validation.overallScore}/10)`).join(' | ')}`);
+    }
     return validated;
   }
 
@@ -1749,32 +1775,56 @@ class PMAgent {
         return [];
       }
 
-      // Write pipeline progress - research done, validation starting
+      const redditCount = rawIdeas.filter(i => i.sourcePlatform === 'reddit').length;
+      const hnCount = rawIdeas.filter(i => i.sourcePlatform === 'hackernews').length;
+      const devtoCount = rawIdeas.filter(i => i.sourcePlatform !== 'reddit' && i.sourcePlatform !== 'hackernews').length;
+
+      await logger.agent(this.name, `PHASE 2: Starting validation — ${rawIdeas.length} ideas (Reddit: ${redditCount}, HN: ${hnCount}, Dev.to: ${devtoCount})`);
+
+      // Write pipeline progress - validation starting with source breakdown
       await fs.writeFile(progressPath, JSON.stringify({
         phase: 'validating',
         detail: `Scoring ${rawIdeas.length} ideas (market demand, competition gap, feasibility...)`,
+        currentAction: `Evaluating idea 1/${rawIdeas.length}...`,
         timestamp: new Date().toISOString(),
         ideaCount: rawIdeas.length,
+        stats: { found: rawIdeas.length, reddit: redditCount, hackernews: hnCount, devto: devtoCount, validated: 0, rejected: 0 },
         ideas: rawIdeas.slice(0, 8).map(i => ({ title: i.title, source: i.sourcePlatform || 'unknown' })),
       })).catch(() => {});
 
-      // PHASE 2: Validation
-      await logger.agent(this.name, `PHASE 2: Validation Agent analyzing ${rawIdeas.length} ideas...`);
-      const validatedIdeas = await this.validationAgent.run(rawIdeas);
+      // PHASE 2: Validation — pass progress callback to update pipeline-progress.json per idea
+      const validatedIdeas = await this.validationAgent.run(rawIdeas, async (phase, detail, stats) => {
+        await fs.writeFile(progressPath, JSON.stringify({
+          phase: 'validating',
+          detail: `Scoring ideas — ${stats.validated} approved, ${stats.rejected} rejected so far`,
+          currentAction: detail,
+          timestamp: new Date().toISOString(),
+          ideaCount: rawIdeas.length,
+          stats: { found: rawIdeas.length, validated: stats.validated, rejected: stats.rejected, idx: stats.idx },
+          ideas: rawIdeas.slice(0, 8).map(i => ({ title: i.title, source: i.sourcePlatform || 'unknown' })),
+        })).catch(() => {});
+      });
 
       if (validatedIdeas.length === 0) {
         await logger.agent(this.name, 'No ideas passed validation. Research cycle complete.');
+        await fs.writeFile(progressPath, JSON.stringify({
+          phase: 'idle', detail: 'Validation complete — 0 ideas approved this cycle',
+          currentAction: '', timestamp: new Date().toISOString(), ideaCount: 0, ideas: [],
+        })).catch(() => {});
         return [];
       }
 
       // Save validated ideas to queue
       await this.saveValidatedIdeas(validatedIdeas);
       await logger.agent(this.name, `Research+Validation complete: ${validatedIdeas.length} ideas added to build queue`);
+      await logger.agent(this.name, `Queue summary: ${validatedIdeas.map((v, i) => `#${i+1} ${v.title.slice(0,35)} (${v.validation.overallScore}/10)`).join(' | ')}`);
 
-      // Clear pipeline progress - cycle complete
+      // Write progress - cycle complete with queue info
       await fs.writeFile(progressPath, JSON.stringify({
-        phase: 'idle', detail: 'Cycle complete - ideas queued for building',
-        timestamp: new Date().toISOString(), ideaCount: 0, ideas: [],
+        phase: 'idle', detail: `Cycle done — ${validatedIdeas.length} ideas queued for building`,
+        currentAction: '', timestamp: new Date().toISOString(),
+        ideaCount: validatedIdeas.length,
+        ideas: validatedIdeas.slice(0, 5).map(i => ({ title: i.title, source: i.sourcePlatform, score: i.validation.overallScore })),
       })).catch(() => {});
 
       return validatedIdeas;
@@ -1873,6 +1923,7 @@ class PMAgent {
     }
 
     this.isBuilding = true;
+    const progressPath = path.join(CONFIG.paths.output, 'pipeline-progress.json');
     await logger.agent(this.name, '========== BUILD FROM QUEUE START ==========');
 
     // Build from already-validated ideas in queue
@@ -1882,7 +1933,7 @@ class PMAgent {
       const jsonFiles = files.filter(f => f.endsWith('.json'));
 
       if (jsonFiles.length === 0) {
-        await logger.agent(this.name, 'No validated ideas in queue');
+        await logger.agent(this.name, 'No validated ideas in queue — research cycle needed');
         return { success: false, projectPath: '', githubUrl: '', vercelUrl: '', qualityScore: 0, error: 'Empty queue' };
       }
 
@@ -1895,31 +1946,65 @@ class PMAgent {
         } catch {}
       }
       ideas.sort((a, b) => (b.validation?.overallScore || 0) - (a.validation?.overallScore || 0));
+      await logger.agent(this.name, `Queue loaded: ${ideas.length} validated ideas | ${ideas.slice(0, 5).map((v, i) => `#${i+1} "${v.title.slice(0, 30)}" (${v.validation?.overallScore}/10)`).join(' | ')}`);
 
       // Skip failed ideas
       const failTracker = await loadFailTracker();
       const buildable = ideas.find(i => (failTracker[i.id]?.count || 0) < 3);
       if (!buildable) {
-        await logger.agent(this.name, 'All validated ideas have failed too many times');
+        await logger.agent(this.name, 'All validated ideas have failed 3+ times — clearing fail counts and skipping cycle');
         return { success: false, projectPath: '', githubUrl: '', vercelUrl: '', qualityScore: 0, error: 'All ideas exhausted' };
       }
 
-      await logger.agent(this.name, `Building from queue: "${buildable.title}" (score: ${buildable.validation.overallScore}/10)`);
+      const remaining = ideas.filter(i => (failTracker[i.id]?.count || 0) < 3);
+      await logger.agent(this.name, `SELECTED: "${buildable.title}" (score: ${buildable.validation.overallScore}/10) | ${remaining.length} remaining in queue after this`);
+      await logger.agent(this.name, `Idea details: type=${buildable.type} | audience=${buildable.audienceProfile?.demographics?.slice(0, 80)} | stack=${buildable.techStack?.slice(0, 60)}`);
+
+      await fs.writeFile(progressPath, JSON.stringify({
+        phase: 'building',
+        detail: `Building "${buildable.title}"`,
+        currentAction: 'Starting parallel frontend + backend generation...',
+        timestamp: new Date().toISOString(),
+        ideaCount: remaining.length,
+        ideas: remaining.slice(0, 5).map(i => ({ title: i.title, source: i.sourcePlatform, score: i.validation?.overallScore })),
+      })).catch(() => {});
 
       // Run frontend + backend in parallel
+      await logger.agent(this.name, `PHASE 3: Launching FrontendAgent + BackendAgent in parallel for "${buildable.title}"...`);
+      await fs.writeFile(progressPath, JSON.stringify({
+        phase: 'building', detail: `Building "${buildable.title}"`,
+        currentAction: 'FrontendAgent + BackendAgent running in parallel...',
+        timestamp: new Date().toISOString(), ideaCount: remaining.length,
+        ideas: remaining.slice(0, 5).map(i => ({ title: i.title, source: i.sourcePlatform, score: i.validation?.overallScore })),
+      })).catch(() => {});
+
       const [frontendResult, backendResult] = await Promise.all([
         this.frontendAgent.run(buildable),
         this.backendAgent.run(buildable),
       ]);
 
+      await logger.agent(this.name, `PHASE 4: Merging ${frontendResult.files.length} frontend + ${backendResult.files.length} backend files...`);
       const mergedFiles = await this.mergeAndFinalize(buildable, frontendResult, backendResult);
       const quality = this.assessQuality(mergedFiles, buildable);
+      await logger.agent(this.name, `Quality gate: ${quality.score}/20 | Issues: ${quality.issues.length ? quality.issues.join('; ') : 'none'}`);
+
+      await fs.writeFile(progressPath, JSON.stringify({
+        phase: 'building', detail: `Building "${buildable.title}"`,
+        currentAction: `Quality check passed (${quality.score}/20) — deploying...`,
+        timestamp: new Date().toISOString(), ideaCount: remaining.length,
+        ideas: remaining.slice(0, 5).map(i => ({ title: i.title, source: i.sourcePlatform, score: i.validation?.overallScore })),
+      })).catch(() => {});
 
       return this.buildAndDeploy(buildable, mergedFiles, quality.score);
     } catch (error) {
+      await logger.agent(this.name, `BUILD FROM QUEUE ERROR: ${String(error).slice(0, 200)}`);
       return { success: false, projectPath: '', githubUrl: '', vercelUrl: '', qualityScore: 0, error: String(error) };
     } finally {
       this.isBuilding = false;
+      await fs.writeFile(progressPath, JSON.stringify({
+        phase: 'idle', detail: 'Build cycle complete',
+        currentAction: '', timestamp: new Date().toISOString(), ideaCount: 0, ideas: [],
+      })).catch(() => {});
       await logger.agent(this.name, '========== BUILD FROM QUEUE COMPLETE ==========');
     }
   }
