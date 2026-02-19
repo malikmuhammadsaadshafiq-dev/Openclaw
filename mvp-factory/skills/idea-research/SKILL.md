@@ -1,14 +1,16 @@
-# Idea Research Skill
+# Deep Research Agent Skill
 
 ## Description
-Autonomous research agent that discovers trending app, web, and SaaS ideas from X (Twitter) and Reddit. Monitors startup communities, indie hackers, and tech trends to identify viable MVP opportunities.
+Multi-source research agent that scrapes Reddit, X (Twitter), and HackerNews for REAL trending pain points and product opportunities. Uses actual API calls with web scraping fallback. Never simulates - always grounded in real community discussions.
 
 ## Metadata
 ```yaml
 name: idea-research
-version: 1.0.0
-author: MVPFactory
+version: 2.0.0
+author: MVPFactory v11
 requiredEnv:
+  - NVIDIA_API_KEY
+optionalEnv:
   - TWITTER_BEARER_TOKEN
   - REDDIT_CLIENT_ID
   - REDDIT_CLIENT_SECRET
@@ -17,68 +19,51 @@ stateDirs:
   - research-cache
 ```
 
-## Tools
+## Data Sources
 
-### `research_x`
-Searches X/Twitter for trending app ideas, startup launches, and problem statements.
+### Reddit (21 subreddits monitored)
+- r/SideProject, r/startups, r/SaaS, r/AppIdeas, r/indiehackers
+- r/Entrepreneur, r/webdev, r/reactjs, r/nextjs, r/selfhosted
+- r/productivity, r/WorkOnline, r/smallbusiness, r/marketing
+- r/artificial, r/MachineLearning, r/datascience, r/cryptocurrency
+- r/PersonalFinance, r/Fitness, r/QuantifiedSelf
 
-**Parameters:**
-- `query`: Search query (e.g., "I wish there was an app", "someone build this", "startup idea")
-- `limit`: Max results (default: 50)
+### X/Twitter (10 search queries)
+- "I wish there was an app", "someone should build", "would pay for"
+- "frustrated with", "need a tool that", "pain point"
 
-### `research_reddit`
-Monitors Reddit communities for app/SaaS ideas and user pain points.
+### HackerNews
+- Show HN (launches), Ask HN (problems), Top stories
 
-**Subreddits monitored:**
-- r/SideProject
-- r/startups
-- r/SaaS
-- r/AppIdeas
-- r/indiehackers
-- r/Entrepreneur
-- r/webdev
-- r/reactnative
+## Research Method
+1. Fetch REAL posts from all 3 platforms (parallel)
+2. Filter by engagement (upvotes, comments, pain level)
+3. Analyze posts with AI to extract concrete product ideas
+4. Deduplicate across sources and existing products
+5. Output raw ideas for Validation Agent
 
-### `analyze_idea`
-Analyzes a discovered idea for viability, complexity, and MVP scope.
-
-**Returns:**
-- Viability score (1-10)
-- Estimated build time
-- Tech stack recommendation
-- MVP feature list
-
-### `save_idea`
-Saves a validated idea to the ideas queue for building.
-
-## Instructions
-
-When activated, continuously:
-1. Search X for phrases like "I wish there was", "someone should build", "why isn't there an app for"
-2. Monitor Reddit for upvoted app ideas and feature requests
-3. Filter for ideas that can be built as MVPs in < 24 hours
-4. Analyze each idea for viability and technical feasibility
-5. Queue viable ideas for the MVP builder skill
-
-## Triggers
-- Cron: Every 1 hour
-- Manual: `/research ideas`
+## Anti-AI-Slop Rules
+- NEVER use generic idea categories (todo apps, AI writing tools, generic CRMs)
+- Ideas must be NICHE and SPECIFIC (e.g., "invoice dispute analyzer for freelancers")
+- Must address a proven pain point with evidence (upvotes, comments)
+- Avoid oversaturated markets unless angle is truly novel
 
 ## Output Format
 ```json
 {
-  "id": "uuid",
-  "source": "x|reddit",
-  "title": "Brief title",
-  "description": "What the app/service does",
-  "problem": "What problem it solves",
-  "targetUsers": "Who would use it",
-  "features": ["feature1", "feature2"],
-  "techStack": "recommended stack",
-  "complexity": "low|medium|high",
-  "estimatedHours": 8,
-  "viabilityScore": 8,
-  "sourceUrl": "original post url",
-  "discoveredAt": "ISO timestamp"
+  "title": "Specific product name",
+  "description": "What it does (concrete)",
+  "problem": "Exact pain point from real posts",
+  "targetUsers": "Precise audience segment",
+  "sourcePlatform": "reddit|x|hackernews",
+  "sourcePost": "URL to original post",
+  "upvotes": 42,
+  "commentCount": 15,
+  "painLevel": "mild|moderate|severe",
+  "tags": ["niche1", "niche2"]
 }
 ```
+
+## Triggers
+- Cron: Every 45 minutes
+- Manual: `/research`

@@ -1,95 +1,89 @@
-# MVP Builder Skill
+# Multi-Agent MVP Builder Skill
 
 ## Description
-Autonomous code generation agent that builds complete, working MVPs from idea specifications. Generates full-stack web applications, APIs, and SaaS products with modern tech stacks.
+Coordinates 5 specialized AI agents to build REAL, WORKING products. Each agent has deep expertise in its domain. Products are validated before building, designed with audience psychology, and implemented with fully functional backends.
 
 ## Metadata
 ```yaml
 name: mvp-builder
-version: 1.0.0
-author: MVPFactory
+version: 2.0.0
+author: MVPFactory v11
 requiredEnv:
   - NVIDIA_API_KEY
   - GITHUB_TOKEN
   - GITHUB_USERNAME
+optionalEnv:
+  - VERCEL_TOKEN
+  - VERCEL_TEAM_ID
+  - TELEGRAM_BOT_TOKEN
+  - TELEGRAM_CHAT_ID
 stateDirs:
-  - projects
-  - templates
+  - validated
+  - built
+  - web
 ```
 
-## Tech Stacks Supported
+## Agent Architecture
 
-### Web Apps (Default)
-- **Frontend**: Next.js 14+, React, TailwindCSS, shadcn/ui
-- **Backend**: Next.js API Routes, tRPC
-- **Database**: Supabase (PostgreSQL), Prisma ORM
-- **Auth**: NextAuth.js / Supabase Auth
-- **Deployment**: Vercel-ready
+### 1. Research Agent
+- Scrapes Reddit (21 subs), X (10 queries), HackerNews
+- Real API calls with web scraping fallback
+- AI-powered post analysis for idea extraction
+- Cross-platform deduplication
 
-### SaaS Apps
-- Everything in Web Apps plus:
-- **Payments**: Stripe integration
-- **Email**: Resend
-- **Analytics**: PostHog
+### 2. Validation Agent
+- 5-dimension scoring (market demand, competition gap, feasibility, monetization, audience fit)
+- Weighted scoring with 6.5/10 minimum threshold
+- Competition analysis with unique angle identification
+- Full audience profiling (demographics, psychographics, pain points, motivations)
+- Automatic rejection of oversaturated ideas
 
-### API-Only
-- **Runtime**: Node.js / Bun
-- **Framework**: Hono / Express
-- **Database**: Supabase / SQLite
+### 3. Frontend Agent
+- Audience psychology-driven UX design
+- Custom design system per product (colors, fonts, style matched to audience)
+- Conversion optimization with behavioral psychology tactics
+- Psychology tactics: loss aversion, social proof, anchoring, reciprocity
+- Accessibility compliance (AA level)
+- Responsive mobile-first design
 
-## Tools
+### 4. Backend Agent
+- Complete API route implementation (not stubs)
+- Real AI integration via NVIDIA Kimi K2.5 with smart fallbacks
+- Data processing algorithms (not just pass-through)
+- Input validation, error handling, structured responses
+- Service layer separation
 
-### `generate_project`
-Creates complete project structure from idea specification.
+### 5. PM Agent (Orchestrator)
+- Coordinates all agents in the pipeline
+- Frontend + Backend run in PARALLEL for speed
+- 20-point quality gate (API routes, real logic, responsive, loading states)
+- Auto-fix for common quality issues
+- Build, deploy, and notify on completion
 
-**Input**: Idea JSON object
-**Output**: Full project directory with all files
+## Pipeline Flow
+```
+Research -> Validate -> [Frontend || Backend] -> Merge -> Quality Gate -> Deploy
+```
 
-### `generate_component`
-Generates individual React components.
+## Quality Gate (20 points)
+- API routes with real logic (4 pts)
+- Frontend calls API (3 pts)
+- No localStorage abuse (2 pts)
+- Error handling (2 pts)
+- Loading states (2 pts)
+- Responsive design (2 pts)
+- Sufficient files (2 pts)
+- Design system applied (1 pt)
+- Minimum threshold: 10/20
 
-### `generate_api_route`
-Creates API endpoints with proper validation.
-
-### `generate_database_schema`
-Creates Prisma schema from feature requirements.
-
-### `run_tests`
-Generates and runs basic tests for the MVP.
-
-### `push_to_github`
-Creates repo and pushes the complete project.
-
-## Instructions
-
-When receiving an idea from the research skill:
-
-1. **Analyze Requirements**
-   - Parse the idea's features list
-   - Determine optimal tech stack
-   - Plan database schema
-   - Design API structure
-
-2. **Generate Project**
-   - Create Next.js project structure
-   - Generate all React components
-   - Create API routes
-   - Set up database schema
-   - Add authentication if needed
-   - Configure styling with Tailwind
-
-3. **Quality Checks**
-   - Ensure all imports are correct
-   - Validate TypeScript types
-   - Add basic error handling
-   - Include loading states
-
-4. **Deploy**
-   - Initialize git repo
-   - Create GitHub repository
-   - Push all code
-   - Add README with setup instructions
+## Tech Stack
+- **Frontend**: Next.js 14, React, TailwindCSS (custom design per product)
+- **Backend**: Next.js API Routes with real processing logic
+- **AI**: NVIDIA Kimi K2.5 (with smart fallbacks)
+- **Deployment**: GitHub + Vercel
+- **Notifications**: Telegram
 
 ## Triggers
-- Queue: When new idea added to queue
-- Manual: `/build <idea-id>`
+- Full pipeline: Every 45 minutes
+- Build from queue: Every 20 minutes
+- Manual: `/build`

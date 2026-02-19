@@ -1,15 +1,14 @@
 {
   "name": "mvp-factory",
-  "version": "1.0.0",
-  "description": "Autonomous MVP Factory - Discovers ideas and builds complete MVPs",
+  "version": "2.0.0",
+  "description": "Multi-Agent MVP Factory - 5 specialized AI agents that research, validate, design, build, and deploy real products",
   "type": "module",
-  "main": "daemon/mvp-factory-daemon.ts",
+  "main": "daemon/mvp-factory-daemon-v11-multiagent.ts",
   "scripts": {
-    "start": "npx tsx daemon/mvp-factory-daemon.ts",
-    "dev": "npx tsx watch daemon/mvp-factory-daemon.ts",
-    "build": "tsc",
-    "research": "npx tsx -e \"import('./daemon/mvp-factory-daemon.ts').then(m => m.runResearchCycle())\"",
-    "build-next": "npx tsx -e \"import('./daemon/mvp-factory-daemon.ts').then(m => m.buildNextIdea())\""
+    "start": "npx tsx daemon/mvp-factory-daemon-v11-multiagent.ts",
+    "start:legacy": "npx tsx daemon/mvp-factory-daemon.ts",
+    "dev": "npx tsx watch daemon/mvp-factory-daemon-v11-multiagent.ts",
+    "build": "tsc"
   },
   "dependencies": {
     "typescript": "^5.3.0",
