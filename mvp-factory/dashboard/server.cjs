@@ -171,6 +171,7 @@ function readStats() {
     dirProjectCount: dirTotal,
     githubRepoCount: ghRepoCount,
     githubLastFetched: _ghCache.lastFetched,
+    githubUsername: username,
     version: "v11-multiagent",
   };
 }

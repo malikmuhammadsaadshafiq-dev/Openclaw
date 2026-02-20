@@ -387,11 +387,14 @@ body{
 .score-high{background:linear-gradient(90deg,#34d399,#10b981)}
 .score-mid{background:linear-gradient(90deg,#60a5fa,#3b82f6)}
 .score-low{background:linear-gradient(90deg,#fbbf24,#f59e0b)}
-.link-row{display:flex;gap:0.35rem;flex-shrink:0}
-.link-btn{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:7px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);color:var(--text-tertiary);text-decoration:none;font-size:0.6rem;font-weight:700;transition:all 0.2s var(--ease-out)}
-.link-btn:hover{background:rgba(255,255,255,0.12);color:var(--text-primary);border-color:rgba(255,255,255,0.15)}
-.link-live{position:relative}
-.link-live::after{content:"";position:absolute;top:-2px;right:-2px;width:6px;height:6px;border-radius:50%;background:#34d399;box-shadow:0 0 6px #34d399}
+.link-row{display:flex;gap:0.3rem;flex-shrink:0;align-items:center}
+.link-btn{display:inline-flex;align-items:center;gap:0.28rem;padding:0.2rem 0.45rem;border-radius:6px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.09);color:var(--text-secondary);text-decoration:none;font-size:0.56rem;font-weight:600;letter-spacing:0.02em;transition:all 0.18s var(--ease-out);white-space:nowrap}
+.link-btn svg{flex-shrink:0;width:11px;height:11px;opacity:0.75}
+.link-btn:hover{color:var(--text-primary);transform:translateY(-1px);box-shadow:0 2px 8px rgba(0,0,0,0.3)}
+.link-btn-gh:hover{background:rgba(255,255,255,0.1);border-color:rgba(255,255,255,0.22)}
+.link-btn-vercel:hover{background:rgba(255,255,255,0.1);border-color:rgba(255,255,255,0.22)}
+.link-btn-gh svg,.link-btn-vercel svg{opacity:0.9}
+.link-live-dot{display:inline-block;width:5px;height:5px;border-radius:50%;background:#34d399;box-shadow:0 0 5px #34d399;flex-shrink:0}
 .source-tag{font-size:0.52rem;font-weight:700;padding:0.06rem 0.35rem;border-radius:3px;text-transform:uppercase;letter-spacing:0.04em}
 .source-reddit{background:rgba(255,98,0,0.1);color:#ff6200;border:1px solid rgba(255,98,0,0.2)}
 .source-ai{background:rgba(139,92,246,0.1);color:#a78bfa;border:1px solid rgba(139,92,246,0.2)}
@@ -1671,6 +1674,7 @@ function applySSEEvent(type,data){
           setVal("vFreeAds",data.freeAdsCount||0);setVal("vFreemium",data.freemiumCount||0);
           setVal("vSaasM",data.saasMonetizeCount||0);setVal("vOneTime",data.oneTimeCount||0);
           const st=document.getElementById("subTotal");
+          window._githubUsername=data.githubUsername||"malikmuhammadsaadshafiq-dev";
           const ghRaw=data.githubRepoCount||0;
           const ghCount=data.githubCount||0;
           if(st){
@@ -1778,17 +1782,25 @@ function renderValidatedQ(el,limit){
   }).join("")
 }
 
+// SVG icons for deployment buttons (static strings, no user data)
+const GH_ICON='<svg viewBox="0 0 16 16" fill="currentColor" width="11" height="11"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>';
+const VERCEL_ICON='<svg viewBox="0 0 116 100" fill="currentColor" width="10" height="10"><path d="M57.5 0L115 100H0L57.5 0z"/></svg>';
+
 function renderBuiltList(el,limit){
   const built=window._builtData||[];
   if(!el)return;
   if(!built.length){el.innerHTML='<div class="empty"><div class="empty-icon">&#128640;</div>No builds shipped yet</div>';return}
+  const ghUser=window._githubUsername||"malikmuhammadsaadshafiq-dev";
   el.innerHTML=built.slice(0,limit).map((b,i)=>{
+    const slug=b.slug||(b.title||"").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");
+    const ghUrl=b.githubUrl||(slug?"https://github.com/"+ghUser+"/"+slug:null);
+    const vercelUrl=b.liveUrl||b.vercelUrl||null;
     let links='<div class="link-row">';
-    if(b.githubUrl)links+='<a href="'+esc(b.githubUrl)+'" target="_blank" class="link-btn" title="GitHub">GH</a>';
-    if(b.liveUrl||b.vercelUrl)links+='<a href="'+esc(b.liveUrl||b.vercelUrl)+'" target="_blank" class="link-btn link-live" title="Live">&#9889;</a>';
+    if(ghUrl)links+='<a href="'+esc(ghUrl)+'" target="_blank" class="link-btn link-btn-gh" title="View on GitHub">'+GH_ICON+'<span>GitHub</span></a>';
+    if(vercelUrl)links+='<a href="'+esc(vercelUrl)+'" target="_blank" class="link-btn link-btn-vercel" title="View live on Vercel">'+VERCEL_ICON+'<span>Live</span><span class="link-live-dot"></span></a>';
     links+='</div>';
     const dirBadge=b._dirOnly?'<span style="font-size:0.5rem;padding:0.1rem 0.3rem;border-radius:3px;background:rgba(139,92,246,0.15);color:#a78bfa;border:1px solid rgba(139,92,246,0.2)">dir</span>':'';
-    const score=b._dirOnly?'—':(b.functionalityScore||b.qualityScore||'?');
+    const score=b._dirOnly?'--':(b.functionalityScore||b.qualityScore||'?');
     const time=b.builtAt?relTime(b.builtAt):'';
     return'<div class="list-item" style="animation:fade-in-up 0.4s var(--ease-out-expo) '+(i*0.03)+'s both">'
       +'<span class="list-rank">'+(i+1)+'</span>'
