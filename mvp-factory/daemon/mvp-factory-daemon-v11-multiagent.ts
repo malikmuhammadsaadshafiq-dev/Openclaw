@@ -47,6 +47,33 @@ const execAsync = promisify(exec);
 })();
 
 // ============================================================
+// Single-instance lock via PID file — kills any duplicate immediately
+// ============================================================
+(function enforceSingleInstance() {
+  const pidFile = '/tmp/mvp-factory-daemon.pid';
+  const myPid = process.pid;
+  try {
+    const existing = fsSync.readFileSync(pidFile, 'utf-8').trim();
+    const existingPid = parseInt(existing, 10);
+    if (existingPid && existingPid !== myPid) {
+      try {
+        // Check if that PID is actually alive
+        process.kill(existingPid, 0);
+        // If no error, process is alive — we are the duplicate, exit
+        console.error(`[SingleInstance] Another daemon already running (PID ${existingPid}). Exiting.`);
+        process.exit(0);
+      } catch {
+        // PID is dead — stale lock, we take over
+      }
+    }
+  } catch {}
+  fsSync.writeFileSync(pidFile, String(myPid));
+  process.on('exit', () => { try { fsSync.unlinkSync(pidFile); } catch {} });
+  process.on('SIGTERM', () => process.exit(0));
+  process.on('SIGINT',  () => process.exit(0));
+})();
+
+// ============================================================
 // Retry Loop Utility (exponential backoff)
 // ============================================================
 async function retryLoop<T>(
@@ -256,12 +283,10 @@ class Logger {
 
   async log(message: string, level: 'INFO' | 'ERROR' | 'WARN' | 'AGENT' = 'INFO') {
     const timestamp = new Date().toISOString();
-    const logLine = `[${timestamp}] [${level}] ${message}\n`;
-    console.log(logLine.trim());
-    try {
-      await fs.mkdir(CONFIG.paths.logs, { recursive: true });
-      await fs.appendFile(this.logFile, logLine);
-    } catch {}
+    const logLine = `[${timestamp}] [${level}] ${message}`;
+    // stdout only — pm2/nohup redirects this to the log file.
+    // Writing directly to the file AND via stdout caused every line to appear twice.
+    console.log(logLine);
   }
 
   async agent(agentName: string, message: string) {
@@ -869,7 +894,6 @@ class ResearchAgent {
       if (ideas.length > 0) break; // First working endpoint is sufficient
     }
 
-    await logger.agent(this.name, `Reddit: ${ideas.length} real posts collected`);
     return ideas;
   }
 
