@@ -171,7 +171,7 @@ function readStats() {
     dirProjectCount: dirTotal,
     githubRepoCount: ghRepoCount,
     githubLastFetched: _ghCache.lastFetched,
-    githubUsername: username,
+    githubUsername: readEnvValue("GITHUB_USERNAME") || "malikmuhammadsaadshafiq-dev",
     version: "v11-multiagent",
   };
 }
@@ -189,15 +189,29 @@ function readLogs(n = 200) {
 
 function getDaemonStatus() {
   try {
-    const active = execSync("systemctl is-active mvp-factory 2>/dev/null || echo stopped", { timeout: 5000 }).toString().trim();
-    let pid = "", mem = "", uptime = "", cpu = "";
+    let active = "stopped", pid = "", mem = "", uptime = "", cpu = "";
     try {
-      const show = execSync("systemctl show mvp-factory --property=ActiveEnterTimestamp,MainPID,MemoryCurrent 2>/dev/null", { timeout: 5000 }).toString();
-      const props = Object.fromEntries(show.trim().split("\n").map(l => { const i = l.indexOf("="); return [l.slice(0,i), l.slice(i+1)]; }));
-      pid = props.MainPID || "";
-      mem = props.MemoryCurrent ? (parseInt(props.MemoryCurrent) / 1024 / 1024).toFixed(0) + " MB" : "";
-      uptime = props.ActiveEnterTimestamp || "";
+      const pm2Json = execSync("pm2 jlist 2>/dev/null", { timeout: 5000 }).toString().trim();
+      const pm2List = JSON.parse(pm2Json);
+      const daemon = pm2List.find(p => p.name === "mvp-daemon");
+      if (daemon) {
+        active = daemon.pm2_env.status === "online" ? "active" : daemon.pm2_env.status;
+        pid = String(daemon.pid || "");
+        mem = daemon.monit && daemon.monit.memory ? (daemon.monit.memory / 1024 / 1024).toFixed(0) + " MB" : "";
+        const createdAt = daemon.pm2_env.created_at;
+        if (createdAt) uptime = new Date(createdAt).toISOString();
+      }
     } catch {}
+    if (active === "stopped") {
+      try {
+        const pidFileContent = execSync("cat /tmp/mvp-factory-daemon.pid 2>/dev/null", { timeout: 3000 }).toString().trim();
+        if (pidFileContent) {
+          execSync("kill -0 " + pidFileContent + " 2>/dev/null", { timeout: 3000 });
+          active = "active";
+          pid = pidFileContent;
+        }
+      } catch {}
+    }
     try {
       const sysInfo = execSync("uptime -p 2>/dev/null | head -1", { timeout: 3000 }).toString().trim();
       cpu = sysInfo;
