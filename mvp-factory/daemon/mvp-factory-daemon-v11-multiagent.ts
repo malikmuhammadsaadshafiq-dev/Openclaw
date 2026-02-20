@@ -2382,6 +2382,23 @@ class PMAgent {
       await logger.agent(this.name, `SELECTED: "${buildable.title}" (score: ${buildable.validation.overallScore}/10) | ${remaining.length} remaining in queue after this`);
       await logger.agent(this.name, `Idea details: type=${buildable.type} | monetization=${buildable.monetizationType || 'free_ads'} | audience=${buildable.audienceProfile?.demographics?.slice(0, 80)} | stack=${buildable.techStack?.slice(0, 60)}`);
 
+      // ── Duplicate build guard ──────────────────────────────────────────────
+      // Check if this idea was already built (by ID or by project directory slug)
+      const buildSlug = toSlug(buildable.title);
+      const buildTypeDir = buildable.type === 'mobile' ? 'mobile' : buildable.type === 'extension' ? 'extension' : 'web';
+      const expectedBuildPath = path.join(CONFIG.paths.output, buildTypeDir, buildSlug);
+      const builtRecordPath = path.join(CONFIG.paths.built, `${buildable.id}.json`);
+      let alreadyBuilt = false;
+      try { await fs.access(builtRecordPath); alreadyBuilt = true; } catch {}
+      if (!alreadyBuilt) { try { await fs.access(expectedBuildPath); alreadyBuilt = true; } catch {} }
+      if (alreadyBuilt) {
+        await logger.agent(this.name, `SKIP DUPLICATE BUILD: "${buildable.title}" already exists (${buildSlug}) — removing from queue`);
+        try { await fs.unlink(path.join(CONFIG.paths.validated, `${buildable.id}.json`)); } catch {}
+        this.isBuilding = false;
+        return { success: false, projectPath: '', githubUrl: '', vercelUrl: '', qualityScore: 0, error: 'Already built' };
+      }
+      // ──────────────────────────────────────────────────────────────────────
+
       await fs.writeFile(progressPath, JSON.stringify({
         phase: 'building',
         detail: `Building "${buildable.title}"`,
@@ -2866,6 +2883,15 @@ export async function GET() {
     const projectSlug = toSlug(idea.title);
     const typeDir = idea.type === 'mobile' ? 'mobile' : idea.type === 'extension' ? 'extension' : 'web';
     const projectPath = path.join(CONFIG.paths.output, typeDir, projectSlug);
+
+    // ── Duplicate guard (second line of defence inside buildAndDeploy) ──────
+    try {
+      await fs.access(path.join(CONFIG.paths.built, `${idea.id}.json`));
+      await logger.agent(this.name, `ABORT DUPLICATE: "${idea.title}" already has a built record — skipping`);
+      return { success: false, projectPath, githubUrl: '', vercelUrl: '', qualityScore: 0, error: 'Already built' };
+    } catch {}
+    // ────────────────────────────────────────────────────────────────────────
+
     await fs.mkdir(projectPath, { recursive: true });
 
     for (const file of files) {
@@ -3217,23 +3243,37 @@ ${buildStep}
     if (CONFIG.github.token && CONFIG.github.username) {
       try {
         const repoName = projectSlug.slice(0, 80);
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 30000);
-        await fetch('https://api.github.com/user/repos', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${CONFIG.github.token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            name: repoName,
-            description: `${idea.title} - ${idea.description}`.slice(0, 350),
-            private: false,
-            auto_init: false,
-          }),
-          signal: controller.signal,
-        });
-        clearTimeout(timer);
+        const ghHeaders = { 'Authorization': `Bearer ${CONFIG.github.token}`, 'Content-Type': 'application/json', 'User-Agent': 'mvp-factory/1.0' };
+
+        // ── Check if repo already exists ──────────────────────────────────
+        let repoAlreadyExists = false;
+        try {
+          const checkRes = await fetch(`https://api.github.com/repos/${CONFIG.github.username}/${repoName}`, { headers: ghHeaders });
+          if (checkRes.status === 200) {
+            repoAlreadyExists = true;
+            githubUrl = `https://github.com/${CONFIG.github.username}/${repoName}`;
+            await logger.agent(this.name, `GitHub: repo already exists — reusing ${githubUrl}`);
+          }
+        } catch {}
+        // ─────────────────────────────────────────────────────────────────
+
+        if (!repoAlreadyExists) {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 30000);
+          await fetch('https://api.github.com/user/repos', {
+            method: 'POST',
+            headers: ghHeaders,
+            body: JSON.stringify({
+              name: repoName,
+              description: `${idea.title} - ${idea.description}`.slice(0, 350),
+              private: false,
+              auto_init: false,
+            }),
+            signal: controller.signal,
+          });
+          clearTimeout(timer);
+          githubUrl = `https://github.com/${CONFIG.github.username}/${repoName}`;
+        }
 
         githubUrl = `https://github.com/${CONFIG.github.username}/${repoName}`;
         const gitOpts = { cwd: projectPath, timeout: 60000, maxBuffer: 10 * 1024 * 1024 };
