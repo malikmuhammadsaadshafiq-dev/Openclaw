@@ -530,6 +530,43 @@ async function clearFailure(id: string): Promise<void> {
   const t = await loadFailTracker(); delete t[id]; await saveFailTracker(t);
 }
 
+// Vercel project auto-pruner — keeps only the `keepNewest` most-recently-updated projects
+async function pruneVercelProjects(
+  token: string,
+  teamId: string,
+  keepNewest: number = 20
+): Promise<{ deleted: number; remaining: number }> {
+  const allProjects: Array<{ name: string; id: string; updatedAt: number }> = [];
+  let cursor: number | undefined;
+
+  while (true) {
+    let url = `https://api.vercel.com/v9/projects?limit=100&teamId=${encodeURIComponent(teamId)}`;
+    if (cursor) url += `&until=${cursor}`;
+    const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!resp.ok) break;
+    const data = await resp.json() as any;
+    for (const p of (data.projects || [])) {
+      allProjects.push({ name: p.name, id: p.id, updatedAt: p.updatedAt || 0 });
+    }
+    if (!data.pagination?.next || (data.projects || []).length < 100) break;
+    cursor = data.pagination.next;
+  }
+
+  // Sort newest first; prune everything beyond keepNewest
+  allProjects.sort((a, b) => b.updatedAt - a.updatedAt);
+  const toDelete = allProjects.slice(keepNewest);
+  let deleted = 0;
+  for (const p of toDelete) {
+    try {
+      const url = `https://api.vercel.com/v9/projects/${p.id}?teamId=${encodeURIComponent(teamId)}`;
+      const r = await fetch(url, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+      if (r.status === 204) deleted++;
+    } catch {}
+    await new Promise(r => setTimeout(r, 200));
+  }
+  return { deleted, remaining: allProjects.length - deleted };
+}
+
 // Telegram notification
 async function notifyTelegram(message: string): Promise<void> {
   if (!CONFIG.telegram.botToken || !CONFIG.telegram.chatId) return;
@@ -3177,6 +3214,16 @@ ${buildStep}
     // Deploy to Vercel (web/saas/api only — mobile and extension go GitHub-only)
     let vercelUrl = '';
     if (CONFIG.vercel.token && idea.type !== 'mobile' && idea.type !== 'extension') {
+      // Auto-prune old Vercel projects to stay under 200 hobby limit (keep newest 20)
+      try {
+        const pruneResult = await pruneVercelProjects(CONFIG.vercel.token, CONFIG.vercel.teamId, 20);
+        if (pruneResult.deleted > 0) {
+          await logger.agent(this.name, `Vercel pruned ${pruneResult.deleted} old projects (${pruneResult.remaining} remaining)`);
+        }
+      } catch (pruneErr) {
+        await logger.agent(this.name, `Vercel prune warning: ${pruneErr}`);
+      }
+
       try {
         const envFlag = process.env.NVIDIA_API_KEY ? ` -e NVIDIA_API_KEY="${process.env.NVIDIA_API_KEY}"` : '';
         const deployCmd = `npx vercel --token ${CONFIG.vercel.token} --scope ${CONFIG.vercel.teamId} --yes --prod${envFlag}`;
