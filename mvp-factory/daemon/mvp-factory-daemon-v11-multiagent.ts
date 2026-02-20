@@ -12,11 +12,39 @@
  */
 
 import * as fs from 'fs/promises';
+import * as fsSync from 'fs';
 import * as path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 
 const execAsync = promisify(exec);
+
+// Load .env file from daemon directory or project root so all API keys are
+// available even when the process is started without a pre-sourced shell.
+(function loadEnv() {
+  const candidates = [
+    path.join(path.dirname(new URL(import.meta.url).pathname), '../.env'),
+    path.join(path.dirname(new URL(import.meta.url).pathname), '.env'),
+    '/root/Openclaw-repo/mvp-factory/.env',
+    '/root/mvp-projects/.env',
+  ];
+  for (const p of candidates) {
+    try {
+      const raw = fsSync.readFileSync(p, 'utf-8');
+      for (const line of raw.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        const idx = trimmed.indexOf('=');
+        if (idx === -1) continue;
+        const key = trimmed.slice(0, idx).trim();
+        const val = trimmed.slice(idx + 1).trim().replace(/^["']|["']$/g, '');
+        if (key && !process.env[key]) process.env[key] = val;
+      }
+      console.log(`[Env] Loaded ${p}`);
+      break;
+    } catch {}
+  }
+})();
 
 // ============================================================
 // Retry Loop Utility (exponential backoff)
