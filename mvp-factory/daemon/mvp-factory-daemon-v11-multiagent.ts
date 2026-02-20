@@ -1284,7 +1284,11 @@ Return ONLY valid JSON array:
 class ValidationAgent {
   private name = 'ValidationAgent';
 
-  async run(rawIdeas: RawIdea[], onProgress?: (phase: string, detail: string, stats: any) => Promise<void>): Promise<ValidatedIdea[]> {
+  async run(
+    rawIdeas: RawIdea[],
+    onProgress?: (phase: string, detail: string, stats: any) => Promise<void>,
+    onApproved?: (idea: ValidatedIdea) => Promise<void>,   // called immediately when each idea passes
+  ): Promise<ValidatedIdea[]> {
     await logger.agent(this.name, `========== VALIDATION START: ${rawIdeas.length} ideas to evaluate ==========`);
 
     const existingProducts = await loadExistingProducts();
@@ -1315,7 +1319,11 @@ class ValidationAgent {
         );
         if (result.validation.verdict === 'build') {
           validated.push(result);
+          // Track in existing so subsequent ideas in this same cycle don't clash
+          existingProducts.push({ title: result.title, slug: toSlug(result.title), keywords: extractKeywords(result.title), description: result.description, source: 'validated' });
           await logger.agent(this.name, `${progress} ✓ APPROVED: "${result.title.slice(0, 60)}" | score=${result.validation.overallScore}/10 | demand=${result.validation.marketDemand} gap=${result.validation.competitionGap} tech=${result.validation.technicalFeasibility} | "${result.validation.uniqueAngle.slice(0, 80)}"`);
+          // Immediately notify caller so it can queue+build without waiting for the full cycle
+          if (onApproved) await onApproved(result).catch(async (e) => { await logger.agent(this.name, `onApproved error: ${e}`); });
         } else {
           rejected++;
           await logger.agent(this.name, `${progress} ✗ REJECTED: "${rawIdea.title.slice(0, 60)}" | verdict=${result.validation.verdict} | ${result.validation.reasoning.slice(0, 120)}`);
@@ -2199,10 +2207,10 @@ class PMAgent {
           const ts = new Date().toISOString().replace(/[:.]/g, '-');
           const byPlatform: Record<string, any[]> = {};
           for (const r of rawIdeas) {
-            const p = r.sourcePlatform === 'hackernews' ? 'hackernews' : r.sourcePlatform === 'reddit' ? 'reddit' : 'devto';
+            const p = r.sourcePlatform || 'other';
             if (!byPlatform[p]) byPlatform[p] = [];
             byPlatform[p].push({
-              subreddit: r.sourcePlatform === 'reddit' ? (r.sourcePost.match(/\/r\/([^\/]+)/)?.[1] || 'unknown') : (r.sourcePlatform === 'devto' ? 'Dev.to' : 'Hacker News'),
+              subreddit: r.sourcePlatform === 'reddit' ? (r.sourcePost.match(/\/r\/([^\/]+)/)?.[1] || 'unknown') : r.sourcePlatform === 'devto' ? 'Dev.to' : r.sourcePlatform === 'github' ? 'GitHub' : 'Hacker News',
               postTitle: r.title,
               postBody: r.description ? r.description.substring(0, 500) : '',
               score: r.upvotes || 0,
@@ -2227,9 +2235,10 @@ class PMAgent {
 
       const redditCount = rawIdeas.filter(i => i.sourcePlatform === 'reddit').length;
       const hnCount = rawIdeas.filter(i => i.sourcePlatform === 'hackernews').length;
-      const devtoCount = rawIdeas.filter(i => i.sourcePlatform !== 'reddit' && i.sourcePlatform !== 'hackernews').length;
+      const devtoCount = rawIdeas.filter(i => i.sourcePlatform === 'devto').length;
+      const githubCount = rawIdeas.filter(i => i.sourcePlatform === 'github').length;
 
-      await logger.agent(this.name, `PHASE 2: Starting validation — ${rawIdeas.length} ideas (Reddit: ${redditCount}, HN: ${hnCount}, Dev.to: ${devtoCount})`);
+      await logger.agent(this.name, `PHASE 2: Starting validation — ${rawIdeas.length} ideas (Reddit: ${redditCount}, HN: ${hnCount}, Dev.to: ${devtoCount}, GitHub: ${githubCount})`);
 
       // Write pipeline progress - validation starting with source breakdown
       await fs.writeFile(progressPath, JSON.stringify({
@@ -2242,18 +2251,36 @@ class PMAgent {
         ideas: rawIdeas.slice(0, 8).map(i => ({ title: i.title, source: i.sourcePlatform || 'unknown' })),
       })).catch(() => {});
 
-      // PHASE 2: Validation — pass progress callback to update pipeline-progress.json per idea
-      const validatedIdeas = await this.validationAgent.run(rawIdeas, async (phase, detail, stats) => {
-        await fs.writeFile(progressPath, JSON.stringify({
-          phase: 'validating',
-          detail: `Scoring ideas — ${stats.validated} approved, ${stats.rejected} rejected so far`,
-          currentAction: detail,
-          timestamp: new Date().toISOString(),
-          ideaCount: rawIdeas.length,
-          stats: { found: rawIdeas.length, validated: stats.validated, rejected: stats.rejected, idx: stats.idx },
-          ideas: rawIdeas.slice(0, 8).map(i => ({ title: i.title, source: i.sourcePlatform || 'unknown' })),
-        })).catch(() => {});
-      });
+      // PHASE 2: Validation — each approved idea is immediately queued + build triggered.
+      // This means FrontendAgent/BackendAgent start working on idea #1 while ideas #2-12
+      // are still being validated — no waiting for the full cycle to finish.
+      const validatedIdeas = await this.validationAgent.run(
+        rawIdeas,
+        async (phase, detail, stats) => {
+          await fs.writeFile(progressPath, JSON.stringify({
+            phase: 'validating',
+            detail: `Scoring ideas — ${stats.validated} approved, ${stats.rejected} rejected so far`,
+            currentAction: detail,
+            timestamp: new Date().toISOString(),
+            ideaCount: rawIdeas.length,
+            stats: { found: rawIdeas.length, validated: stats.validated, rejected: stats.rejected, idx: stats.idx },
+            ideas: rawIdeas.slice(0, 8).map(i => ({ title: i.title, source: i.sourcePlatform || 'unknown' })),
+          })).catch(() => {});
+        },
+        async (idea) => {
+          // Called immediately when each idea is approved — save to queue right away
+          // so FrontendAgent/BackendAgent can start building without waiting for full cycle
+          await this.saveValidatedIdeas([idea]);
+          await logger.agent(this.name, `[IMMEDIATE QUEUE] "${idea.title}" queued for building — FrontendAgent/BackendAgent can start now`);
+          // Fire a non-blocking build cycle so the build agent picks it up ASAP
+          if (!this.isBuilding) {
+            this.isBuilding = true;
+            this.runBuildFromQueue()
+              .catch(async (e) => { await logger.agent(this.name, `Immediate build error: ${e}`); })
+              .finally(() => { this.isBuilding = false; });
+          }
+        },
+      );
 
       if (validatedIdeas.length === 0) {
         await logger.agent(this.name, 'No ideas passed validation. Research cycle complete.');
@@ -2264,7 +2291,7 @@ class PMAgent {
         return [];
       }
 
-      // Save validated ideas to queue
+      // Ideas were already queued individually via onApproved — this is now a no-op dedup pass
       await this.saveValidatedIdeas(validatedIdeas);
       await logger.agent(this.name, `Research+Validation complete: ${validatedIdeas.length} ideas added to build queue`);
       await logger.agent(this.name, `Queue summary: ${validatedIdeas.map((v, i) => `#${i+1} ${v.title.slice(0,35)} (${v.validation.overallScore}/10)`).join(' | ')}`);
@@ -3461,14 +3488,27 @@ async function runForever(): Promise<never> {
     await logger.log(`Unhandled rejection (contained): ${reason}`, 'ERROR');
   });
 
-  // --- Initial cycles (run once at startup before entering the loop) ---
-  await logger.log('Running initial Research+Validation cycle...');
-  try { await pm.runResearchAndValidation(); } catch (e) { await logger.log(`Init research error: ${e}`, 'ERROR'); }
-  lastResearch = Date.now();
+  // --- Initial cycles — fire BOTH concurrently so neither blocks the other ---
+  // Research+Validation runs in background; Build starts immediately from any
+  // already-queued ideas while validation is still scoring new ones.
+  await logger.log('Starting Research+Validation and Build cycles concurrently...');
 
-  await logger.log('Running initial Build from queue...');
-  try { await pm.runBuildFromQueue(); } catch (e) { await logger.log(`Init build error: ${e}`, 'ERROR'); }
-  lastBuild = Date.now();
+  researchRunning = true;
+  pm.runResearchAndValidation()
+    .then(() => { lastResearch = Date.now(); })
+    .catch(async (e) => { await logger.log(`Init research error: ${e}`, 'ERROR'); lastResearch = Date.now(); })
+    .finally(() => { researchRunning = false; });
+
+  buildRunning = true;
+  pm.runBuildFromQueue()
+    .then(async (result) => {
+      lastBuild = Date.now();
+      if (result && !result.success && (result.error === 'Empty queue' || result.error === 'No ideas')) {
+        await logger.log('Queue empty at startup — build will start once validation approves first idea');
+      }
+    })
+    .catch(async (e) => { await logger.log(`Init build error: ${e}`, 'ERROR'); lastBuild = Date.now(); })
+    .finally(() => { buildRunning = false; });
 
   await logger.log(`Daemon loop running — Research every ${RESEARCH_EVERY/60000}m, Build every ${BUILD_EVERY/60000}m`);
   await notifyTelegram('MVP Factory v11 (Multi-Agent) started!');
