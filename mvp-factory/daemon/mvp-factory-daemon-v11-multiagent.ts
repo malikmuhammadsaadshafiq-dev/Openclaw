@@ -3148,6 +3148,13 @@ ${buildStep}
 
         githubUrl = `https://github.com/${CONFIG.github.username}/${repoName}`;
         const gitOpts = { cwd: projectPath, timeout: 60000, maxBuffer: 10 * 1024 * 1024 };
+        // Write .gitignore before staging to prevent node_modules (100MB+) from being committed
+        try {
+          await fs.writeFile(path.join(projectPath, '.gitignore'), [
+            'node_modules/', '.next/', 'out/', 'dist/', '.vercel/',
+            '.env', '.env.local', '.env.*.local', '*.log', '.DS_Store',
+          ].join('\n'));
+        } catch {}
         await execAsync('git init', gitOpts);
         await execAsync('git config user.email "mvp-factory@neurafinity.ai"', gitOpts);
         await execAsync('git config user.name "MVP Factory v11"', gitOpts);
@@ -3172,7 +3179,7 @@ ${buildStep}
     if (CONFIG.vercel.token && idea.type !== 'mobile' && idea.type !== 'extension') {
       try {
         const envFlag = process.env.NVIDIA_API_KEY ? ` -e NVIDIA_API_KEY="${process.env.NVIDIA_API_KEY}"` : '';
-        const deployCmd = `npx vercel --token ${CONFIG.vercel.token} --scope ${CONFIG.vercel.teamId} --yes --prod --no-git${envFlag}`;
+        const deployCmd = `npx vercel --token ${CONFIG.vercel.token} --scope ${CONFIG.vercel.teamId} --yes --prod${envFlag}`;
         const { stdout, stderr } = await execAsync(deployCmd, { cwd: projectPath, timeout: 600000 });
         const output = stdout + stderr;
         const urlMatch = output.match(/https:\/\/[^\s]+\.vercel\.app/);
