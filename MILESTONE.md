@@ -35,6 +35,20 @@ The pipeline is functional end-to-end. We are in **maintenance/bug-fix mode**.
 - Agent distortion: duplicate logs, ghost instances, API auth issues
 - Frontend/Backend agents build independently of Research/Validation
 
+### Latest Fix (2026-02-21) — BackendAgent placeholder data
+**Root cause:** FrontendAgent and BackendAgent ran in parallel with NO shared context.
+Frontend invented API route paths (`/api/analyze`) that never matched what backend generated
+(`/api/monitor-asin`, `/api/check-listing`). Resulted in: placeholder demo data everywhere,
+forms that did nothing, features completely non-functional (e.g. HijackSentry ASIN input).
+
+**Fix applied:**
+- Added `repairFrontendBackendIntegration()` to PMAgent (PHASE 4b)
+- After both agents finish, reads EXACT routes from `backendSpec.apiRoutes` (path + input/output schemas)
+- Uses Kimi K2.5 to rewrite each interactive `page.tsx` to call those real routes with correct bodies
+- Runs in both `runFullPipeline` and `runBuildFromQueue`
+- Also fixed SaaS/WebApp frontend prompts to ban hardcoded data and require real fetch() calls
+- Server pm2 process name is `mvp-daemon` (not `mvp-factory-daemon`)
+
 ---
 
 ## Key Files
