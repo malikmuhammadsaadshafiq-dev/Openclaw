@@ -1833,9 +1833,10 @@ TECHNICAL:
 1. Next.js 14 App Router, TypeScript, TailwindCSS
 2. Simple CSS transitions (no framer-motion — keeps build reliable)
 3. Lucide-react for icons ONLY
-4. fetch('/api/...') for all data operations
-5. localStorage for demo auth state (real auth goes in backend)
-6. Responsive — mobile hamburger menu
+4. fetch('/api/...') for ALL data operations — NO hardcoded/placeholder data anywhere
+5. Dashboard MUST fetch real data from API on load (useEffect + fetch) — do NOT hardcode sample rows
+6. All forms MUST submit to real API routes with actual request bodies — no fake submit handlers
+7. Responsive — mobile hamburger menu
 
 FILES TO GENERATE:
 - src/app/layout.tsx
@@ -1891,10 +1892,12 @@ REQUIREMENTS:
 2. TailwindCSS — CUSTOM design matching the design system (not generic)
 3. Simple CSS transitions for animations (no framer-motion — reduces build failures)
 4. Lucide-react for icons ONLY
-5. Every feature calls a real API route (fetch('/api/...'))
-6. Loading states, error states, responsive design (mobile-first)
-7. Form validation with clear error messages
-8. Freemium upgrade CTA at key moments — "Upgrade for unlimited access"
+5. Every feature calls a real API route (fetch('/api/...')) — NO hardcoded/sample/placeholder data
+6. All input forms MUST have submit handlers that POST to a real /api/ route with the correct body
+7. Data lists/tables MUST be populated by fetching from a real /api/ route (useEffect on mount)
+8. Loading states, error states, responsive design (mobile-first)
+9. Form validation with clear error messages
+10. Freemium upgrade CTA at key moments — "Upgrade for unlimited access"
 
 Generate ONLY:
 - src/app/layout.tsx
@@ -2360,18 +2363,22 @@ class PMAgent {
         this.backendAgent.run(bestIdea),
       ]);
 
-      // PHASE 4: Merge & Quality Check
+      // PHASE 4: Merge, Integration Repair & Quality Check
       await logger.agent(this.name, 'PHASE 4: Merging frontend + backend and running quality checks...');
       const mergedFiles = await this.mergeAndFinalize(bestIdea, frontendResult, backendResult);
 
+      // Wire frontend pages to actual backend routes
+      await logger.agent(this.name, 'PHASE 4b: Integration repair — wiring frontend pages to real backend routes...');
+      const repairedFiles = await this.repairFrontendBackendIntegration(bestIdea, mergedFiles, backendResult.spec);
+
       // Quality gate
-      const quality = this.assessQuality(mergedFiles, bestIdea);
+      const quality = this.assessQuality(repairedFiles, bestIdea);
       await logger.agent(this.name, `Quality score: ${quality.score}/20 | Issues: ${quality.issues.length > 0 ? quality.issues.join('; ') : 'none'}`);
 
       if (quality.score < 10) {
         await logger.agent(this.name, `Quality too low (${quality.score}/20), attempting fix...`);
         // Try to fix the most critical issues
-        const fixedFiles = await this.fixQualityIssues(mergedFiles, bestIdea, quality.issues);
+        const fixedFiles = await this.fixQualityIssues(repairedFiles, bestIdea, quality.issues);
         const recheck = this.assessQuality(fixedFiles, bestIdea);
         if (recheck.score >= 10) {
           await logger.agent(this.name, `Fixed! New score: ${recheck.score}/20`);
@@ -2380,7 +2387,7 @@ class PMAgent {
       }
 
       // PHASE 5: Build & Deploy
-      return this.buildAndDeploy(bestIdea, mergedFiles, quality.score);
+      return this.buildAndDeploy(bestIdea, repairedFiles, quality.score);
 
     } catch (error) {
       const errStr = String(error).slice(0, 300);
@@ -2479,7 +2486,12 @@ class PMAgent {
 
       await logger.agent(this.name, `PHASE 4: Merging ${frontendResult.files.length} frontend + ${backendResult.files.length} backend files...`);
       const mergedFiles = await this.mergeAndFinalize(buildable, frontendResult, backendResult);
-      const quality = this.assessQuality(mergedFiles, buildable);
+
+      // Wire frontend pages to actual backend routes (fixes placeholder data + disconnected forms)
+      await logger.agent(this.name, 'PHASE 4b: Integration repair — wiring frontend pages to real backend routes...');
+      const repairedFiles = await this.repairFrontendBackendIntegration(buildable, mergedFiles, backendResult.spec);
+
+      const quality = this.assessQuality(repairedFiles, buildable);
       await logger.agent(this.name, `Quality gate: ${quality.score}/20 | Issues: ${quality.issues.length ? quality.issues.join('; ') : 'none'}`);
 
       await fs.writeFile(progressPath, JSON.stringify({
@@ -2489,7 +2501,7 @@ class PMAgent {
         ideas: remaining.slice(0, 5).map(i => ({ title: i.title, source: i.sourcePlatform, score: i.validation?.overallScore })),
       })).catch(() => {});
 
-      return this.buildAndDeploy(buildable, mergedFiles, quality.score);
+      return this.buildAndDeploy(buildable, repairedFiles, quality.score);
     } catch (error) {
       await logger.agent(this.name, `BUILD FROM QUEUE ERROR: ${String(error).slice(0, 200)}`);
       return { success: false, projectPath: '', githubUrl: '', vercelUrl: '', qualityScore: 0, error: String(error) };
@@ -2723,6 +2735,89 @@ Built by MVP Factory v11 (Multi-Agent Architecture)
     }
 
     return allFiles;
+  }
+
+  /**
+   * After Frontend + Backend agents finish independently, their outputs are often disconnected:
+   * the frontend invents API route paths that don't match what the backend actually generated.
+   * This step reads the EXACT routes from backendSpec and rewrites each interactive frontend
+   * page to call those real routes with the correct request bodies.
+   */
+  private async repairFrontendBackendIntegration(
+    idea: ValidatedIdea,
+    files: Array<{ path: string; content: string }>,
+    backendSpec: BackendSpec
+  ): Promise<Array<{ path: string; content: string }>> {
+    if (!backendSpec.apiRoutes || backendSpec.apiRoutes.length === 0) return files;
+
+    const routeMap = backendSpec.apiRoutes.map(r =>
+      `${r.method} ${r.path}\n  Input: ${r.inputSchema}\n  Output: ${r.outputSchema}\n  Purpose: ${r.purpose}`
+    ).join('\n\n');
+
+    // Only patch interactive pages — not layout, not globals, not static components
+    const interactivePages = files.filter(f =>
+      f.path.endsWith('page.tsx') &&
+      !f.path.includes('/api/') &&
+      f.content.length > 300
+    );
+
+    if (interactivePages.length === 0) return files;
+
+    const fileMap = new Map(files.map(f => [f.path, f.content]));
+
+    for (const page of interactivePages) {
+      try {
+        await logger.agent(this.name, `Integration repair: patching ${page.path} to use real backend routes...`);
+
+        const prompt = `You are a senior full-stack engineer. Fix this Next.js page so it calls the real backend API routes correctly.
+
+PRODUCT: ${idea.title}
+FILE: ${page.path}
+
+BACKEND ROUTES THAT ACTUALLY EXIST — use ONLY these exact paths:
+${routeMap}
+
+CURRENT PAGE CODE:
+${page.content.slice(0, 10000)}
+
+WHAT TO FIX:
+1. Replace ALL hardcoded/placeholder/demo/sample data with real fetch() calls to the routes above
+2. Use EXACTLY the route paths listed — do not invent new paths or change them
+3. Match the input schemas when constructing request bodies
+4. Add useState + loading/error states for every async operation
+5. Render the actual API response — not hardcoded arrays or mock objects
+6. For forms (ASINs, products, inputs): make the submit handler POST to the correct route with the correct body
+7. For data tables/lists: fetch from the correct GET route on component mount (useEffect)
+8. Preserve ALL existing UI design, layout, and styling — only fix the data layer
+9. If the UI shows a feature that has no matching backend route, show a "coming soon" state instead of fake data
+
+Return ONLY the complete corrected .tsx file. No explanation. No markdown fences.`;
+
+        const response = await kimi.complete(prompt, {
+          maxTokens: 12000,
+          temperature: 0.15,
+          systemPrompt: 'You are a senior full-stack engineer. You integrate frontend pages with real backend API routes. You preserve all UI/design but fix the data layer so nothing is hardcoded.',
+        });
+
+        // Strip markdown fences if the LLM wrapped the output
+        const cleaned = response
+          .replace(/^```(?:tsx?|jsx?|typescript)?\n?/m, '')
+          .replace(/\n?```\s*$/m, '')
+          .trim();
+
+        // Only accept if the result looks like a real file (not a truncated response)
+        if (cleaned.length > page.content.length * 0.4 && (cleaned.includes('fetch(') || cleaned.includes('useEffect'))) {
+          fileMap.set(page.path, cleaned);
+          await logger.agent(this.name, `Integration repair: ✓ patched ${page.path}`);
+        } else {
+          await logger.agent(this.name, `Integration repair: response too short or no fetch() — keeping original ${page.path}`);
+        }
+      } catch (err) {
+        await logger.agent(this.name, `Integration repair: skipped ${page.path} — ${String(err).slice(0, 100)}`);
+      }
+    }
+
+    return Array.from(fileMap.entries()).map(([path, content]) => ({ path, content }));
   }
 
   private assessQuality(files: Array<{ path: string; content: string }>, idea: ValidatedIdea): { score: number; issues: string[] } {
