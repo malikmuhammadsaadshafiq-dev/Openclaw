@@ -222,15 +222,38 @@ function getDaemonStatus() {
 
 
 function getCurrentBuild() {
-  const logs = readLogs(50);
-  let current = null;
+  // Primary source: pipeline-progress.json (written by daemon in real-time)
+  try {
+    const prog = JSON.parse(fs.readFileSync(PATHS.pipelineProgress, "utf-8"));
+    if (prog && prog.phase === "building" && prog.detail) {
+      const titleMatch = prog.detail.match(/Building "(.+?)"/);
+      const title = titleMatch ? titleMatch[1] : prog.detail;
+      return {
+        title,
+        startedAt: prog.timestamp || "",
+        currentAction: prog.currentAction || "",
+        ideaCount: prog.ideaCount || 0,
+        ideas: prog.ideas || [],
+      };
+    }
+    if (prog && prog.phase === "validating") {
+      return {
+        title: null,
+        phase: "validating",
+        detail: prog.detail || "Validating ideas...",
+        currentAction: prog.currentAction || "",
+      };
+    }
+  } catch {}
+  // Fallback: scan log file for SELECTED: pattern
+  const logs = readLogs(200);
   for (let i = logs.length - 1; i >= 0; i--) {
     const line = logs[i];
     if (line.includes("PIPELINE COMPLETE") || line.includes("MVP COMPLETE") || line.includes("Build error") || line.includes("Queue empty")) break;
     const match = line.match(/SELECTED: "(.+?)"|Building MVP: (.+?)\s|Building from queue: "(.+?)"/);
-    if (match) { current = { title: match[1] || match[2] || match[3], startedAt: line.match(/\[(.*?)\]/)?.[1] || "" }; break; }
+    if (match) { return { title: match[1] || match[2] || match[3], startedAt: line.match(/\[(.*?)\]/)?.[1] || "", currentAction: "", ideaCount: 0, ideas: [] }; break; }
   }
-  return current;
+  return null;
 }
 
 function getSystemInfo() {
