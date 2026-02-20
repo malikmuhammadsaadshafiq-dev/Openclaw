@@ -723,8 +723,8 @@ class ResearchAgent {
   async run(): Promise<RawIdea[]> {
     await logger.agent(this.name, 'Starting REAL research cycle across Reddit, HackerNews, Dev.to, GitHub Trending...');
 
-    // Write pipeline progress so dashboard always shows activity
-    const progressPath = path.join(CONFIG.paths.output, 'pipeline-progress.json');
+    // Use separate research-progress.json — never overwrite the build pipeline-progress.json
+    const progressPath = path.join(CONFIG.paths.output, 'research-progress.json');
     const writeProgress = async (phase: string, detail: string, ideas?: any[]) => {
       await fs.writeFile(progressPath, JSON.stringify({
         phase, detail, timestamp: new Date().toISOString(),
@@ -1259,9 +1259,9 @@ Return ONLY valid JSON array:
       await logger.agent(this.name, `Post analysis failed: ${err}`);
     }
 
-    // If AI analysis fails, return raw posts as-is (still REAL data)
-    await logger.agent(this.name, 'AI analysis failed, returning raw posts as ideas');
-    return balancedPosts.slice(0, 10);
+    // AI analysis failed — do NOT return raw posts (their titles are Reddit headlines, not product ideas)
+    await logger.agent(this.name, 'AI analysis failed — returning empty to avoid raw post titles polluting the queue', 'WARN');
+    return [];
   }
 
   private deduplicateRawIdeas(ideas: RawIdea[]): RawIdea[] {
@@ -2190,8 +2190,8 @@ class PMAgent {
     try {
       // PHASE 1: Research
       await logger.agent(this.name, 'PHASE 1: Research Agent deployed...');
-      // Write pipeline progress - research starting
-      const progressPath = path.join(CONFIG.paths.output, 'pipeline-progress.json');
+      // Use a SEPARATE progress file for research — never overwrite the build pipeline status
+      const progressPath = path.join(CONFIG.paths.output, 'research-progress.json');
       await fs.writeFile(progressPath, JSON.stringify({
         phase: 'researching',
         detail: `Collecting real posts from Reddit (55 subreddits), HN, Dev.to, GitHub Trending...`,

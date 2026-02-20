@@ -66,6 +66,7 @@ const PATHS = {
   signals: "/root/mvp-projects/signals",
   installedSkills: "/root/mvp-projects/installed-skills.json",
   pipelineProgress: "/root/mvp-projects/pipeline-progress.json",
+  researchProgress: "/root/mvp-projects/research-progress.json",
   // Reddit-specific signal subdirectories
   redditHot: "/root/mvp-projects/signals/reddit-hot",
   redditNew: "/root/mvp-projects/signals/reddit-new",
@@ -667,7 +668,7 @@ function onFileChange() {
 }
 
 // Watch log file and pipeline-progress.json for changes
-const watchTargets = [PATHS.logsV11, PATHS.logs, PATHS.pipelineProgress];
+const watchTargets = [PATHS.logsV11, PATHS.logs, PATHS.pipelineProgress, PATHS.researchProgress];
 for (const target of watchTargets) {
   try {
     fs.watch(target, { persistent: false }, onFileChange);
