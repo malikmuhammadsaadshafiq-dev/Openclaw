@@ -163,7 +163,7 @@ interface RawIdea {
   problem: string;
   targetUsers: string;
   sourcePost: string;
-  sourcePlatform: 'reddit' | 'x' | 'hackernews';
+  sourcePlatform: 'reddit' | 'x' | 'hackernews' | 'devto' | 'github';
   upvotes: number;
   commentCount: number;
   painLevel: 'mild' | 'moderate' | 'severe';
@@ -1079,7 +1079,7 @@ class ResearchAgent {
               problem: '',
               targetUsers: '',
               sourcePost: article.url || article.canonical_url || `https://dev.to/${article.path}`,
-              sourcePlatform: 'hackernews' as any, // categorize as tech source
+              sourcePlatform: 'devto' as any,
               upvotes: article.positive_reactions_count || 0,
               commentCount: article.comments_count || 0,
               painLevel: article.positive_reactions_count > 100 ? 'severe' : article.positive_reactions_count > 30 ? 'moderate' : 'mild',
@@ -1130,7 +1130,7 @@ class ResearchAgent {
               problem: '',
               targetUsers: '',
               sourcePost: repo.html_url || '',
-              sourcePlatform: 'hackernews' as any, // categorize as tech
+              sourcePlatform: 'github' as any,
               upvotes: repo.stargazers_count || 0,
               commentCount: repo.forks_count || 0,
               painLevel: repo.stargazers_count > 500 ? 'severe' : repo.stargazers_count > 100 ? 'moderate' : 'mild',
@@ -1145,27 +1145,35 @@ class ResearchAgent {
   }
 
   private async analyzePostsForIdeas(posts: RawIdea[]): Promise<RawIdea[]> {
-    // Stratified sampling: group posts by subreddit/source tag, take top 2-3 from each group.
-    // This prevents high-traffic dev communities from drowning out consumer/lifestyle posts.
-    const groups = new Map<string, RawIdea[]>();
+    // Platform-balanced sampling: enforce per-platform quotas so Reddit doesn't crowd out
+    // HN, Dev.to, and GitHub. Each platform gets a hard slot allocation.
+    const byPlatform = new Map<string, RawIdea[]>();
     for (const p of posts) {
-      const key = p.tags?.[0] || p.sourcePlatform || 'other';
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key)!.push(p);
+      const platform = p.sourcePlatform || 'other';
+      if (!byPlatform.has(platform)) byPlatform.set(platform, []);
+      byPlatform.get(platform)!.push(p);
     }
-    // Sort each group by upvotes, take top 2, then fill up to 60 total
-    const stratified: RawIdea[] = [];
-    for (const group of groups.values()) {
-      stratified.push(...group.sort((a, b) => b.upvotes - a.upvotes).slice(0, 2));
+    for (const platformPosts of byPlatform.values()) {
+      platformPosts.sort((a, b) => b.upvotes - a.upvotes);
     }
-    // If under 60, pad with remaining high-engagement posts not yet included
-    const included = new Set(stratified.map(p => p.sourcePost));
-    const extras = posts
-      .filter(p => !included.has(p.sourcePost))
-      .sort((a, b) => b.upvotes - a.upvotes);
-    const topPosts = [...stratified, ...extras].slice(0, 60);
+    // Hard quotas per platform — Reddit capped at 20 so others get fair representation
+    const PLATFORM_QUOTAS: Record<string, number> = { reddit: 20, hackernews: 15, devto: 12, github: 10 };
+    const topPosts: RawIdea[] = [];
+    for (const [platform, quota] of Object.entries(PLATFORM_QUOTAS)) {
+      topPosts.push(...(byPlatform.get(platform) || []).slice(0, quota));
+    }
+    // Pad with any remaining posts (other platforms) up to 60 total
+    const included = new Set(topPosts.map(p => p.sourcePost));
+    const extras = posts.filter(p => !included.has(p.sourcePost)).sort((a, b) => b.upvotes - a.upvotes);
+    topPosts.push(...extras);
+    const balancedPosts = topPosts.slice(0, 60);
+    // Log platform breakdown for the sample sent to LLM
+    const sampleBreakdown = ['reddit', 'hackernews', 'devto', 'github']
+      .map(pl => `${pl}: ${balancedPosts.filter(p => p.sourcePlatform === pl).length}`)
+      .join(', ');
+    await logger.agent(this.name, `LLM sample (60 posts): ${sampleBreakdown}`);
 
-    const postSummaries = topPosts
+    const postSummaries = balancedPosts
       .map(p => `[${p.sourcePlatform}${p.tags?.[0] ? '/r/'+p.tags[0] : ''}] [${p.upvotes}↑ ${p.commentCount}💬] ${p.title}\n${p.description.slice(0, 200)}\nSource: ${p.sourcePost}`)
       .join('\n---\n');
 
@@ -1182,7 +1190,10 @@ Extract 12 product ideas that solve REAL problems visible in these posts. Each i
 3. Have REAL functionality (not just a UI shell)
 4. Be something people would actually PAY for or regularly use
 
-DIVERSITY REQUIREMENT — you MUST cover a range of audiences. Do NOT only extract developer tools.
+SOURCE DIVERSITY — you MUST draw ideas from ALL platforms in the list above (reddit, hackernews, devto, github), not just Reddit.
+Aim for a mix of sources: ~4 from Reddit, ~3 from HackerNews, ~3 from Dev.to/GitHub, ~2 from any source.
+
+AUDIENCE DIVERSITY — you MUST cover a range of audiences. Do NOT only extract developer tools.
 Aim for a mix like:
 - 3-4 consumer/lifestyle products (health, finance, relationships, parenting, cooking, fitness, travel)
 - 2-3 business/professional tools (sales, HR, legal, accounting, real estate, teaching)
@@ -1193,10 +1204,7 @@ If the posts contain pain points from non-developer communities, PRIORITIZE thos
 BAD examples (too generic): "AI writing assistant", "task manager", "portfolio builder", "code snippet tool"
 GOOD examples: "meal prep optimizer for diabetics", "landlord-tenant dispute tracker", "Etsy seller profit calculator", "band rehearsal scheduler", "IEP goal tracker for special ed teachers"
 
-For each idea, determine:
-- The core PROBLEM being solved (from the actual posts)
-- WHO specifically would use it (be precise — not "anyone" or "everyone")
-- What PAIN LEVEL it addresses (mild/moderate/severe)
+For each idea, include the EXACT source platform from the post that inspired it.
 
 Return ONLY valid JSON array:
 [{
@@ -1205,6 +1213,8 @@ Return ONLY valid JSON array:
   "problem": "The exact pain point from the posts",
   "targetUsers": "Specific audience (e.g., 'special education teachers managing IEP goals for 30+ students')",
   "painLevel": "mild|moderate|severe",
+  "sourcePlatform": "reddit|hackernews|devto|github",
+  "sourcePost": "exact URL from the post above that inspired this idea",
   "tags": ["category1", "category2"]
 }]`;
 
@@ -1216,16 +1226,34 @@ Return ONLY valid JSON array:
 
       const parsed = extractJSON(response, 'array');
       if (parsed && Array.isArray(parsed) && parsed.length > 0) {
-        // Map back to RawIdea format but keep reference to REAL source posts
-        return parsed.map((idea: any, idx: number) => ({
-          ...idea,
-          sourcePost: topPosts[Math.min(idx, topPosts.length - 1)]?.sourcePost || topPosts[0]?.sourcePost || '',
-          sourcePlatform: topPosts[Math.min(idx, topPosts.length - 1)]?.sourcePlatform || 'hackernews',
-          upvotes: topPosts[Math.min(idx, topPosts.length - 1)]?.upvotes || 0,
-          commentCount: topPosts[Math.min(idx, topPosts.length - 1)]?.commentCount || 0,
-          painLevel: idea.painLevel || 'moderate',
-          tags: idea.tags || [],
-        }));
+        // Map back to RawIdea format — use LLM-assigned sourcePlatform/sourcePost if valid,
+        // otherwise find the best-matching post by keyword overlap (never fall back to positional)
+        return parsed.map((idea: any) => {
+          const llmPlatform = idea.sourcePlatform as string | undefined;
+          const llmSourcePost = idea.sourcePost as string | undefined;
+          // Find the closest matching post by keyword similarity
+          const ideaWords = new Set((idea.title + ' ' + idea.description + ' ' + idea.problem).toLowerCase().split(/\W+/).filter((w: string) => w.length > 3));
+          let bestPost = balancedPosts[0];
+          let bestScore = 0;
+          for (const p of balancedPosts) {
+            const postWords = (p.title + ' ' + p.description).toLowerCase().split(/\W+/).filter(w => w.length > 3);
+            const matches = postWords.filter(w => ideaWords.has(w)).length;
+            if (matches > bestScore) { bestScore = matches; bestPost = p; }
+          }
+          // Prefer LLM-provided platform if it looks valid, else use best-match post's platform
+          const validPlatforms = ['reddit', 'hackernews', 'devto', 'github'];
+          const resolvedPlatform = (llmPlatform && validPlatforms.includes(llmPlatform)) ? llmPlatform : bestPost.sourcePlatform;
+          const resolvedSourcePost = (llmSourcePost && llmSourcePost.startsWith('http')) ? llmSourcePost : bestPost.sourcePost;
+          return {
+            ...idea,
+            sourcePost: resolvedSourcePost,
+            sourcePlatform: resolvedPlatform,
+            upvotes: bestPost.upvotes || 0,
+            commentCount: bestPost.commentCount || 0,
+            painLevel: idea.painLevel || 'moderate',
+            tags: idea.tags || [],
+          };
+        });
       }
     } catch (err) {
       await logger.agent(this.name, `Post analysis failed: ${err}`);
@@ -1233,7 +1261,7 @@ Return ONLY valid JSON array:
 
     // If AI analysis fails, return raw posts as-is (still REAL data)
     await logger.agent(this.name, 'AI analysis failed, returning raw posts as ideas');
-    return topPosts.slice(0, 10);
+    return balancedPosts.slice(0, 10);
   }
 
   private deduplicateRawIdeas(ideas: RawIdea[]): RawIdea[] {
