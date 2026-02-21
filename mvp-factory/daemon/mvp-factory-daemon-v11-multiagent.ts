@@ -1801,8 +1801,9 @@ Do NOT generate: package.json, API routes, next.config.js
 
 Return ONLY a JSON array: [{"path":"...","content":"..."}]`;
 
+    // 14K with thinking off — ~8 min for 6 focused files
     const response = await kimi.complete(prompt, {
-      maxTokens: 25000,
+      maxTokens: 14000,
       temperature: 0.3,
       systemPrompt: `You are a senior frontend engineer who builds high-quality free utility tools. Your sites look professional and trustworthy — like ilovepdf.com or smallpdf.com. You use clean, semantic HTML with TailwindCSS. The tool logic actually works. Ad slots are properly integrated. You write production Next.js/TypeScript.`,
     });
@@ -1852,10 +1853,10 @@ Loading states, error states handled. Responsive. TypeScript + TailwindCSS.
 
 Return ONLY a JSON array: [{"path":"src/app/dashboard/page.tsx","content":"..."}]`;
 
-    // With enable_thinking:false, all 20K tokens go to code output (no reasoning overhead)
+    // 12K per call × 2 parallel = ~7 min total (vs 23 min with 20K)
     const [resp1, resp2] = await Promise.all([
-      kimi.complete(call1Prompt, { maxTokens: 20000, temperature: 0.3, systemPrompt }),
-      kimi.complete(call2Prompt, { maxTokens: 20000, temperature: 0.3, systemPrompt }),
+      kimi.complete(call1Prompt, { maxTokens: 12000, temperature: 0.3, systemPrompt }),
+      kimi.complete(call2Prompt, { maxTokens: 12000, temperature: 0.3, systemPrompt }),
     ]);
 
     const files1 = extractJSON(resp1, 'array') || [];
@@ -1912,9 +1913,9 @@ Do NOT generate: package.json, API routes, next.config.js
 
 Return ONLY a JSON array: [{"path":"...","content":"..."}]`;
 
-    // With enable_thinking:false, 24K tokens go entirely to code (no reasoning overhead)
+    // 16K with thinking off — ~9 min per call, well within build window
     const response = await kimi.complete(prompt, {
-      maxTokens: 24000,
+      maxTokens: 16000,
       temperature: 0.35,
       systemPrompt: `You are an elite frontend developer. Clean, accessible, performant React/TypeScript with TailwindCSS. No framer-motion. Production-quality code that actually builds. Style: ${spec.designSystem.style}. Return ONLY valid JSON array, no markdown.`,
     });
@@ -2151,8 +2152,9 @@ Do NOT generate:
 Return ONLY a JSON array:
 [{"path": "src/app/api/process/route.ts", "content": "full working code..."}, ...]`;
 
+    // 15K with thinking off — ~9 min, generates 4-6 real API routes + services
     const response = await kimi.complete(prompt, {
-      maxTokens: 30000,
+      maxTokens: 15000,
       temperature: 0.2,
       systemPrompt: `You are a senior backend engineer who writes bulletproof API code. Every endpoint you create is fully functional with real processing logic, Zod schema validation, error handling, and structured responses. You NEVER create placeholder functions - every function has a complete implementation. You always validate request bodies with Zod schemas. For ${idea.category} products, you implement real algorithms.`,
     });
@@ -2816,7 +2818,7 @@ WHAT TO FIX:
 Return ONLY the complete corrected .tsx file. No explanation. No markdown fences.`;
 
         const response = await kimi.complete(prompt, {
-          maxTokens: 12000,
+          maxTokens: 8000,
           temperature: 0.15,
           systemPrompt: 'You are a senior full-stack engineer. You integrate frontend pages with real backend API routes. You preserve all UI/design but fix the data layer so nothing is hardcoded.',
         });
