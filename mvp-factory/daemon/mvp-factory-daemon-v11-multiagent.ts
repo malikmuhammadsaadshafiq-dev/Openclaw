@@ -491,29 +491,52 @@ Purpose: ${fileDescription}
 Output ONLY the raw file content. Start immediately with the first line.
 No JSON. No markdown fences. No explanation. Just the code.`;
 
-  try {
-    const response = await kimi.complete(prompt, { maxTokens, temperature: 0.2, systemPrompt });
-    if (!response || response.trim().length < 50) return null;
+  const extractCode = (raw: string): string | null => {
+    if (!raw || raw.trim().length < 30) return null;
+    let content = raw.trim();
 
-    let content = response.trim();
-    // Strip markdown fences if model ignores instructions
+    // Strip markdown fences
     if (content.startsWith('```')) {
       content = content.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
     }
-    // Strip JSON wrapper if model returns it anyway
+    // Strip JSON wrapper
     if (content.startsWith('[') || content.startsWith('{')) {
       const parsed = extractJSON(content, content.startsWith('[') ? 'array' : 'object');
-      if (Array.isArray(parsed) && parsed[0]?.content) {
-        content = parsed[0].content;
-      } else if (parsed?.content) {
-        content = parsed.content;
+      if (Array.isArray(parsed) && parsed[0]?.content) return parsed[0].content;
+      if (parsed?.content) return parsed.content;
+    }
+
+    // Detect Kimi K2.5 thinking text prepended before actual code.
+    // The model sometimes outputs reasoning ("The user wants...", "Let me...") before the code.
+    // Find the first line that looks like real code and extract from there.
+    const isCodeLine = (s: string): boolean =>
+      /^(import\s|export\s|'use client'|"use client"|const\s|let\s|var\s|function\s|async\s|class\s|\/\/|\/\*|@tailwind|@import|:root|\*\s*\{|html\s*\{|<!|<\?)/.test(s.trimStart());
+
+    if (!isCodeLine(content.split('\n')[0])) {
+      const lines = content.split('\n');
+      const codeStart = lines.findIndex(l => isCodeLine(l));
+      if (codeStart > 0 && codeStart < lines.length - 3) {
+        content = lines.slice(codeStart).join('\n').trim();
+      } else {
+        // Entire response is thinking text with no detectable code → unusable
+        return null;
       }
     }
-    if (!content || content.length < 30) return null;
-    return { path: filePath, content };
-  } catch {
-    return null;
+
+    return content.length >= 30 ? content : null;
+  };
+
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const response = await kimi.complete(prompt, { maxTokens, temperature: 0.2, systemPrompt });
+      const code = extractCode(response);
+      if (code) return { path: filePath, content: code };
+      // Attempt 1 returned thinking text — retry once
+    } catch {
+      if (attempt === 2) return null;
+    }
   }
+  return null;
 }
 
 function toSlug(title: string): string {
