@@ -2491,29 +2491,39 @@ class PMAgent {
         ideas: remaining.slice(0, 5).map(i => ({ title: i.title, source: i.sourcePlatform, score: i.validation?.overallScore })),
       })).catch(() => {});
 
-      const [frontendResult, backendResult] = await Promise.all([
-        this.frontendAgent.run(buildable),
-        this.backendAgent.run(buildable),
-      ]);
+      // Hard 25-minute timeout — prevents a single stuck LLM call from freezing the pipeline
+      const BUILD_TIMEOUT_MS = 25 * 60 * 1000;
+      const buildTimeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`Build timeout: "${buildable!.title}" exceeded 25 minutes — will retry next cycle`)), BUILD_TIMEOUT_MS)
+      );
 
-      await logger.agent(this.name, `PHASE 4: Merging ${frontendResult.files.length} frontend + ${backendResult.files.length} backend files...`);
-      const mergedFiles = await this.mergeAndFinalize(buildable, frontendResult, backendResult);
+      const buildExecutionPromise = (async () => {
+        const [frontendResult, backendResult] = await Promise.all([
+          this.frontendAgent.run(buildable!),
+          this.backendAgent.run(buildable!),
+        ]);
 
-      // Wire frontend pages to actual backend routes (fixes placeholder data + disconnected forms)
-      await logger.agent(this.name, 'PHASE 4b: Integration repair — wiring frontend pages to real backend routes...');
-      const repairedFiles = await this.repairFrontendBackendIntegration(buildable, mergedFiles, backendResult.spec);
+        await logger.agent(this.name, `PHASE 4: Merging ${frontendResult.files.length} frontend + ${backendResult.files.length} backend files...`);
+        const mergedFiles = await this.mergeAndFinalize(buildable!, frontendResult, backendResult);
 
-      const quality = this.assessQuality(repairedFiles, buildable);
-      await logger.agent(this.name, `Quality gate: ${quality.score}/20 | Issues: ${quality.issues.length ? quality.issues.join('; ') : 'none'}`);
+        // Wire frontend pages to actual backend routes (fixes placeholder data + disconnected forms)
+        await logger.agent(this.name, 'PHASE 4b: Integration repair — wiring frontend pages to real backend routes...');
+        const repairedFiles = await this.repairFrontendBackendIntegration(buildable!, mergedFiles, backendResult.spec);
 
-      await fs.writeFile(progressPath, JSON.stringify({
-        phase: 'building', detail: `Building "${buildable.title}"`,
-        currentAction: `Quality check passed (${quality.score}/20) — deploying...`,
-        timestamp: new Date().toISOString(), ideaCount: remaining.length,
-        ideas: remaining.slice(0, 5).map(i => ({ title: i.title, source: i.sourcePlatform, score: i.validation?.overallScore })),
-      })).catch(() => {});
+        const quality = this.assessQuality(repairedFiles, buildable!);
+        await logger.agent(this.name, `Quality gate: ${quality.score}/20 | Issues: ${quality.issues.length ? quality.issues.join('; ') : 'none'}`);
 
-      return this.buildAndDeploy(buildable, repairedFiles, quality.score);
+        await fs.writeFile(progressPath, JSON.stringify({
+          phase: 'building', detail: `Building "${buildable!.title}"`,
+          currentAction: `Quality check passed (${quality.score}/20) — deploying...`,
+          timestamp: new Date().toISOString(), ideaCount: remaining.length,
+          ideas: remaining.slice(0, 5).map(i => ({ title: i.title, source: i.sourcePlatform, score: i.validation?.overallScore })),
+        })).catch(() => {});
+
+        return this.buildAndDeploy(buildable!, repairedFiles, quality.score);
+      })();
+
+      return await Promise.race([buildExecutionPromise, buildTimeoutPromise]);
     } catch (error) {
       await logger.agent(this.name, `BUILD FROM QUEUE ERROR: ${String(error).slice(0, 200)}`);
       if (buildable) { const failCount = await recordFailure(buildable.id, String(error)); await logger.agent(this.name, "Fail count for " + buildable.title + ": " + failCount + "/3"); }
