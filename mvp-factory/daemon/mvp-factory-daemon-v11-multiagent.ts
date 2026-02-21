@@ -1878,11 +1878,11 @@ RULES: No framer-motion. Responsive. For dynamic data use fetch('/api/...'). Mob
 
     const fileDefs: Array<{ path: string; desc: string; tokens: number }> = [
       { path: 'src/app/globals.css', desc: `TailwindCSS @tailwind base/components/utilities + :root CSS variables for ${spec.designSystem.primaryColor} brand. Under 50 lines.`, tokens: 3500 },
-      { path: 'src/app/layout.tsx', desc: `Root layout. Imports globals.css. Responsive Navbar with logo, nav links (Home/Pricing/Dashboard), Login/Get Started CTA. Mobile hamburger. Children prop. Metadata for ${idea.title}.`, tokens: 7000 },
-      { path: 'src/app/page.tsx', desc: `Landing page. Hero: big headline about ${idea.title}, subline, "Get Started Free" CTA → /auth. 3 feature cards. Pricing preview (3 tiers). Bottom CTA. No hardcoded data.`, tokens: 7000 },
-      { path: 'src/app/pricing/page.tsx', desc: `Pricing page. 3 tiers: Free ($0), Pro ($12/mo), Business ($49/mo). Feature comparison list per tier. CTA buttons. Highlight Pro tier. FAQ section.`, tokens: 7000 },
-      { path: 'src/app/auth/page.tsx', desc: `Auth page. Toggle: Login / Sign Up. Email + password form. On submit POST /api/auth. OAuth placeholder buttons (Google, GitHub). Validation errors. Redirect to /dashboard on success.`, tokens: 7000 },
-      { path: 'src/app/dashboard/page.tsx', desc: `Dashboard — CORE PRODUCT. Sidebar nav with all feature sections: ${idea.features.join(', ')}. Main content area. useEffect + fetch('/api/...') to load data on mount. Loading spinner, error state. Each feature section fully interactive. Responsive.`, tokens: 8000 },
+      { path: 'src/app/layout.tsx', desc: `Root layout. Imports globals.css. Responsive Navbar with logo, nav links (Home/Pricing/Dashboard), Login/Get Started CTA. Mobile hamburger. Children prop. Metadata for ${idea.title}.`, tokens: 8000 },
+      { path: 'src/app/page.tsx', desc: `Landing page. Hero: big headline about ${idea.title}, subline, "Get Started Free" CTA → /auth. 3 feature cards. Pricing preview (3 tiers). Bottom CTA. No hardcoded data.`, tokens: 8000 },
+      { path: 'src/app/pricing/page.tsx', desc: `Pricing page. 3 tiers: Free ($0), Pro ($12/mo), Business ($49/mo). Feature comparison list per tier. CTA buttons. Highlight Pro tier. FAQ section.`, tokens: 8000 },
+      { path: 'src/app/auth/page.tsx', desc: `Auth page. Toggle: Login / Sign Up. Email + password form. On submit POST /api/auth. OAuth placeholder buttons (Google, GitHub). Validation errors. Redirect to /dashboard on success.`, tokens: 8000 },
+      { path: 'src/app/dashboard/page.tsx', desc: `Dashboard — CORE PRODUCT. Sidebar nav with all feature sections: ${idea.features.join(', ')}. Main content area. useEffect + fetch('/api/...') to load data on mount. Loading spinner, error state. Each feature section fully interactive. Responsive.`, tokens: 10000 },
     ];
 
     // Stagger: 2s per file to avoid 429 burst from NVIDIA API
@@ -1911,12 +1911,12 @@ RULES: No framer-motion. No hardcoded data — fetch('/api/...'). Forms POST to 
 
     const fileDefs: Array<{ path: string; desc: string; tokens: number }> = [
       { path: 'src/app/globals.css', desc: `TailwindCSS @tailwind base/components/utilities + :root CSS variables for ${spec.designSystem.primaryColor} brand color. Under 50 lines.`, tokens: 3500 },
-      { path: 'src/app/layout.tsx', desc: `Root layout with responsive navbar, metadata for ${idea.title}, imports globals.css`, tokens: 6000 },
-      { path: 'src/app/page.tsx', desc: spec.pages.find(p => p.route === '/')?.purpose || `Main landing page: hero for ${idea.title}, feature overview, CTA. fetch('/api/...') for any dynamic content.`, tokens: 8000 },
+      { path: 'src/app/layout.tsx', desc: `Root layout with responsive navbar, metadata for ${idea.title}, imports globals.css`, tokens: 8000 },
+      { path: 'src/app/page.tsx', desc: spec.pages.find(p => p.route === '/')?.purpose || `Main landing page: hero for ${idea.title}, feature overview, CTA. fetch('/api/...') for any dynamic content.`, tokens: 10000 },
       ...spec.pages.filter(p => p.route !== '/').map(p => ({
         path: `src/app${p.route}/page.tsx`,
         desc: `${p.purpose}. Components: ${p.components.join(', ')}. User flow: ${p.userFlow}. Must use fetch('/api/...') for data. Loading + error states.`,
-        tokens: 8000,
+        tokens: 10000,
       })),
     ];
 
@@ -2121,7 +2121,7 @@ STACK: Next.js 14 API routes, TypeScript, Zod validation`;
       const filePath = `src/app/api${routePath}/route.ts`;
       const desc = `${route.method} handler. Purpose: ${route.purpose}. Input schema: ${route.inputSchema}. Output schema: ${route.outputSchema}. Implementation: ${route.implementation}. Use Zod to validate request body. Return NextResponse.json(). Fully implemented logic — no placeholder functions.`;
       return new Promise<{ path: string; content: string } | null>(resolve =>
-        setTimeout(() => generateOneFile(filePath, desc, context, sysPrompt, 7000).then(resolve).catch(() => resolve(null)), i * 2000)
+        setTimeout(() => generateOneFile(filePath, desc, context, sysPrompt, 12000).then(resolve).catch(() => resolve(null)), i * 2000)
       );
     });
 
@@ -2158,7 +2158,22 @@ STACK: Next.js 14 API routes, TypeScript, Zod validation`;
       }
     }
 
-    return allFiles;
+    // Repair truncated TypeScript files — add missing closing braces caused by max_tokens cutoff.
+    // Kimi K2.5 thinking tokens can consume budget, leaving code truncated mid-function.
+    const repairedFiles = allFiles.map(f => {
+      if (!f.path.endsWith('.ts') && !f.path.endsWith('.tsx')) return f;
+      const open = (f.content.match(/\{/g) || []).length;
+      const close = (f.content.match(/\}/g) || []).length;
+      const missing = open - close;
+      if (missing > 0 && missing <= 15) {
+        const fixed = f.content.trimEnd() + '\n' + '}\n'.repeat(missing);
+        logger.agent(this.name, `Repaired ${f.path}: added ${missing} missing closing brace(s)`);
+        return { ...f, content: fixed };
+      }
+      return f;
+    });
+
+    return repairedFiles;
   }
 }
 
@@ -2486,10 +2501,23 @@ class PMAgent {
       );
 
       const buildExecutionPromise = (async () => {
-        const [frontendResult, backendResult] = await Promise.all([
-          this.frontendAgent.run(buildable!),
-          this.backendAgent.run(buildable!),
-        ]);
+        // Extensions are static files only — no Next.js API backend needed
+        let frontendResult: Awaited<ReturnType<typeof this.frontendAgent.run>>;
+        let backendResult: Awaited<ReturnType<typeof this.backendAgent.run>>;
+
+        if (buildable!.type === 'extension') {
+          await logger.agent(this.name, `PHASE 3: Launching FrontendAgent only (extension type — static files, no backend)...`);
+          frontendResult = await this.frontendAgent.run(buildable!);
+          backendResult = {
+            spec: { apiRoutes: [], dataModels: [], integrations: [], authentication: 'none', errorHandling: 'none', realTimeFeatures: [] },
+            files: [],
+          };
+        } else {
+          [frontendResult, backendResult] = await Promise.all([
+            this.frontendAgent.run(buildable!),
+            this.backendAgent.run(buildable!),
+          ]);
+        }
 
         await logger.agent(this.name, `PHASE 4: Merging ${frontendResult.files.length} frontend + ${backendResult.files.length} backend files...`);
         const mergedFiles = await this.mergeAndFinalize(buildable!, frontendResult, backendResult);
@@ -2531,6 +2559,21 @@ class PMAgent {
     frontendResult: { spec: FrontendSpec; files: Array<{ path: string; content: string }> },
     backendResult: { spec: BackendSpec; files: Array<{ path: string; content: string }> }
   ): Promise<Array<{ path: string; content: string }>> {
+    // Chrome extensions: static files only — no Next.js build config needed
+    if (idea.type === 'extension') {
+      const extFiles: Array<{ path: string; content: string }> = [...frontendResult.files];
+      // Static Vercel config so the extension popup/files are served as a web preview
+      extFiles.push({
+        path: 'vercel.json',
+        content: JSON.stringify({ buildCommand: null, installCommand: null, outputDirectory: '.' }, null, 2),
+      });
+      extFiles.push({
+        path: '.env.example',
+        content: '# Chrome Extension — configure API keys via chrome.storage.sync in the extension options page\n',
+      });
+      return extFiles;
+    }
+
     const allFiles: Array<{ path: string; content: string }> = [];
     const fileMap = new Map<string, string>();
 
@@ -3169,7 +3212,7 @@ ${score >= 8 ? '[![Top Pick](https://img.shields.io/badge/🏆-TOP%20PICK-fcd34d
 
 **Built for:** ${idea.targetUsers}
 
-${idea.type !== 'mobile' && idea.type !== 'extension' ? `[🚀 **Live Demo**](https://github.com/${CONFIG.github.username}/${repoName}) • ` : ''}[📦 **GitHub**](https://github.com/${CONFIG.github.username}/${repoName}) • [🐛 **Report Bug**](https://github.com/${CONFIG.github.username}/${repoName}/issues) • [💡 **Request Feature**](https://github.com/${CONFIG.github.username}/${repoName}/issues)
+${idea.type !== 'mobile' ? `[🚀 **Live Demo**](https://github.com/${CONFIG.github.username}/${repoName}) • ` : ''}[📦 **GitHub**](https://github.com/${CONFIG.github.username}/${repoName}) • [🐛 **Report Bug**](https://github.com/${CONFIG.github.username}/${repoName}/issues) • [💡 **Request Feature**](https://github.com/${CONFIG.github.username}/${repoName}/issues)
 
 </div>
 
@@ -3510,9 +3553,9 @@ ${buildStep}
       }
     }
 
-    // Deploy to Vercel (web/saas/api only — mobile and extension go GitHub-only)
+    // Deploy to Vercel (all types except mobile — extensions deploy as static preview sites)
     let vercelUrl = '';
-    if (CONFIG.vercel.token && idea.type !== 'mobile' && idea.type !== 'extension') {
+    if (CONFIG.vercel.token && idea.type !== 'mobile') {
       // Auto-prune old Vercel projects to stay under 200 hobby limit (keep newest 20)
       try {
         const pruneResult = await pruneVercelProjects(CONFIG.vercel.token, CONFIG.vercel.teamId, 20);
