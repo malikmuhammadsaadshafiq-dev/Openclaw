@@ -1809,65 +1809,57 @@ Return ONLY a JSON array: [{"path":"...","content":"..."}]`;
     return files.filter((f: any) => f?.path && f?.content);
   }
 
-  // SaaS: landing + auth + dashboard + pricing
+  // SaaS: split into 2 calls to avoid 30K token streaming timeout
+  // Call 1: Marketing shell (layout, landing, pricing, auth, globals) — ~15K tokens
+  // Call 2: Dashboard (the core product) — ~15K tokens
   private async generateSaasFrontend(idea: ValidatedIdea, spec: FrontendSpec): Promise<Array<{ path: string; content: string }>> {
-    const prompt = `Generate a COMPLETE, PRODUCTION-QUALITY SaaS application frontend for this product.
+    const systemPrompt = `You are a senior SaaS frontend engineer. TypeScript, TailwindCSS, Next.js 14 App Router. Production quality. Return ONLY a JSON array of files, no markdown.`;
+
+    const call1Prompt = `Generate the MARKETING SHELL for this SaaS product.
 
 PRODUCT: ${idea.title}
 DESCRIPTION: ${idea.description}
-TARGET USERS: ${idea.targetUsers}
-FEATURES: ${idea.features.join(', ')}
 PRIMARY COLOR: ${spec.designSystem.primaryColor}
 STYLE: ${spec.designSystem.style}
 
-MONETIZATION: Paid subscription SaaS. Include pricing page with 3 tiers (Free/Pro/Business).
+FILES TO GENERATE (5 files):
+- src/app/layout.tsx (root layout, Navbar included, no framer-motion)
+- src/app/page.tsx (landing: hero + 3 feature cards + pricing preview + CTA)
+- src/app/pricing/page.tsx (3 tiers: Free $0, Pro $12/mo, Business $49/mo)
+- src/app/auth/page.tsx (login/signup toggle, email+password, OAuth placeholder)
+- src/app/globals.css (TailwindCSS base + brand CSS variables)
 
-PAGES TO BUILD:
-1. Landing page (/) — Hero, features grid, social proof, pricing preview, CTA
-2. Pricing page (/pricing) — 3 tiers: Free ($0), Pro ($12/mo), Business ($49/mo)
-3. Login/Signup page (/auth) — email+password form, Google OAuth button placeholder
-4. Dashboard (/dashboard) — main app UI with sidebar, core feature implementation
-
-DESIGN REQUIREMENTS:
-- Modern SaaS aesthetic: clean, professional, conversion-optimized
-- Use ${spec.designSystem.primaryColor} as brand color throughout
-- Hero has a clear value proposition + demo/screenshot area
-- Pricing cards with feature comparison, "Most Popular" badge on Pro tier
-- Dashboard sidebar navigation with user avatar/name
-- Loading states, error states, empty states all handled
-
-TECHNICAL:
-1. Next.js 14 App Router, TypeScript, TailwindCSS
-2. Simple CSS transitions (no framer-motion — keeps build reliable)
-3. Lucide-react for icons ONLY
-4. fetch('/api/...') for ALL data operations — NO hardcoded/placeholder data anywhere
-5. Dashboard MUST fetch real data from API on load (useEffect + fetch) — do NOT hardcode sample rows
-6. All forms MUST submit to real API routes with actual request bodies — no fake submit handlers
-7. Responsive — mobile hamburger menu
-
-FILES TO GENERATE:
-- src/app/layout.tsx
-- src/app/page.tsx (landing page)
-- src/app/pricing/page.tsx
-- src/app/auth/page.tsx (login/signup toggle)
-- src/app/dashboard/page.tsx (the core product experience)
-- src/app/globals.css
-- src/components/Navbar.tsx
-- src/components/PricingCard.tsx
-- src/components/DashboardSidebar.tsx
-
-Do NOT generate: package.json, API routes, next.config.js
+RULES: Next.js 14 App Router, TypeScript, TailwindCSS, Lucide-react icons only. No framer-motion. No hardcoded data — use fetch('/api/...') for dynamic content. Responsive (mobile hamburger).
 
 Return ONLY a JSON array: [{"path":"...","content":"..."}]`;
 
-    const response = await kimi.complete(prompt, {
-      maxTokens: 30000,
-      temperature: 0.3,
-      systemPrompt: `You are a senior SaaS frontend engineer. You build clean, conversion-optimized SaaS applications. Your landing pages convert well, your dashboards are intuitive, and your pricing pages are persuasive. TypeScript, TailwindCSS, Next.js App Router. Production quality.`,
-    });
-    const files = extractJSON(response, 'array');
-    if (!files || !files.length) throw new Error('SaaS frontend generation returned no files');
-    return files.filter((f: any) => f?.path && f?.content);
+    const call2Prompt = `Generate the DASHBOARD page for this SaaS product.
+
+PRODUCT: ${idea.title}
+DESCRIPTION: ${idea.description}
+FEATURES: ${idea.features.join(', ')}
+PRIMARY COLOR: ${spec.designSystem.primaryColor}
+
+FILE TO GENERATE (1 file):
+- src/app/dashboard/page.tsx
+
+This is the CORE PRODUCT EXPERIENCE — the main app UI users interact with after login.
+Include: sidebar navigation, main content area, all ${idea.features.length} core features implemented as UI sections.
+MUST use useEffect + fetch('/api/...') to load real data — NO hardcoded placeholder data.
+Loading states, error states handled. Responsive. TypeScript + TailwindCSS.
+
+Return ONLY a JSON array: [{"path":"src/app/dashboard/page.tsx","content":"..."}]`;
+
+    const [resp1, resp2] = await Promise.all([
+      kimi.complete(call1Prompt, { maxTokens: 16000, temperature: 0.3, systemPrompt }),
+      kimi.complete(call2Prompt, { maxTokens: 16000, temperature: 0.3, systemPrompt }),
+    ]);
+
+    const files1 = extractJSON(resp1, 'array') || [];
+    const files2 = extractJSON(resp2, 'array') || [];
+    const allFiles = [...files1, ...files2].filter((f: any) => f?.path && f?.content);
+    if (!allFiles.length) throw new Error('SaaS frontend generation returned no files');
+    return allFiles;
   }
 
   // Standard web app (freemium / one-time)
@@ -1917,13 +1909,15 @@ Do NOT generate: package.json, API routes, next.config.js
 
 Return ONLY a JSON array: [{"path":"...","content":"..."}]`;
 
+    // Reduced from 28K→20K — Kimi K2.5 thinking tokens inflate actual output 2-3x causing timeouts
     const response = await kimi.complete(prompt, {
-      maxTokens: 28000,
+      maxTokens: 20000,
       temperature: 0.35,
-      systemPrompt: `You are an elite frontend developer. Clean, accessible, performant React/TypeScript with TailwindCSS. No framer-motion. Production-quality code that actually builds. Style: ${spec.designSystem.style}.`,
+      systemPrompt: `You are an elite frontend developer. Clean, accessible, performant React/TypeScript with TailwindCSS. No framer-motion. Production-quality code that actually builds. Style: ${spec.designSystem.style}. Return ONLY valid JSON array, no markdown.`,
     });
     const files = extractJSON(response, 'array');
     if (!files || !Array.isArray(files) || files.length === 0) {
+      // Fallback: also try reducing pages and retrying
       throw new Error('Frontend generation returned no files');
     }
     return files.filter((f: any) => f && typeof f.path === 'string' && typeof f.content === 'string');
