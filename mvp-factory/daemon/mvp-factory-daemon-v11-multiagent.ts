@@ -471,7 +471,7 @@ class ApiSemaphore {
     else { this.slots++; }
   }
 }
-const kimiSemaphore = new ApiSemaphore(4); // max 4 concurrent Kimi API calls
+const kimiSemaphore = new ApiSemaphore(6); // max 6 concurrent Kimi API calls
 
 // ============================================================
 // Utility Functions
@@ -2504,9 +2504,9 @@ class PMAgent {
       // Hard 35-minute timeout — prevents a single stuck LLM call from freezing the pipeline
       // 55 min timeout: Kimi K2.5 thinking mode streams ~14 tokens/sec — 20K tokens = 23min per call
       // Total: 6min design + 23min code gen (parallel) + 15min repair + 5min deploy = ~49min
-      const BUILD_TIMEOUT_MS = 55 * 60 * 1000;
+      const BUILD_TIMEOUT_MS = 90 * 60 * 1000;
       const buildTimeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`Build timeout: "${buildable!.title}" exceeded 55 minutes — will retry next cycle`)), BUILD_TIMEOUT_MS)
+        setTimeout(() => reject(new Error(`Build timeout: "${buildable!.title}" exceeded 90 minutes — will retry next cycle`)), BUILD_TIMEOUT_MS)
       );
 
       const buildExecutionPromise = (async () => {
@@ -2789,9 +2789,9 @@ Built by MVP Factory v11 (Multi-Agent Architecture)
       `${r.method} ${r.path}\n  Input: ${r.inputSchema}\n  Output: ${r.outputSchema}\n  Purpose: ${r.purpose}`
     ).join('\n\n');
 
-    // Repair up to 2 core product pages — dashboard (for SaaS) and main tool page (for web apps).
-    // Landing/pricing/auth pages don't need real API integration to look good.
-    // Priority order: dashboard > main page > other tool pages
+    // Repair the single most important interactive page (dashboard for SaaS, main page for web apps).
+    // Landing/pricing/auth pages don't need real API integration.
+    // 1 page = ~10 min repair time, keeping total build within 90-min timeout.
     const interactivePages = files.filter(f =>
       f.path.endsWith('page.tsx') &&
       !f.path.includes('/api/') &&
@@ -2804,7 +2804,7 @@ Built by MVP Factory v11 (Multi-Agent Architecture)
         f.path.includes('dashboard') ? 2 :
         f.path === 'src/app/page.tsx' ? 1 : 0;
       return score(b) - score(a);
-    }).slice(0, 2); // Repair up to 2 most important pages
+    }).slice(0, 1); // Only the single most important page
 
     if (interactivePages.length === 0) return files;
 
