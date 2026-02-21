@@ -322,6 +322,7 @@ class KimiClient {
         max_tokens: maxTokens,
         temperature,
         stream: true,
+        enable_thinking: false,  // Disable thinking tokens — they consume budget without adding to output
       }),
       signal: controller.signal,
     });
@@ -389,6 +390,7 @@ class KimiClient {
         messages,
         max_tokens: maxTokens,
         temperature,
+        enable_thinking: false,  // Disable thinking tokens for non-stream fallback too
       }),
       signal: controller.signal,
     });
@@ -1850,9 +1852,10 @@ Loading states, error states handled. Responsive. TypeScript + TailwindCSS.
 
 Return ONLY a JSON array: [{"path":"src/app/dashboard/page.tsx","content":"..."}]`;
 
+    // With enable_thinking:false, all 20K tokens go to code output (no reasoning overhead)
     const [resp1, resp2] = await Promise.all([
-      kimi.complete(call1Prompt, { maxTokens: 16000, temperature: 0.3, systemPrompt }),
-      kimi.complete(call2Prompt, { maxTokens: 16000, temperature: 0.3, systemPrompt }),
+      kimi.complete(call1Prompt, { maxTokens: 20000, temperature: 0.3, systemPrompt }),
+      kimi.complete(call2Prompt, { maxTokens: 20000, temperature: 0.3, systemPrompt }),
     ]);
 
     const files1 = extractJSON(resp1, 'array') || [];
@@ -1909,9 +1912,9 @@ Do NOT generate: package.json, API routes, next.config.js
 
 Return ONLY a JSON array: [{"path":"...","content":"..."}]`;
 
-    // Reduced from 28K→20K — Kimi K2.5 thinking tokens inflate actual output 2-3x causing timeouts
+    // With enable_thinking:false, 24K tokens go entirely to code (no reasoning overhead)
     const response = await kimi.complete(prompt, {
-      maxTokens: 20000,
+      maxTokens: 24000,
       temperature: 0.35,
       systemPrompt: `You are an elite frontend developer. Clean, accessible, performant React/TypeScript with TailwindCSS. No framer-motion. Production-quality code that actually builds. Style: ${spec.designSystem.style}. Return ONLY valid JSON array, no markdown.`,
     });
