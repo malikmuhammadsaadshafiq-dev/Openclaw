@@ -47,41 +47,10 @@ const execAsync = promisify(exec);
 })();
 
 // ============================================================
-// Single-instance lock via PID file — kills any duplicate immediately
+// Graceful shutdown handlers (pm2 manages single instance in fork mode)
 // ============================================================
-(function enforceSingleInstance() {
-  const pidFile = '/tmp/mvp-factory-daemon.pid';
-  const myPid = process.pid;
-  try {
-    const existing = fsSync.readFileSync(pidFile, 'utf-8').trim();
-    const existingPid = parseInt(existing, 10);
-    if (existingPid && existingPid !== myPid) {
-      try {
-        // Check if that PID is actually alive
-        process.kill(existingPid, 0);
-        // It's alive — send SIGTERM, wait briefly, then SIGKILL if needed
-        console.log(`[SingleInstance] Killing stale daemon (PID ${existingPid})...`);
-        try { process.kill(existingPid, 'SIGTERM'); } catch {}
-        // Busy-wait up to 3s for old process to exit
-        const deadline = Date.now() + 3000;
-        while (Date.now() < deadline) {
-          try { process.kill(existingPid, 0); } catch { break; } // exited
-          const waitUntil = Date.now() + 200;
-          while (Date.now() < waitUntil) { /* spin wait */ }
-        }
-        // Force-kill if still alive
-        try { process.kill(existingPid, 'SIGKILL'); } catch {}
-      } catch {
-        // PID is dead — stale lock, we take over
-      }
-    }
-  } catch {}
-  fsSync.writeFileSync(pidFile, String(myPid));
-  const cleanPid = () => { try { fsSync.unlinkSync(pidFile); } catch {} };
-  process.on('SIGTERM', () => { cleanPid(); process.exit(0); });
-  process.on('SIGINT',  () => { cleanPid(); process.exit(0); });
-  process.on('exit', cleanPid);
-})();
+process.on('SIGTERM', () => { console.log('[Daemon] SIGTERM received — shutting down'); process.exit(0); });
+process.on('SIGINT',  () => { console.log('[Daemon] SIGINT received — shutting down');  process.exit(0); });
 
 // ============================================================
 // Retry Loop Utility (exponential backoff)
@@ -3682,7 +3651,11 @@ async function runForever(): Promise<never> {
     .catch(async (e) => { await logger.log(`Init research error: ${e}`, 'ERROR'); lastResearch = Date.now(); })
     .finally(() => { researchRunning = false; });
 
+  // 30-second startup delay before first build — prevents hammering NVIDIA API
+  // if pm2 does rapid restarts (e.g. during deployment or recovery)
   buildRunning = true;
+  await logger.log('Build will start in 30s (startup delay to avoid 429 burst)...');
+  await new Promise(r => setTimeout(r, 30_000));
   pm.runBuildFromQueue()
     .then(async (result) => {
       lastBuild = Date.now();
