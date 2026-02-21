@@ -2779,12 +2779,15 @@ Built by MVP Factory v11 (Multi-Agent Architecture)
       `${r.method} ${r.path}\n  Input: ${r.inputSchema}\n  Output: ${r.outputSchema}\n  Purpose: ${r.purpose}`
     ).join('\n\n');
 
-    // Only patch interactive pages — not layout, not globals, not static components
+    // Only repair the dashboard/main app page — it's the core product experience.
+    // Landing/pricing/auth pages don't need real API integration to look good.
+    // Repairing all 4 pages sequentially takes 38+ min; just the dashboard = ~10 min.
     const interactivePages = files.filter(f =>
       f.path.endsWith('page.tsx') &&
       !f.path.includes('/api/') &&
-      f.content.length > 300
-    );
+      f.content.length > 300 &&
+      (f.path.includes('dashboard') || f.path.includes('app/page.tsx'))
+    ).slice(0, 1); // Only the most important page
 
     if (interactivePages.length === 0) return files;
 
