@@ -1595,7 +1595,7 @@ Return ONLY valid JSON:
 class FrontendAgent {
   private name = 'FrontendAgent';
 
-  async run(idea: ValidatedIdea): Promise<{ spec: FrontendSpec; files: Array<{ path: string; content: string }> }> {
+  async run(idea: ValidatedIdea, backendSpec?: BackendSpec): Promise<{ spec: FrontendSpec; files: Array<{ path: string; content: string }> }> {
     await logger.agent(this.name, `Designing frontend for "${idea.title}" targeting ${idea.audienceProfile.demographics}...`);
 
     // Step 1: Design the UX based on audience psychology (with retry + simplified fallback)
@@ -1631,7 +1631,7 @@ class FrontendAgent {
 
     // Step 2: Generate all frontend files (with retry)
     const files = await retryLoop(
-      () => this.generateFrontendFiles(idea, spec),
+      () => this.generateFrontendFiles(idea, spec, backendSpec),
       { maxRetries: 3, baseDelay: 5000, label: 'Frontend code generation' }
     );
     await logger.agent(this.name, `Generated ${files.length} frontend files`);
@@ -1805,7 +1805,7 @@ Return ONLY the JSON array, no markdown.`;
     return files;
   }
 
-  private async generateFrontendFiles(idea: ValidatedIdea, spec: FrontendSpec): Promise<Array<{ path: string; content: string }>> {
+  private async generateFrontendFiles(idea: ValidatedIdea, spec: FrontendSpec, backendSpec?: BackendSpec): Promise<Array<{ path: string; content: string }>> {
     // Chrome extension: different file structure
     if (idea.type === 'extension') {
       return this.generateExtensionFiles(idea, spec);
@@ -1816,20 +1816,23 @@ Return ONLY the JSON array, no markdown.`;
     }
     // Free-with-ads utility tool: ilovepdf-style single-page tool
     if (idea.monetizationType === 'free_ads') {
-      return this.generateFreeAdsFrontend(idea, spec);
+      return this.generateFreeAdsFrontend(idea, spec, backendSpec);
     }
     // SaaS: auth + pricing page included
     if (idea.monetizationType === 'saas' || idea.type === 'saas') {
-      return this.generateSaasFrontend(idea, spec);
+      return this.generateSaasFrontend(idea, spec, backendSpec);
     }
     // Default: freemium / one-time web app
-    return this.generateWebAppFrontend(idea, spec);
+    return this.generateWebAppFrontend(idea, spec, backendSpec);
   }
 
   // ilovepdf-style: free utility tool with Google AdSense, no login required
-  private async generateFreeAdsFrontend(idea: ValidatedIdea, spec: FrontendSpec): Promise<Array<{ path: string; content: string }>> {
+  private async generateFreeAdsFrontend(idea: ValidatedIdea, spec: FrontendSpec, backendSpec?: BackendSpec): Promise<Array<{ path: string; content: string }>> {
     // Per-file parallel generation: each call = 1 file, 5-8K tokens
     // Defeats Kimi K2.5 thinking-mode exhaustion (was: 22K → 1 file; now: 6 × 6K → 6 files)
+    const apiRoutesContext = backendSpec?.apiRoutes?.length
+      ? `\nBACKEND API ROUTES — use ONLY these exact paths when calling fetch():\n${backendSpec.apiRoutes.map(r => `  ${r.method} ${r.path} | purpose: ${r.purpose} | input: ${r.inputSchema} | output: ${r.outputSchema}`).join('\n')}`
+      : '';
     const context = `PRODUCT: ${idea.title}
 DESCRIPTION: ${idea.description}
 TARGET USERS: ${idea.targetUsers}
@@ -1838,7 +1841,7 @@ PRIMARY COLOR: ${spec.designSystem.primaryColor}
 MONETIZATION: Free with Google AdSense (publisher: ca-pub-XXXXXXXXXX). No login required.
 STACK: Next.js 14 App Router, TypeScript, TailwindCSS
 ADSENSE PATTERN: <ins className="adsbygoogle" data-ad-client="ca-pub-XXXXXXXXXX" data-ad-slot="1234567890" data-ad-format="auto" data-full-width-responsive="true" />
-STYLE: Clean professional like ilovepdf.com`;
+STYLE: Clean professional like ilovepdf.com${apiRoutesContext}`;
 
     const sysPrompt = `You are a senior frontend engineer building free utility tools. Professional trustworthy design like ilovepdf.com. Tool logic actually works. Output ONLY raw code — no JSON, no markdown fences.`;
 
@@ -1864,7 +1867,10 @@ STYLE: Clean professional like ilovepdf.com`;
 
   // SaaS: per-file parallel generation (1 LLM call per file, raw content)
   // Defeats Kimi K2.5 thinking-mode exhaustion (was: 2×20K → 1 file each; now: 6×7K → 6 files)
-  private async generateSaasFrontend(idea: ValidatedIdea, spec: FrontendSpec): Promise<Array<{ path: string; content: string }>> {
+  private async generateSaasFrontend(idea: ValidatedIdea, spec: FrontendSpec, backendSpec?: BackendSpec): Promise<Array<{ path: string; content: string }>> {
+    const apiRoutesContext = backendSpec?.apiRoutes?.length
+      ? `\nBACKEND API ROUTES — use ONLY these exact paths when calling fetch():\n${backendSpec.apiRoutes.map(r => `  ${r.method} ${r.path} | purpose: ${r.purpose} | input: ${r.inputSchema} | output: ${r.outputSchema}`).join('\n')}`
+      : '';
     const context = `PRODUCT: ${idea.title}
 DESCRIPTION: ${idea.description}
 FEATURES: ${idea.features.join(', ')}
@@ -1872,7 +1878,7 @@ TARGET USERS: ${idea.targetUsers}
 PRIMARY COLOR: ${spec.designSystem.primaryColor}
 STYLE: ${spec.designSystem.style}
 STACK: Next.js 14 App Router, TypeScript, TailwindCSS, Lucide-react icons
-RULES: No framer-motion. Responsive. For dynamic data use fetch('/api/...'). Mobile hamburger nav.`;
+RULES: No framer-motion. Responsive. For dynamic data fetch() the BACKEND API ROUTES listed below. Mobile hamburger nav.${apiRoutesContext}`;
 
     const sysPrompt = `You are a senior SaaS frontend engineer. TypeScript, TailwindCSS, Next.js 14 App Router. Production quality. Output ONLY raw code — no JSON, no markdown fences.`;
 
@@ -1882,7 +1888,7 @@ RULES: No framer-motion. Responsive. For dynamic data use fetch('/api/...'). Mob
       { path: 'src/app/page.tsx', desc: `Landing page. Hero: big headline about ${idea.title}, subline, "Get Started Free" CTA → /auth. 3 feature cards. Pricing preview (3 tiers). Bottom CTA. No hardcoded data.`, tokens: 8000 },
       { path: 'src/app/pricing/page.tsx', desc: `Pricing page. 3 tiers: Free ($0), Pro ($12/mo), Business ($49/mo). Feature comparison list per tier. CTA buttons. Highlight Pro tier. FAQ section.`, tokens: 8000 },
       { path: 'src/app/auth/page.tsx', desc: `Auth page. Toggle: Login / Sign Up. Email + password form. On submit POST /api/auth. OAuth placeholder buttons (Google, GitHub). Validation errors. Redirect to /dashboard on success.`, tokens: 8000 },
-      { path: 'src/app/dashboard/page.tsx', desc: `Dashboard — CORE PRODUCT. Sidebar nav with all feature sections: ${idea.features.join(', ')}. Main content area. useEffect + fetch('/api/...') to load data on mount. Loading spinner, error state. Each feature section fully interactive. Responsive.`, tokens: 10000 },
+      { path: 'src/app/dashboard/page.tsx', desc: `Dashboard — CORE PRODUCT. Sidebar nav with all feature sections: ${idea.features.join(', ')}. Main content area. useEffect + fetch() calls to the BACKEND API ROUTES listed in context to load real data on mount. Loading spinner, error state. Each feature section fully interactive with forms that POST to real routes. Render actual API response data. Responsive.`, tokens: 10000 },
     ];
 
     // Stagger: 2s per file to avoid 429 burst from NVIDIA API
@@ -1898,14 +1904,17 @@ RULES: No framer-motion. Responsive. For dynamic data use fetch('/api/...'). Mob
 
   // Standard web app: per-file parallel generation (1 LLM call per file, raw content)
   // Defeats Kimi K2.5 thinking-mode exhaustion (was: 1×20K → 1 file; now: N×7K → N files)
-  private async generateWebAppFrontend(idea: ValidatedIdea, spec: FrontendSpec): Promise<Array<{ path: string; content: string }>> {
+  private async generateWebAppFrontend(idea: ValidatedIdea, spec: FrontendSpec, backendSpec?: BackendSpec): Promise<Array<{ path: string; content: string }>> {
+    const apiRoutesContext = backendSpec?.apiRoutes?.length
+      ? `\nBACKEND API ROUTES — use ONLY these exact paths when calling fetch():\n${backendSpec.apiRoutes.map(r => `  ${r.method} ${r.path} | purpose: ${r.purpose} | input: ${r.inputSchema} | output: ${r.outputSchema}`).join('\n')}`
+      : '';
     const context = `PRODUCT: ${idea.title}
 DESCRIPTION: ${idea.description}
 TARGET USERS: ${idea.targetUsers}
 FEATURES: ${idea.features.join(', ')}
 DESIGN: primary=${spec.designSystem.primaryColor}, secondary=${spec.designSystem.secondaryColor}, font=${spec.designSystem.fontFamily}, style=${spec.designSystem.style}, dark-mode=${spec.designSystem.darkMode}
 STACK: Next.js 14 App Router, TypeScript, TailwindCSS, Lucide-react
-RULES: No framer-motion. No hardcoded data — fetch('/api/...'). Forms POST to real routes. Lists via useEffect+fetch. Loading+error states. Mobile-first. Freemium upgrade CTAs.`;
+RULES: No framer-motion. No hardcoded data — fetch() the BACKEND API ROUTES listed below. Forms POST to real routes. Lists via useEffect+fetch. Loading+error states. Mobile-first. Freemium upgrade CTAs.${apiRoutesContext}`;
 
     const sysPrompt = `You are an elite frontend developer. Clean, accessible, performant React/TypeScript with TailwindCSS. No framer-motion. Production-quality code. Output ONLY raw code — no JSON, no markdown fences.`;
 
@@ -1940,9 +1949,14 @@ class BackendAgent {
   private name = 'BackendAgent';
 
   async run(idea: ValidatedIdea): Promise<{ spec: BackendSpec; files: Array<{ path: string; content: string }> }> {
-    await logger.agent(this.name, `Designing backend for "${idea.title}" (${idea.category})...`);
+    const spec = await this.designSpec(idea);
+    const files = await this.generateFiles(idea, spec);
+    return { spec, files };
+  }
 
-    // Step 1: Design the complete backend architecture (with retry + simplified fallback)
+  /** Public: design-only phase — returns API spec without generating code files */
+  async designSpec(idea: ValidatedIdea): Promise<BackendSpec> {
+    await logger.agent(this.name, `Designing backend for "${idea.title}" (${idea.category})...`);
     let spec: BackendSpec;
     try {
       spec = await retryLoop(
@@ -1953,16 +1967,18 @@ class BackendAgent {
       await logger.agent(this.name, `Complex backend design failed, trying simplified prompt...`);
       spec = await this.designBackendSimplified(idea);
     }
-    await logger.agent(this.name, `Backend design: ${spec.apiRoutes.length} API routes, ${spec.dataModels.length} data models, ${spec.integrations.length} integrations`);
+    await logger.agent(this.name, `Backend spec ready: ${spec.apiRoutes.length} API routes, ${spec.dataModels.length} data models`);
+    return spec;
+  }
 
-    // Step 2: Generate all backend files with REAL implementations (with retry)
+  /** Public: code generation phase — generates backend files from an existing spec */
+  async generateFiles(idea: ValidatedIdea, spec: BackendSpec): Promise<Array<{ path: string; content: string }>> {
     const files = await retryLoop(
       () => this.generateBackendFiles(idea, spec),
       { maxRetries: 3, baseDelay: 5000, label: 'Backend code generation' }
     );
     await logger.agent(this.name, `Generated ${files.length} backend files`);
-
-    return { spec, files };
+    return files;
   }
 
   private async designBackend(idea: ValidatedIdea): Promise<BackendSpec> {
@@ -2362,20 +2378,23 @@ class PMAgent {
         return { success: false, projectPath: '', githubUrl: '', vercelUrl: '', qualityScore: 0, error: 'Max retries exceeded' };
       }
 
-      // PHASE 3: Parallel Frontend + Backend Generation
-      await logger.agent(this.name, 'PHASE 3: Frontend & Backend Agents working in PARALLEL...');
+      // PHASE 3a: Backend design first — get API routes so frontend knows exact paths
+      await logger.agent(this.name, 'PHASE 3a: BackendAgent designing API architecture (frontend needs route map)...');
+      const backendSpec = await this.backendAgent.designSpec(bestIdea);
+      await logger.agent(this.name, `PHASE 3b: FrontendAgent + BackendAgent code gen in PARALLEL (frontend has ${backendSpec.apiRoutes.length} real routes)...`);
 
-      const [frontendResult, backendResult] = await Promise.all([
-        this.frontendAgent.run(bestIdea),
-        this.backendAgent.run(bestIdea),
+      const [frontendResult, backendFiles] = await Promise.all([
+        this.frontendAgent.run(bestIdea, backendSpec),
+        this.backendAgent.generateFiles(bestIdea, backendSpec),
       ]);
+      const backendResult = { spec: backendSpec, files: backendFiles };
 
       // PHASE 4: Merge, Integration Repair & Quality Check
       await logger.agent(this.name, 'PHASE 4: Merging frontend + backend and running quality checks...');
       const mergedFiles = await this.mergeAndFinalize(bestIdea, frontendResult, backendResult);
 
-      // Wire frontend pages to actual backend routes
-      await logger.agent(this.name, 'PHASE 4b: Integration repair — wiring frontend pages to real backend routes...');
+      // Wire frontend pages to actual backend routes (safety net — frontend already has routes in context)
+      await logger.agent(this.name, 'PHASE 4b: Integration repair — verifying frontend→backend wiring...');
       const repairedFiles = await this.repairFrontendBackendIntegration(bestIdea, mergedFiles, backendResult.spec);
 
       // Quality gate
@@ -2513,17 +2532,23 @@ class PMAgent {
             files: [],
           };
         } else {
-          [frontendResult, backendResult] = await Promise.all([
-            this.frontendAgent.run(buildable!),
-            this.backendAgent.run(buildable!),
+          // Design backend first — get API routes so frontend generates with real paths
+          await logger.agent(this.name, `PHASE 3a: BackendAgent designing API architecture for "${buildable!.title}"...`);
+          const queueBackendSpec = await this.backendAgent.designSpec(buildable!);
+          await logger.agent(this.name, `PHASE 3b: Frontend code gen + backend code gen in PARALLEL (${queueBackendSpec.apiRoutes.length} routes)...`);
+          const [qFrontendResult, qBackendFiles] = await Promise.all([
+            this.frontendAgent.run(buildable!, queueBackendSpec),
+            this.backendAgent.generateFiles(buildable!, queueBackendSpec),
           ]);
+          frontendResult = qFrontendResult;
+          backendResult = { spec: queueBackendSpec, files: qBackendFiles };
         }
 
         await logger.agent(this.name, `PHASE 4: Merging ${frontendResult.files.length} frontend + ${backendResult.files.length} backend files...`);
         const mergedFiles = await this.mergeAndFinalize(buildable!, frontendResult, backendResult);
 
-        // Wire frontend pages to actual backend routes (fixes placeholder data + disconnected forms)
-        await logger.agent(this.name, 'PHASE 4b: Integration repair — wiring frontend pages to real backend routes...');
+        // Verify frontend→backend wiring (safety net — frontend already has routes in context)
+        await logger.agent(this.name, 'PHASE 4b: Integration repair — verifying frontend→backend wiring...');
         const repairedFiles = await this.repairFrontendBackendIntegration(buildable!, mergedFiles, backendResult.spec);
 
         const quality = this.assessQuality(repairedFiles, buildable!);
@@ -2808,9 +2833,8 @@ Built by MVP Factory v11 (Multi-Agent Architecture)
       `${r.method} ${r.path}\n  Input: ${r.inputSchema}\n  Output: ${r.outputSchema}\n  Purpose: ${r.purpose}`
     ).join('\n\n');
 
-    // Repair the single most important interactive page (dashboard for SaaS, main page for web apps).
+    // Repair the 2 most important interactive pages (dashboard + main page).
     // Landing/pricing/auth pages don't need real API integration.
-    // 1 page = ~10 min repair time, keeping total build within 90-min timeout.
     const interactivePages = files.filter(f =>
       f.path.endsWith('page.tsx') &&
       !f.path.includes('/api/') &&
@@ -2823,7 +2847,7 @@ Built by MVP Factory v11 (Multi-Agent Architecture)
         f.path.includes('dashboard') ? 2 :
         f.path === 'src/app/page.tsx' ? 1 : 0;
       return score(b) - score(a);
-    }).slice(0, 1); // Only the single most important page
+    }).slice(0, 2); // Repair up to 2 most important pages
 
     if (interactivePages.length === 0) return files;
 
