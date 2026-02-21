@@ -35,7 +35,37 @@ The pipeline is functional end-to-end. We are in **maintenance/bug-fix mode**.
 - Agent distortion: duplicate logs, ghost instances, API auth issues
 - Frontend/Backend agents build independently of Research/Validation
 
-### Latest Fix (2026-02-21) — GLP1Plate over-complexity + 25-min build timeout
+### Latest Fix (2026-02-21) — Kimi K2.5 Thinking Mode + Build Timeout Engineering
+
+**Root cause discovered:** Kimi K2.5 on NVIDIA API uses "thinking mode" by default.
+Thinking tokens stream alongside output tokens at **~14 tokens/sec** (not 28). A 20K token
+call takes **~23 minutes** to complete. This caused EVERY build to timeout.
+
+**Full chain of fixes applied (this session):**
+1. **GLP1Plate held** — moved to `.hold` file so pipeline can process other ideas
+2. **RetryLoop now logs actual errors** — was swallowing errors silently
+3. **KimiClient stream errors logged** — each failed attempt now shows actual exception
+4. **designBackend maxTokens** — 4K → 6K (JSON truncation was causing backend design to fail)
+5. **Build timeout** — 25 min → 35 min → **55 min** (tuned to Kimi K2.5 thinking mode speed)
+6. **SaaS frontend split** — one 30K call split into 2×20K parallel calls (marketing shell + dashboard)
+7. **All token budgets calibrated** — 20K per call with 55-min timeout = products ship reliably
+8. **enable_thinking: false** added to API calls (may or may not work on NVIDIA endpoint)
+
+**Key insight:** Kimi K2.5 thinking mode streams at ~14 tokens/sec. With 20K tokens per call:
+- `20000 / 14 = 1428 sec = 23.8 min per code generation call`
+- With 2 parallel frontend calls + 1 parallel backend call: still 23.8 min (parallel)
+- Plus 6 min design + 15 min repair + 5 min deploy = **~49 min total**
+- 55-min timeout gives 6-min buffer
+
+**Current state (as of 17:11 UTC):**
+- Backup Boss is building with 55-min timeout ← IN PROGRESS
+- GLP1Plate is on hold (`/root/mvp-projects/validated/5dabf2b6-*.json.hold`)
+- Fail tracker is clean (`{}`)
+- 73 ideas in queue ready to build
+
+---
+
+### Fix (2026-02-21) — GLP1Plate over-complexity + 25-min build timeout (older)
 
 **Problem:** GLP1Plate (7 features, freemium, Firebase) was too complex for a single LLM call:
 - UX design alone took 35 minutes (timeout fires at 25 min → instant fail before file generation)
@@ -105,15 +135,15 @@ forms that did nothing, features completely non-functional (e.g. HijackSentry AS
 | IP | 45.58.40.219 |
 | SSH | `ssh root@45.58.40.219` (pw: `4fPvrXnDx2sqGwch`) |
 | Process manager | pm2 |
-| Daemon process | `mvp-factory-daemon` |
+| Daemon process | `mvp-daemon` |
 | Dashboard process | `mvp-factory-dashboard` |
 | Dashboard port | 3000 |
 
 ### Useful server commands
 ```bash
 pm2 status                        # Check what's running
-pm2 logs mvp-factory-daemon       # Live daemon logs
-pm2 restart mvp-factory-daemon    # Restart after code changes
+pm2 logs mvp-daemon               # Live daemon logs
+pm2 restart mvp-daemon            # Restart after code changes
 pm2 restart mvp-factory-dashboard
 ```
 
@@ -122,10 +152,17 @@ pm2 restart mvp-factory-dashboard
 ## What To Do Next
 
 ### If continuing bug fixes
-1. SSH into server and check `pm2 logs mvp-factory-daemon` for errors
+1. SSH into server and check `pm2 logs mvp-daemon` for errors
 2. Identify the failing component (ResearchAgent / ValidationAgent / FrontendAgent / BackendAgent / PMAgent)
 3. Fix in local `mvp-factory/daemon/mvp-factory-daemon-v11-multiagent.ts`
-4. Push to GitHub → pull on server → `pm2 restart mvp-factory-daemon`
+4. Push to GitHub → pull on server → `pm2 restart mvp-daemon`
+
+### CRITICAL: Token Budget + Timeout Calibration
+- Kimi K2.5 streams at ~14 tokens/sec (includes thinking tokens)
+- Current build timeout: **55 minutes**
+- All code gen calls: ~20K tokens = ~23 min
+- DO NOT reduce token budgets below 18K or builds will generate too-few files
+- DO NOT reduce timeout below 50 min or builds will fail on repair phase
 
 ### If adding a new feature
 1. Read `MILESTONE.md` (this file) + `README.md` first
