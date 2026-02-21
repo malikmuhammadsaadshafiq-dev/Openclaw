@@ -3187,6 +3187,42 @@ ${ap?.painPoints ? ap.painPoints.map((p: string) => `- ❌ ${p}`).join('\n') : '
 
 ${idea.features.map((f, i) => `### ${['🔥','⚡','🎨','🔐','📊','🤖','💎','🌐'][i % 8]} Feature ${i+1}\n${f}`).join('\n\n')}
 
+
+## 🔧 Implementation Guide
+
+> A step-by-step breakdown of how each feature is built. Use this as your dev roadmap.
+
+${idea.features.map((f, i) => {
+  const featureIcons = ['🔥','⚡','🎨','🔐','📊','🤖','💎','🌐'];
+  const title = f.split(':')[0].split('(')[0].trim();
+  const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  const detail = f.includes(':') ? f.split(':').slice(1).join(':').trim() : f;
+  return [
+    `### ${featureIcons[i % 8]} ${i+1}. ${title}`,
+    ``,
+    `**What it does:** ${detail}`,
+    ``,
+    `**How to implement:**`,
+    `| Step | What to do |`,
+    `|------|-----------|`,
+    `| 1. API Route | Create \`src/app/api/${slug}/route.ts\` with a POST handler |`,
+    `| 2. Input Schema | Accept \`{ userId?, ...featureParams }\` in the request body |`,
+    `| 3. Server Logic | Process the request, call external APIs if needed, return JSON |`,
+    `| 4. UI Component | Create \`src/components/${title.replace(/[^a-zA-Z0-9]/g,'')}Section.tsx\` |`,
+    `| 5. Wire up | Call \`/api/${slug}\` from the component using \`fetch\` on form submit |`,
+    ``,
+    `**Potential enhancements:**`,
+    `- ⚡ Cache repeated lookups with \`unstable_cache\` or Redis`,
+    `- 🔒 Add rate limiting to \`/api/${slug}\` (e.g. Upstash Ratelimit)`,
+    `- 📱 Make the UI section responsive-first (mobile breakpoints)`,
+    `- 📊 Log feature usage to analytics (Plausible / PostHog)`,
+    `- 🧪 Add an integration test for the API route`,
+  ].join('\n');
+}).join('\n\n')}
+
+---
+
+
 ## 🏗️ How It Works
 
 ${flowDiagram}
