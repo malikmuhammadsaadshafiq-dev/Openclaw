@@ -3569,12 +3569,28 @@ ${buildStep}
       try {
         const envFlag = process.env.NVIDIA_API_KEY ? ` -e NVIDIA_API_KEY="${process.env.NVIDIA_API_KEY}"` : '';
         const deployCmd = `npx vercel --token ${CONFIG.vercel.token} --scope ${CONFIG.vercel.teamId} --yes --prod${envFlag}`;
-        const { stdout, stderr } = await execAsync(deployCmd, { cwd: projectPath, timeout: 600000 });
-        const output = stdout + stderr;
-        const urlMatch = output.match(/https:\/\/[^\s]+\.vercel\.app/);
+        let vercelStdout = '';
+        let vercelStderr = '';
+        try {
+          const { stdout, stderr } = await execAsync(deployCmd, { cwd: projectPath, timeout: 600000 });
+          vercelStdout = stdout || '';
+          vercelStderr = stderr || '';
+        } catch (execErr: any) {
+          // execAsync throws on non-zero exit, but Vercel often exits non-zero even on successful deploy
+          // Extract stdout/stderr from the error object so we can still recover the URL
+          vercelStdout = execErr.stdout || '';
+          vercelStderr = execErr.stderr || '';
+          if (!vercelStdout && !vercelStderr) {
+            await logger.agent(this.name, `Vercel error: ${execErr}`);
+          }
+        }
+        const output = vercelStdout + vercelStderr;
+        const urlMatch = output.match(/https:\/\/[^\s\]]+\.vercel\.app/);
         if (urlMatch) {
-          vercelUrl = urlMatch[0];
+          vercelUrl = urlMatch[0].replace(/[^\w\-.:\/]/g, '');
           await logger.agent(this.name, `Vercel: ${vercelUrl}`);
+        } else if (output) {
+          await logger.agent(this.name, `Vercel deploy ran but no URL found in output`);
         }
       } catch (err) {
         await logger.agent(this.name, `Vercel error: ${err}`);
