@@ -35,7 +35,30 @@ The pipeline is functional end-to-end. We are in **maintenance/bug-fix mode**.
 - Agent distortion: duplicate logs, ghost instances, API auth issues
 - Frontend/Backend agents build independently of Research/Validation
 
-### Latest Fix (2026-02-21) — 429 Rate Limit Fix
+### Latest Fix (2026-02-21) — Global API Semaphore (ROOT FIX)
+
+**Problem:** Up to 18+ simultaneous Kimi API calls across all agents → ALL get 429 rate limited.
+
+**Root fix — `ApiSemaphore` class limiting max 4 concurrent Kimi calls globally:**
+- `KimiClient.complete()` acquires a semaphore slot, releases in `finally` block
+- All agents (Frontend, Backend, Research) share the same 4-slot pool
+- Max 4 concurrent calls at any time → no burst rate limiting
+- ResearchAgent analysis now queues behind code gen instead of competing
+
+**Effect on build timing:**
+- Design phase (2 calls): both get slots immediately → no wait
+- Code gen (18 files): only 4 fire simultaneously → rest queue
+- ResearchAgent LLM call: waits in queue until a slot frees
+
+**Integration repair improvement:**
+- `repairFrontendBackendIntegration` now patches up to 2 pages (dashboard + main)
+  instead of only 1, sorted by importance
+
+**Server path confirmed:** `/root/mvp-factory` is a symlink → `/root/Openclaw-repo/mvp-factory`
+
+---
+
+### Fix (2026-02-21) — 429 Rate Limit Backoff + Stagger (Partial)
 
 **Problem:** NVIDIA API returns 429 Too Many Requests when all per-file calls fire simultaneously (18 files at once).
 
