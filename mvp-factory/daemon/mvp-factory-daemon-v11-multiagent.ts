@@ -1186,7 +1186,7 @@ ${postSummaries}
 
 Extract 12 product ideas that solve REAL problems visible in these posts. Each idea must:
 1. Address a SPECIFIC pain point from the actual posts above
-2. Be buildable as a software product (web app, mobile app, Chrome extension, SaaS, API, or browser tool) in 12-24 hours
+2. Be buildable as a software product (web app, Chrome extension, SaaS, API, or browser tool) in 12-24 hours
 3. Have REAL functionality (not just a UI shell)
 4. Be something people would actually PAY for or regularly use
 
@@ -1420,10 +1420,10 @@ Return ONLY valid JSON:
   "problem": "Specific pain point",
   "targetUsers": "Exact audience",
   "features": ["real feature 1 with server logic", "real feature 2", ...],
-  "type": "web|mobile|saas|api|extension",
+  "type": "web|saas|api|extension", // NEVER use mobile — pipeline is web/SaaS only
   "monetizationType": "free_ads|freemium|saas|one_time",
   "category": "ai-assisted|utility|data-tool|automation|saas-platform",
-  "techStack": "Next.js 14 + API Routes + specific tools (or 'Chrome Extension: Manifest V3 + vanilla JS' for extensions, or 'React Native + Expo' for mobile)",
+  "techStack": "Next.js 14 + API Routes + specific tools (or 'Chrome Extension: Manifest V3 + vanilla JS' for extensions)",
   "estimatedHours": 12-24,
   "validation": {
     "marketDemand": 1-10,
@@ -2448,6 +2448,11 @@ class PMAgent {
       }
 
       const remaining = ideas.filter(i => (failTracker[i.id]?.count || 0) < 3);
+      // Reclassify mobile → web (pipeline is web/SaaS only, no React Native/Expo support)
+      if ((buildable as any).type === 'mobile') {
+        (buildable as any).type = 'web';
+        await logger.agent(this.name, `RECLASSIFY: "${buildable.title}" type mobile → web (mobile not supported)`);
+      }
       await logger.agent(this.name, `SELECTED: "${buildable.title}" (score: ${buildable.validation.overallScore}/10) | ${remaining.length} remaining in queue after this`);
       await logger.agent(this.name, `Idea details: type=${buildable.type} | monetization=${buildable.monetizationType || 'free_ads'} | audience=${buildable.audienceProfile?.demographics?.slice(0, 80)} | stack=${buildable.techStack?.slice(0, 60)}`);
 
