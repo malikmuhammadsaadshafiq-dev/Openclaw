@@ -35,7 +35,22 @@ The pipeline is functional end-to-end. We are in **maintenance/bug-fix mode**.
 - Agent distortion: duplicate logs, ghost instances, API auth issues
 - Frontend/Backend agents build independently of Research/Validation
 
-### Latest Fix (2026-02-21) — Per-File Parallel Generation (BREAKTHROUGH)
+### Latest Fix (2026-02-21) — 429 Rate Limit Fix
+
+**Problem:** NVIDIA API returns 429 Too Many Requests when all per-file calls fire simultaneously (18 files at once).
+
+**Fixes applied:**
+1. **KimiClient.complete()**: 429 errors now trigger 45-75s wait (attempt × 15s + 30s) instead of generic 10-30s backoff
+2. **generateFreeAdsFrontend / generateSaasFrontend / generateWebAppFrontend**: 2-second stagger per file index — file 0 starts immediately, file 1 after 2s, file 2 after 4s, etc. (6 files → 10s spread)
+3. **generateBackendFiles routes**: Same 2s stagger per route index (12 routes → 22s spread prevents burst)
+
+**Effect:** API calls arrive at ~1 req/2s instead of all at once. If a 429 still occurs (e.g. from design calls), the retry waits 45-75s instead of 10-30s.
+
+**Server path clarification:** `/root/mvp-factory` is a symlink → `/root/Openclaw-repo/mvp-factory`. Pull from `/root/Openclaw-repo`.
+
+---
+
+### Earlier Fix (2026-02-21) — Per-File Parallel Generation (BREAKTHROUGH)
 
 **Root cause confirmed:** `enable_thinking: false` is NOT respected by NVIDIA's Kimi K2.5 endpoint.
 Thinking tokens consumed ~15K/20K of every code gen call → only 5K left for actual code → 1 file max.
