@@ -35,7 +35,25 @@ The pipeline is functional end-to-end. We are in **maintenance/bug-fix mode**.
 - Agent distortion: duplicate logs, ghost instances, API auth issues
 - Frontend/Backend agents build independently of Research/Validation
 
-### Latest Fix (2026-02-21) — BackendAgent placeholder data
+### Latest Fix (2026-02-21) — No mobile apps + GLP1Plate infinite loop
+
+**Decision:** Mobile apps (`type: "mobile"`, React Native/Expo) are permanently disabled from the pipeline.
+**Reasons:**
+- Mobile generation requires 20K-32K tokens (8 complex TypeScript files) → JSON gets truncated mid-string, unparseable
+- No Expo build infrastructure on the server — even if files generate, they can't be deployed
+- Can't validate the app works (no headless runner)
+- Web apps serve the same ideas better and deploy to Vercel in seconds
+
+**What was done:**
+1. Removed `mobile` from valid type options in ValidationAgent prompt
+2. Added runtime guard: any `mobile` idea that slips through gets reclassified to `web` at build time
+3. Reclassified 11 existing mobile items in validated queue (GLP1Plate + 10 others) → `web`
+4. Fixed root cause of 7-hour GLP1Plate loop: `recordFailure()` was defined but never called — fail count stayed 0 forever → same idea re-selected every cycle
+5. Increased mobile file gen `maxTokens` 10K → 32K (fallback safety, now irrelevant since mobile is disabled)
+
+---
+
+### Fix (2026-02-21) — BackendAgent placeholder data
 **Root cause:** FrontendAgent and BackendAgent ran in parallel with NO shared context.
 Frontend invented API route paths (`/api/analyze`) that never matched what backend generated
 (`/api/monitor-asin`, `/api/check-listing`). Resulted in: placeholder demo data everywhere,
