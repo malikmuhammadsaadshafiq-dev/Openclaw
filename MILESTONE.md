@@ -35,7 +35,24 @@ The pipeline is functional end-to-end. We are in **maintenance/bug-fix mode**.
 - Agent distortion: duplicate logs, ghost instances, API auth issues
 - Frontend/Backend agents build independently of Research/Validation
 
-### Latest Fix (2026-02-21) — No mobile apps + GLP1Plate infinite loop
+### Latest Fix (2026-02-21) — GLP1Plate over-complexity + 25-min build timeout
+
+**Problem:** GLP1Plate (7 features, freemium, Firebase) was too complex for a single LLM call:
+- UX design alone took 35 minutes (timeout fires at 25 min → instant fail before file generation)
+- Frontend code generation used heaviest generator (28K tokens, 8+ pages)
+- Fail count never incremented (separate bug — now fixed) so it looped for 7+ hours
+
+**Fixes applied:**
+1. **25-minute hard build timeout** — `Promise.race` in `runBuildFromQueue`; on timeout, `recordFailure` fires, pipeline moves on. Prevents any single build freezing the system.
+2. **Simplified GLP1Plate in queue** — 7 features → 3 core (barcode scan, portion calc, meal planner); `freemium` → `free_ads`; removed Firebase. UX design now takes 4 min instead of 35.
+3. **Fail tracker reset** — gave GLP1Plate 3 fresh attempts as a simpler web app.
+4. **`recordFailure()` was never called** — defined but had zero call sites; fail count stayed 0 forever → same idea re-selected every cycle. Now called in catch block.
+
+**Result:** GLP1Plate is now building as a clean `free_ads` Next.js utility (6 files, 25K tokens).
+
+---
+
+### Fix (2026-02-21) — No mobile apps + old GLP1Plate loop
 
 **Decision:** Mobile apps (`type: "mobile"`, React Native/Expo) are permanently disabled from the pipeline.
 **Reasons:**
