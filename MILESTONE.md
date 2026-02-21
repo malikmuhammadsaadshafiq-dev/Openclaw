@@ -35,33 +35,43 @@ The pipeline is functional end-to-end. We are in **maintenance/bug-fix mode**.
 - Agent distortion: duplicate logs, ghost instances, API auth issues
 - Frontend/Backend agents build independently of Research/Validation
 
-### Latest Fix (2026-02-21) — Kimi K2.5 Thinking Mode + Build Timeout Engineering
+### Latest Fix (2026-02-21) — Per-File Parallel Generation (BREAKTHROUGH)
 
-**Root cause discovered:** Kimi K2.5 on NVIDIA API uses "thinking mode" by default.
-Thinking tokens stream alongside output tokens at **~14 tokens/sec** (not 28). A 20K token
-call takes **~23 minutes** to complete. This caused EVERY build to timeout.
+**Root cause confirmed:** `enable_thinking: false` is NOT respected by NVIDIA's Kimi K2.5 endpoint.
+Thinking tokens consumed ~15K/20K of every code gen call → only 5K left for actual code → 1 file max.
 
-**Full chain of fixes applied (this session):**
-1. **GLP1Plate held** — moved to `.hold` file so pipeline can process other ideas
-2. **RetryLoop now logs actual errors** — was swallowing errors silently
-3. **KimiClient stream errors logged** — each failed attempt now shows actual exception
-4. **designBackend maxTokens** — 4K → 6K (JSON truncation was causing backend design to fail)
-5. **Build timeout** — 25 min → 35 min → **55 min** (tuned to Kimi K2.5 thinking mode speed)
-6. **SaaS frontend split** — one 30K call split into 2×20K parallel calls (marketing shell + dashboard)
-7. **All token budgets calibrated** — 20K per call with 55-min timeout = products ship reliably
-8. **enable_thinking: false** added to API calls (may or may not work on NVIDIA endpoint)
+**Key fix — Per-file parallel generation (`generateOneFile` helper):**
+- Instead of 1 big LLM call asking for ALL files → N parallel calls asking for 1 file each
+- Each call: simpler task → less thinking → 2K-4K tokens for actual code → 1 complete file
+- All files generated in parallel → same wall-clock time (~9 min vs 23 min that failed)
 
-**Key insight:** Kimi K2.5 thinking mode streams at ~14 tokens/sec. With 20K tokens per call:
-- `20000 / 14 = 1428 sec = 23.8 min per code generation call`
-- With 2 parallel frontend calls + 1 parallel backend call: still 23.8 min (parallel)
-- Plus 6 min design + 15 min repair + 5 min deploy = **~49 min total**
-- 55-min timeout gives 6-min buffer
+**Observed build results (Backup Boss, 2026-02-21):**
+| Metric | Before | After |
+|--------|--------|-------|
+| Frontend files | 1 (out of 6) | **6** ✓ |
+| Backend files | 0 (out of 12) | **12** ✓ |
+| Total files written | 1 | **25** ✓ |
+| Quality gate | N/A | 18/20 ✓ |
+| GitHub repo | None | Created ✓ |
+| Vercel build | N/A | Failed (1 file had thinking text) |
 
-**Current state (as of 17:11 UTC):**
-- Backup Boss is building with 55-min timeout ← IN PROGRESS
+**Second fix — Thinking text detection in `generateOneFile`:**
+- Kimi sometimes outputs thinking reasoning ("The user wants...", "Let me...") as file content
+- Fix: detect non-code first line → find first real code line (import/export/const/etc.) → extract from there
+- If entire response is thinking text → return null → file skipped → retry once
+
+**Build timeline (per-file approach, measured):**
+- Design (both agents): ~10 min
+- Code gen (all files parallel): ~9 min
+- Integration repair (dashboard only): ~10 min
+- Deploy (GitHub + Vercel): ~5 min
+- **Total: ~34 min** ← well within 55-min timeout
+
+**Current state (as of 18:44 UTC):**
+- GhostMode Audit (7.7/10) ← BUILDING NOW
+- Backup Boss (7.7/10) ← built, GitHub created, Vercel build failed (thinking text issue fixed)
 - GLP1Plate is on hold (`/root/mvp-projects/validated/5dabf2b6-*.json.hold`)
-- Fail tracker is clean (`{}`)
-- 73 ideas in queue ready to build
+- 72 ideas in queue ready to build
 
 ---
 
@@ -159,10 +169,11 @@ pm2 restart mvp-factory-dashboard
 
 ### CRITICAL: Token Budget + Timeout Calibration
 - Kimi K2.5 streams at ~14 tokens/sec (includes thinking tokens)
+- `enable_thinking: false` is NOT respected by NVIDIA's endpoint — thinking always runs
 - Current build timeout: **55 minutes**
-- All code gen calls: ~20K tokens = ~23 min
-- DO NOT reduce token budgets below 18K or builds will generate too-few files
-- DO NOT reduce timeout below 50 min or builds will fail on repair phase
+- Per-file calls: 7K tokens each, all parallel → ~9 min code gen
+- DO NOT switch back to single large calls (20K+) — they produce only 1 file due to thinking mode
+- DO NOT reduce per-file budgets below 6K or files may be truncated
 
 ### If adding a new feature
 1. Read `MILESTONE.md` (this file) + `README.md` first
