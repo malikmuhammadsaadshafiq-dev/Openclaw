@@ -431,8 +431,14 @@ class KimiClient {
             throw new Error(`Kimi API failed after ${this.maxRetries}+1 attempts: ${errMsg}`);
           }
         }
-        const backoff = 10000 * Math.pow(3, attempt - 1);
-        await new Promise(r => setTimeout(r, backoff));
+        if (errMsg.includes('429') || errMsg.includes('Too Many Requests')) {
+          const rateLimitWait = 30000 + (attempt * 15000);
+          console.log(`[KimiClient] Rate limited (429), waiting ${rateLimitWait / 1000}s before retry...`);
+          await new Promise(r => setTimeout(r, rateLimitWait));
+        } else {
+          const backoff = 10000 * Math.pow(3, attempt - 1);
+          await new Promise(r => setTimeout(r, backoff));
+        }
       }
     }
     throw new Error('Unreachable');
@@ -1843,8 +1849,11 @@ STYLE: Clean professional like ilovepdf.com`;
       { path: 'src/app/page.tsx', desc: `Main page: ToolHeader at top, AdBanner (slot="1111111111"), then THE WORKING TOOL centered (${idea.features[0] || idea.description}), AdBanner (slot="2222222222") at bottom, OtherTools grid. Tool logic: user inputs → POST to /api/process → show result with download/copy button. Progress indicator during fetch. Drag-drop if file upload relevant. Responsive.`, tokens: 8000 },
     ];
 
+    // Stagger: 2s per file to avoid 429 burst from NVIDIA API
     const results = await Promise.all(
-      fileDefs.map(f => generateOneFile(f.path, f.desc, context, sysPrompt, f.tokens))
+      fileDefs.map((f, i) => new Promise<{ path: string; content: string } | null>(resolve =>
+        setTimeout(() => generateOneFile(f.path, f.desc, context, sysPrompt, f.tokens).then(resolve).catch(() => resolve(null)), i * 2000)
+      ))
     );
     const allFiles = results.filter((f): f is { path: string; content: string } => f !== null && f.content.length > 30);
     if (!allFiles.length) throw new Error('Free-ads frontend generation returned no files');
@@ -1874,8 +1883,11 @@ RULES: No framer-motion. Responsive. For dynamic data use fetch('/api/...'). Mob
       { path: 'src/app/dashboard/page.tsx', desc: `Dashboard — CORE PRODUCT. Sidebar nav with all feature sections: ${idea.features.join(', ')}. Main content area. useEffect + fetch('/api/...') to load data on mount. Loading spinner, error state. Each feature section fully interactive. Responsive.`, tokens: 8000 },
     ];
 
+    // Stagger: 2s per file to avoid 429 burst from NVIDIA API
     const results = await Promise.all(
-      fileDefs.map(f => generateOneFile(f.path, f.desc, context, sysPrompt, f.tokens))
+      fileDefs.map((f, i) => new Promise<{ path: string; content: string } | null>(resolve =>
+        setTimeout(() => generateOneFile(f.path, f.desc, context, sysPrompt, f.tokens).then(resolve).catch(() => resolve(null)), i * 2000)
+      ))
     );
     const allFiles = results.filter((f): f is { path: string; content: string } => f !== null && f.content.length > 30);
     if (!allFiles.length) throw new Error('SaaS frontend generation returned no files');
@@ -1906,8 +1918,11 @@ RULES: No framer-motion. No hardcoded data — fetch('/api/...'). Forms POST to 
       })),
     ];
 
+    // Stagger: 2s per file to avoid 429 burst from NVIDIA API
     const results = await Promise.all(
-      fileDefs.map(f => generateOneFile(f.path, f.desc, context, sysPrompt, f.tokens))
+      fileDefs.map((f, i) => new Promise<{ path: string; content: string } | null>(resolve =>
+        setTimeout(() => generateOneFile(f.path, f.desc, context, sysPrompt, f.tokens).then(resolve).catch(() => resolve(null)), i * 2000)
+      ))
     );
     const allFiles = results.filter((f): f is { path: string; content: string } => f !== null && f.content.length > 30);
     if (!allFiles.length) throw new Error('Frontend generation returned no files');
@@ -2093,8 +2108,8 @@ STACK: Next.js 14 API routes, TypeScript, Zod validation`;
 
     const sysPrompt = `You are a senior backend engineer. Every function fully implemented — no stubs, no TODOs. Zod validation on all inputs. Structured error responses. Output ONLY raw TypeScript code — no JSON, no markdown fences.`;
 
-    // Generate each API route individually in parallel
-    const routePromises = spec.apiRoutes.map(route => {
+    // Generate each API route individually — stagger 2s each to avoid 429 burst from NVIDIA API
+    const routePromises = spec.apiRoutes.map((route, i) => {
       // Convert /api/foo/:id/bar or /api/foo/{id}/bar → src/app/api/foo/[id]/bar/route.ts
       // Next.js dynamic routes use [id] syntax, not :id or {id}
       const routePath = route.path
@@ -2103,7 +2118,9 @@ STACK: Next.js 14 API routes, TypeScript, Zod validation`;
         .replace(/\{([a-zA-Z_]+)\}/g, '[$1]');  // {id} → [id]
       const filePath = `src/app/api${routePath}/route.ts`;
       const desc = `${route.method} handler. Purpose: ${route.purpose}. Input schema: ${route.inputSchema}. Output schema: ${route.outputSchema}. Implementation: ${route.implementation}. Use Zod to validate request body. Return NextResponse.json(). Fully implemented logic — no placeholder functions.`;
-      return generateOneFile(filePath, desc, context, sysPrompt, 7000);
+      return new Promise<{ path: string; content: string } | null>(resolve =>
+        setTimeout(() => generateOneFile(filePath, desc, context, sysPrompt, 7000).then(resolve).catch(() => resolve(null)), i * 2000)
+      );
     });
 
     // Generate shared lib files in parallel with routes
