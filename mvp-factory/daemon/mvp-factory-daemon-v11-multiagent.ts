@@ -59,9 +59,18 @@ const execAsync = promisify(exec);
       try {
         // Check if that PID is actually alive
         process.kill(existingPid, 0);
-        // If no error, process is alive — we are the duplicate, exit
-        console.error(`[SingleInstance] Another daemon already running (PID ${existingPid}). Exiting.`);
-        process.exit(0);
+        // It's alive — send SIGTERM, wait briefly, then SIGKILL if needed
+        console.log(`[SingleInstance] Killing stale daemon (PID ${existingPid})...`);
+        try { process.kill(existingPid, 'SIGTERM'); } catch {}
+        // Busy-wait up to 3s for old process to exit
+        const deadline = Date.now() + 3000;
+        while (Date.now() < deadline) {
+          try { process.kill(existingPid, 0); } catch { break; } // exited
+          const waitUntil = Date.now() + 200;
+          while (Date.now() < waitUntil) { /* spin wait */ }
+        }
+        // Force-kill if still alive
+        try { process.kill(existingPid, 'SIGKILL'); } catch {}
       } catch {
         // PID is dead — stale lock, we take over
       }
@@ -69,8 +78,6 @@ const execAsync = promisify(exec);
   } catch {}
   fsSync.writeFileSync(pidFile, String(myPid));
   const cleanPid = () => { try { fsSync.unlinkSync(pidFile); } catch {} };
-  // Delete PID file IMMEDIATELY on SIGTERM/SIGINT so a new daemon can start right away
-  // (pm2 restarts send SIGTERM first — if PID file lingers, new process sees old PID as alive)
   process.on('SIGTERM', () => { cleanPid(); process.exit(0); });
   process.on('SIGINT',  () => { cleanPid(); process.exit(0); });
   process.on('exit', cleanPid);
