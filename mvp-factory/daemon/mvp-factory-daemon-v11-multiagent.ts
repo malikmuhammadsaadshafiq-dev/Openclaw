@@ -90,7 +90,7 @@ async function retryLoop<T>(
     } catch (error: any) {
       if (attempt === maxRetries) throw error;
       const delay = baseDelay * Math.pow(2, attempt - 1) + Math.random() * 1000;
-      console.log(`[RetryLoop] ${label} attempt ${attempt}/${maxRetries} failed, retrying in ${Math.round(delay)}ms...`);
+      console.log(`[RetryLoop] ${label} attempt ${attempt}/${maxRetries} failed (${String(error).slice(0, 200)}), retrying in ${Math.round(delay)}ms...`);
       await new Promise(r => setTimeout(r, delay));
     }
   }
@@ -418,6 +418,7 @@ class KimiClient {
         return await this.streamComplete(prompt, maxTokens, temperature, options.systemPrompt);
       } catch (error: any) {
         const errMsg = error?.name === 'AbortError' ? 'Timeout' : String(error).slice(0, 200);
+        console.log(`[KimiClient] Stream attempt ${attempt}/${this.maxRetries} failed: ${errMsg}`);
         if (attempt === this.maxRetries) {
           try {
             return await this.nonStreamComplete(prompt, maxTokens, temperature, options.systemPrompt);
@@ -2040,14 +2041,14 @@ Return ONLY valid JSON:
 }`;
 
     const response = await kimi.complete(prompt, {
-      maxTokens: 4000,
+      maxTokens: 6000,
       temperature: 0.3,
-      systemPrompt: 'You are a backend architect who builds robust, scalable APIs. Every endpoint you design has real processing logic, proper error handling, and clear documentation. You never create stub endpoints.',
+      systemPrompt: 'You are a backend architect who builds robust, scalable APIs. Every endpoint you design has real processing logic, proper error handling, and clear documentation. You never create stub endpoints. Return ONLY valid JSON, no markdown.',
     });
 
     const parsed = extractJSON(response, 'object');
     if (!parsed || !parsed.apiRoutes) {
-      throw new Error('Backend architecture AI failed to return valid design - will retry');
+      throw new Error(`Backend architecture AI returned invalid JSON (response length: ${response?.length || 0}) - will retry`);
     }
 
     return parsed as BackendSpec;
@@ -2060,7 +2061,7 @@ Features: ${idea.features.join(', ')}
 Return ONLY this JSON (no markdown, no explanation):
 {"apiRoutes":[{"method":"POST","path":"/api/analyze","purpose":"Main processing","inputSchema":"{ input: string }","outputSchema":"{ result: object }","implementation":"Process input and return results"},{"method":"GET","path":"/api/health","purpose":"Health check","inputSchema":"none","outputSchema":"{ status: string }","implementation":"Return service status"}],"dataModels":[{"name":"Item","fields":["id: string","data: string","createdAt: string"],"relationships":"standalone"}],"integrations":[],"authentication":"none","errorHandling":"try-catch with JSON error responses","realTimeFeatures":[]}`;
 
-    const response = await kimi.complete(prompt, { maxTokens: 2000, temperature: 0.2 });
+    const response = await kimi.complete(prompt, { maxTokens: 3000, temperature: 0.2 });
     const parsed = extractJSON(response, 'object');
     if (!parsed || !parsed.apiRoutes) {
       // Absolute minimum fallback - still real architecture, not placeholder content
