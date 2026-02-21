@@ -418,34 +418,60 @@ class KimiClient {
     const maxTokens = options.maxTokens || 16384;
     const temperature = options.temperature || 0.7;
 
-    for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
-      try {
-        return await this.streamComplete(prompt, maxTokens, temperature, options.systemPrompt);
-      } catch (error: any) {
-        const errMsg = error?.name === 'AbortError' ? 'Timeout' : String(error).slice(0, 200);
-        console.log(`[KimiClient] Stream attempt ${attempt}/${this.maxRetries} failed: ${errMsg}`);
-        if (attempt === this.maxRetries) {
-          try {
-            return await this.nonStreamComplete(prompt, maxTokens, temperature, options.systemPrompt);
-          } catch (fallbackErr) {
-            throw new Error(`Kimi API failed after ${this.maxRetries}+1 attempts: ${errMsg}`);
+    // Acquire global semaphore — holds slot for entire call including retries
+    await kimiSemaphore.acquire();
+    try {
+      for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
+        try {
+          return await this.streamComplete(prompt, maxTokens, temperature, options.systemPrompt);
+        } catch (error: any) {
+          const errMsg = error?.name === 'AbortError' ? 'Timeout' : String(error).slice(0, 200);
+          console.log(`[KimiClient] Stream attempt ${attempt}/${this.maxRetries} failed: ${errMsg}`);
+          if (attempt === this.maxRetries) {
+            try {
+              return await this.nonStreamComplete(prompt, maxTokens, temperature, options.systemPrompt);
+            } catch (fallbackErr) {
+              throw new Error(`Kimi API failed after ${this.maxRetries}+1 attempts: ${errMsg}`);
+            }
+          }
+          if (errMsg.includes('429') || errMsg.includes('Too Many Requests')) {
+            const rateLimitWait = 30000 + (attempt * 15000);
+            console.log(`[KimiClient] Rate limited (429), waiting ${rateLimitWait / 1000}s before retry...`);
+            await new Promise(r => setTimeout(r, rateLimitWait));
+          } else {
+            const backoff = 10000 * Math.pow(3, attempt - 1);
+            await new Promise(r => setTimeout(r, backoff));
           }
         }
-        if (errMsg.includes('429') || errMsg.includes('Too Many Requests')) {
-          const rateLimitWait = 30000 + (attempt * 15000);
-          console.log(`[KimiClient] Rate limited (429), waiting ${rateLimitWait / 1000}s before retry...`);
-          await new Promise(r => setTimeout(r, rateLimitWait));
-        } else {
-          const backoff = 10000 * Math.pow(3, attempt - 1);
-          await new Promise(r => setTimeout(r, backoff));
-        }
       }
+      throw new Error('Unreachable');
+    } finally {
+      kimiSemaphore.release();
     }
-    throw new Error('Unreachable');
   }
 }
 
 const kimi = new KimiClient();
+
+// ============================================================
+// Global API Semaphore — limits concurrent Kimi calls to 4
+// across ALL agents (Frontend, Backend, Research, etc.)
+// Prevents 429 bursts when multiple agents fire simultaneously.
+// ============================================================
+class ApiSemaphore {
+  private slots: number;
+  private queue: (() => void)[] = [];
+  constructor(maxConcurrent: number) { this.slots = maxConcurrent; }
+  acquire(): Promise<void> {
+    if (this.slots > 0) { this.slots--; return Promise.resolve(); }
+    return new Promise(resolve => { this.queue.push(resolve); });
+  }
+  release() {
+    if (this.queue.length > 0) { this.queue.shift()!(); }
+    else { this.slots++; }
+  }
+}
+const kimiSemaphore = new ApiSemaphore(4); // max 4 concurrent Kimi API calls
 
 // ============================================================
 // Utility Functions
@@ -2763,15 +2789,22 @@ Built by MVP Factory v11 (Multi-Agent Architecture)
       `${r.method} ${r.path}\n  Input: ${r.inputSchema}\n  Output: ${r.outputSchema}\n  Purpose: ${r.purpose}`
     ).join('\n\n');
 
-    // Only repair the dashboard/main app page — it's the core product experience.
+    // Repair up to 2 core product pages — dashboard (for SaaS) and main tool page (for web apps).
     // Landing/pricing/auth pages don't need real API integration to look good.
-    // Repairing all 4 pages sequentially takes 38+ min; just the dashboard = ~10 min.
+    // Priority order: dashboard > main page > other tool pages
     const interactivePages = files.filter(f =>
       f.path.endsWith('page.tsx') &&
       !f.path.includes('/api/') &&
-      f.content.length > 300 &&
-      (f.path.includes('dashboard') || f.path.includes('app/page.tsx'))
-    ).slice(0, 1); // Only the most important page
+      !f.path.includes('/auth/') &&
+      !f.path.includes('/pricing/') &&
+      f.content.length > 300
+    ).sort((a, b) => {
+      // Dashboard first, then app/page.tsx, then other pages
+      const score = (f: typeof a) =>
+        f.path.includes('dashboard') ? 2 :
+        f.path === 'src/app/page.tsx' ? 1 : 0;
+      return score(b) - score(a);
+    }).slice(0, 2); // Repair up to 2 most important pages
 
     if (interactivePages.length === 0) return files;
 
