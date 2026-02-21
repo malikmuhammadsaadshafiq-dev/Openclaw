@@ -2492,10 +2492,11 @@ class PMAgent {
         ideas: remaining.slice(0, 5).map(i => ({ title: i.title, source: i.sourcePlatform, score: i.validation?.overallScore })),
       })).catch(() => {});
 
-      // Hard 25-minute timeout — prevents a single stuck LLM call from freezing the pipeline
-      const BUILD_TIMEOUT_MS = 25 * 60 * 1000;
+      // Hard 35-minute timeout — prevents a single stuck LLM call from freezing the pipeline
+      // 35 min allows: 6min UX design + 12min frontend code gen (28K tokens) + 10min backend code gen + buffer
+      const BUILD_TIMEOUT_MS = 35 * 60 * 1000;
       const buildTimeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`Build timeout: "${buildable!.title}" exceeded 25 minutes — will retry next cycle`)), BUILD_TIMEOUT_MS)
+        setTimeout(() => reject(new Error(`Build timeout: "${buildable!.title}" exceeded 35 minutes — will retry next cycle`)), BUILD_TIMEOUT_MS)
       );
 
       const buildExecutionPromise = (async () => {
