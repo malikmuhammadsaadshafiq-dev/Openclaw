@@ -1698,8 +1698,14 @@ USE:
 
 Return ONLY the JSON array, no markdown.`;
 
-    const response = await kimi.complete(prompt, { maxTokens: 10000, temperature: 0.2 });
-    const files = extractJSON(response, 'array') as Array<{ path: string; content: string }>;
+    const response = await kimi.complete(prompt, { maxTokens: 32768, temperature: 0.2 });
+    let files = extractJSON(response, 'array') as Array<{ path: string; content: string }>;
+    if (!files || !files.length) {
+      // Fallback: minimal 3-file skeleton
+      const fallbackPrompt = 'Generate a minimal React Native/Expo app for: ' + idea.title + '. Return ONLY a JSON array with 3 files: App.tsx, src/screens/HomeScreen.tsx, package.json. Keep code concise. No markdown.';
+      const fallbackResponse = await kimi.complete(fallbackPrompt, { maxTokens: 16384, temperature: 0.3 });
+      files = extractJSON(fallbackResponse, 'array') as Array<{ path: string; content: string }>;
+    }
     if (!files || !files.length) throw new Error('Mobile file generation returned empty');
     return files;
   }
@@ -2411,6 +2417,7 @@ class PMAgent {
     await logger.agent(this.name, '========== BUILD FROM QUEUE START ==========');
 
     // Build from already-validated ideas in queue
+    let buildable: ValidatedIdea | undefined;
     try {
       const validatedDir = CONFIG.paths.validated;
       const files = await fs.readdir(validatedDir);
@@ -2434,7 +2441,7 @@ class PMAgent {
 
       // Skip failed ideas
       const failTracker = await loadFailTracker();
-      const buildable = ideas.find(i => (failTracker[i.id]?.count || 0) < 3);
+      buildable = ideas.find(i => (failTracker[i.id]?.count || 0) < 3);
       if (!buildable) {
         await logger.agent(this.name, 'All validated ideas have failed 3+ times — clearing fail counts and skipping cycle');
         return { success: false, projectPath: '', githubUrl: '', vercelUrl: '', qualityScore: 0, error: 'All ideas exhausted' };
@@ -2504,6 +2511,7 @@ class PMAgent {
       return this.buildAndDeploy(buildable, repairedFiles, quality.score);
     } catch (error) {
       await logger.agent(this.name, `BUILD FROM QUEUE ERROR: ${String(error).slice(0, 200)}`);
+      if (buildable) { const failCount = await recordFailure(buildable.id, String(error)); await logger.agent(this.name, "Fail count for " + buildable.title + ": " + failCount + "/3"); }
       return { success: false, projectPath: '', githubUrl: '', vercelUrl: '', qualityScore: 0, error: String(error) };
     } finally {
       this.isBuilding = false;
