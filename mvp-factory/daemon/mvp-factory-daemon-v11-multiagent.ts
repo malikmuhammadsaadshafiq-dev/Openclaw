@@ -2092,8 +2092,12 @@ STACK: Next.js 14 API routes, TypeScript, Zod validation`;
 
     // Generate each API route individually in parallel
     const routePromises = spec.apiRoutes.map(route => {
-      // Convert /api/foo/bar → src/app/api/foo/bar/route.ts
-      const routePath = route.path.replace(/^\/api/, '');
+      // Convert /api/foo/:id/bar or /api/foo/{id}/bar → src/app/api/foo/[id]/bar/route.ts
+      // Next.js dynamic routes use [id] syntax, not :id or {id}
+      const routePath = route.path
+        .replace(/^\/api/, '')
+        .replace(/:([a-zA-Z_]+)/g, '[$1]')     // :id → [id]
+        .replace(/\{([a-zA-Z_]+)\}/g, '[$1]');  // {id} → [id]
       const filePath = `src/app/api${routePath}/route.ts`;
       const desc = `${route.method} handler. Purpose: ${route.purpose}. Input schema: ${route.inputSchema}. Output schema: ${route.outputSchema}. Implementation: ${route.implementation}. Use Zod to validate request body. Return NextResponse.json(). Fully implemented logic — no placeholder functions.`;
       return generateOneFile(filePath, desc, context, sysPrompt, 7000);
