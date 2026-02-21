@@ -68,9 +68,12 @@ const execAsync = promisify(exec);
     }
   } catch {}
   fsSync.writeFileSync(pidFile, String(myPid));
-  process.on('exit', () => { try { fsSync.unlinkSync(pidFile); } catch {} });
-  process.on('SIGTERM', () => process.exit(0));
-  process.on('SIGINT',  () => process.exit(0));
+  const cleanPid = () => { try { fsSync.unlinkSync(pidFile); } catch {} };
+  // Delete PID file IMMEDIATELY on SIGTERM/SIGINT so a new daemon can start right away
+  // (pm2 restarts send SIGTERM first — if PID file lingers, new process sees old PID as alive)
+  process.on('SIGTERM', () => { cleanPid(); process.exit(0); });
+  process.on('SIGINT',  () => { cleanPid(); process.exit(0); });
+  process.on('exit', cleanPid);
 })();
 
 // ============================================================
