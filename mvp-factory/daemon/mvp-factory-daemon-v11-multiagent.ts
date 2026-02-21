@@ -467,6 +467,55 @@ function extractJSON(text: string, type: 'object' | 'array' = 'object'): any | n
   try { return JSON.parse(json); } catch { return null; }
 }
 
+// ============================================================
+// Per-file code generation helper
+// Each call generates EXACTLY 1 file, returned as raw content.
+// This defeats Kimi K2.5 thinking-mode token exhaustion:
+//   - Simpler task → less thinking tokens per call
+//   - Even if thinking uses 5K/7K, remaining 2K = 1 complete file
+//   - All files generated in parallel → same wall-clock time
+// ============================================================
+async function generateOneFile(
+  filePath: string,
+  fileDescription: string,
+  context: string,
+  systemPrompt: string,
+  maxTokens = 7000
+): Promise<{ path: string; content: string } | null> {
+  const prompt = `${context}
+
+Generate ONLY this one file — complete and production-ready:
+Path: ${filePath}
+Purpose: ${fileDescription}
+
+Output ONLY the raw file content. Start immediately with the first line.
+No JSON. No markdown fences. No explanation. Just the code.`;
+
+  try {
+    const response = await kimi.complete(prompt, { maxTokens, temperature: 0.2, systemPrompt });
+    if (!response || response.trim().length < 50) return null;
+
+    let content = response.trim();
+    // Strip markdown fences if model ignores instructions
+    if (content.startsWith('```')) {
+      content = content.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
+    }
+    // Strip JSON wrapper if model returns it anyway
+    if (content.startsWith('[') || content.startsWith('{')) {
+      const parsed = extractJSON(content, content.startsWith('[') ? 'array' : 'object');
+      if (Array.isArray(parsed) && parsed[0]?.content) {
+        content = parsed[0].content;
+      } else if (parsed?.content) {
+        content = parsed.content;
+      }
+    }
+    if (!content || content.length < 30) return null;
+    return { path: filePath, content };
+  } catch {
+    return null;
+  }
+}
+
 function toSlug(title: string): string {
   return title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
@@ -1736,195 +1785,98 @@ Return ONLY the JSON array, no markdown.`;
 
   // ilovepdf-style: free utility tool with Google AdSense, no login required
   private async generateFreeAdsFrontend(idea: ValidatedIdea, spec: FrontendSpec): Promise<Array<{ path: string; content: string }>> {
-    const prompt = `Generate a COMPLETE, PRODUCTION-QUALITY free utility tool website (like iLovePDF or TinyPNG) for this product.
-
-PRODUCT: ${idea.title}
+    // Per-file parallel generation: each call = 1 file, 5-8K tokens
+    // Defeats Kimi K2.5 thinking-mode exhaustion (was: 22K → 1 file; now: 6 × 6K → 6 files)
+    const context = `PRODUCT: ${idea.title}
 DESCRIPTION: ${idea.description}
 TARGET USERS: ${idea.targetUsers}
 FEATURES: ${idea.features.join(', ')}
 PRIMARY COLOR: ${spec.designSystem.primaryColor}
-STYLE: ${spec.designSystem.style}
+MONETIZATION: Free with Google AdSense (publisher: ca-pub-XXXXXXXXXX). No login required.
+STACK: Next.js 14 App Router, TypeScript, TailwindCSS
+ADSENSE PATTERN: <ins className="adsbygoogle" data-ad-client="ca-pub-XXXXXXXXXX" data-ad-slot="1234567890" data-ad-format="auto" data-full-width-responsive="true" />
+STYLE: Clean professional like ilovepdf.com`;
 
-MONETIZATION: Free to use. Revenue from Google AdSense ads. NO login required. Anyone can use it immediately.
+    const sysPrompt = `You are a senior frontend engineer building free utility tools. Professional trustworthy design like ilovepdf.com. Tool logic actually works. Output ONLY raw code — no JSON, no markdown fences.`;
 
-DESIGN REQUIREMENTS:
-- Clean, professional, trustworthy look (like ilovepdf.com, smallpdf.com, tinypng.com)
-- Large clear headline that explains the tool in one sentence
-- The TOOL itself is front-and-center on the homepage — no separate dashboard
-- Ad slots: top banner (728x90), right sidebar (300x250), bottom banner (728x90)
-- "Other free tools" section at bottom linking to similar tools
-- Footer with privacy policy, terms, contact links
-- Responsive — works great on mobile (ads collapse gracefully)
-- Color scheme using ${spec.designSystem.primaryColor} as the brand color
+    const fileDefs: Array<{ path: string; desc: string; tokens: number }> = [
+      { path: 'src/components/AdBanner.tsx', desc: `'use client' AdSense component. Props: slot (string), format (string, default 'auto'). Renders <ins className="adsbygoogle" style={{display:'block'}} data-ad-client="ca-pub-XXXXXXXXXX" data-ad-slot={slot} data-ad-format={format} data-full-width-responsive="true" />. 25 lines total.`, tokens: 4000 },
+      { path: 'src/components/ToolHeader.tsx', desc: `Tool header with ${idea.title} name, short description "${idea.description.slice(0, 80)}", breadcrumb nav. Clean minimal design with primary color ${spec.designSystem.primaryColor}.`, tokens: 4000 },
+      { path: 'src/components/OtherTools.tsx', desc: `Grid of 6 related free tools with SVG icon, name, short description. Links to /tools/[slug]. Clean card grid, responsive 2-3 cols.`, tokens: 5000 },
+      { path: 'src/app/globals.css', desc: `TailwindCSS @tailwind directives + :root CSS variables for ${spec.designSystem.primaryColor} brand color. Under 40 lines.`, tokens: 3000 },
+      { path: 'src/app/layout.tsx', desc: `Root layout. Metadata for ${idea.title}. Async AdSense script tag (src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-XXXXXXXXXX"). Imports globals.css. Children prop.`, tokens: 5000 },
+      { path: 'src/app/page.tsx', desc: `Main page: ToolHeader at top, AdBanner (slot="1111111111"), then THE WORKING TOOL centered (${idea.features[0] || idea.description}), AdBanner (slot="2222222222") at bottom, OtherTools grid. Tool logic: user inputs → POST to /api/process → show result with download/copy button. Progress indicator during fetch. Drag-drop if file upload relevant. Responsive.`, tokens: 8000 },
+    ];
 
-TECHNICAL REQUIREMENTS:
-1. Next.js 14 App Router, TypeScript, TailwindCSS ONLY (no framer-motion, no heavy deps)
-2. The main tool logic must be REAL and WORKING — not placeholder
-3. API calls to /api/[tool] for server-side processing
-4. File upload with drag-and-drop if relevant (use native HTML5 File API)
-5. Progress indicator while processing
-6. Download/copy result button after processing
-7. Google AdSense integration (use placeholder publisher ID: ca-pub-XXXXXXXXXX, slot: 1234567890)
-8. SEO meta tags, Open Graph, structured data for the tool type
-
-ADSENSE AD COMPONENT (use this exact pattern):
-\`\`\`tsx
-// src/components/AdBanner.tsx
-'use client';
-export default function AdBanner({ slot, format = 'auto' }: { slot: string; format?: string }) {
-  return (
-    <div className="ad-container my-4 text-center">
-      <ins className="adsbygoogle"
-        style={{ display: 'block' }}
-        data-ad-client="ca-pub-XXXXXXXXXX"
-        data-ad-slot={slot}
-        data-ad-format={format}
-        data-full-width-responsive="true" />
-    </div>
-  );
-}
-\`\`\`
-Add the AdSense script in layout.tsx:
-\`\`\`tsx
-<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-XXXXXXXXXX" crossOrigin="anonymous" />
-\`\`\`
-
-FILES TO GENERATE:
-- src/app/layout.tsx (AdSense script, metadata, font, global styles)
-- src/app/page.tsx (THE MAIN TOOL — full working implementation with ad slots)
-- src/app/globals.css (TailwindCSS + brand CSS variables)
-- src/components/AdBanner.tsx (AdSense component)
-- src/components/ToolHeader.tsx (tool name + description + breadcrumb)
-- src/components/OtherTools.tsx (grid of 6 related free tools with icons)
-
-Do NOT generate: package.json, API routes, next.config.js
-
-Return ONLY a JSON array: [{"path":"...","content":"..."}]`;
-
-    // 22K — generates 6 focused files in ~25 min (fits in 55-min build window)
-    const response = await kimi.complete(prompt, {
-      maxTokens: 22000,
-      temperature: 0.3,
-      systemPrompt: `You are a senior frontend engineer who builds high-quality free utility tools. Your sites look professional and trustworthy — like ilovepdf.com or smallpdf.com. You use clean, semantic HTML with TailwindCSS. The tool logic actually works. Ad slots are properly integrated. You write production Next.js/TypeScript.`,
-    });
-    const files = extractJSON(response, 'array');
-    if (!files || !files.length) throw new Error('Free-ads frontend generation returned no files');
-    return files.filter((f: any) => f?.path && f?.content);
+    const results = await Promise.all(
+      fileDefs.map(f => generateOneFile(f.path, f.desc, context, sysPrompt, f.tokens))
+    );
+    const allFiles = results.filter((f): f is { path: string; content: string } => f !== null && f.content.length > 30);
+    if (!allFiles.length) throw new Error('Free-ads frontend generation returned no files');
+    return allFiles;
   }
 
-  // SaaS: split into 2 calls to avoid 30K token streaming timeout
-  // Call 1: Marketing shell (layout, landing, pricing, auth, globals) — ~15K tokens
-  // Call 2: Dashboard (the core product) — ~15K tokens
+  // SaaS: per-file parallel generation (1 LLM call per file, raw content)
+  // Defeats Kimi K2.5 thinking-mode exhaustion (was: 2×20K → 1 file each; now: 6×7K → 6 files)
   private async generateSaasFrontend(idea: ValidatedIdea, spec: FrontendSpec): Promise<Array<{ path: string; content: string }>> {
-    const systemPrompt = `You are a senior SaaS frontend engineer. TypeScript, TailwindCSS, Next.js 14 App Router. Production quality. Return ONLY a JSON array of files, no markdown.`;
-
-    const call1Prompt = `Generate the MARKETING SHELL for this SaaS product.
-
-PRODUCT: ${idea.title}
-DESCRIPTION: ${idea.description}
-PRIMARY COLOR: ${spec.designSystem.primaryColor}
-STYLE: ${spec.designSystem.style}
-
-FILES TO GENERATE (5 files):
-- src/app/layout.tsx (root layout, Navbar included, no framer-motion)
-- src/app/page.tsx (landing: hero + 3 feature cards + pricing preview + CTA)
-- src/app/pricing/page.tsx (3 tiers: Free $0, Pro $12/mo, Business $49/mo)
-- src/app/auth/page.tsx (login/signup toggle, email+password, OAuth placeholder)
-- src/app/globals.css (TailwindCSS base + brand CSS variables)
-
-RULES: Next.js 14 App Router, TypeScript, TailwindCSS, Lucide-react icons only. No framer-motion. No hardcoded data — use fetch('/api/...') for dynamic content. Responsive (mobile hamburger).
-
-Return ONLY a JSON array: [{"path":"...","content":"..."}]`;
-
-    const call2Prompt = `Generate the DASHBOARD page for this SaaS product.
-
-PRODUCT: ${idea.title}
+    const context = `PRODUCT: ${idea.title}
 DESCRIPTION: ${idea.description}
 FEATURES: ${idea.features.join(', ')}
+TARGET USERS: ${idea.targetUsers}
 PRIMARY COLOR: ${spec.designSystem.primaryColor}
+STYLE: ${spec.designSystem.style}
+STACK: Next.js 14 App Router, TypeScript, TailwindCSS, Lucide-react icons
+RULES: No framer-motion. Responsive. For dynamic data use fetch('/api/...'). Mobile hamburger nav.`;
 
-FILE TO GENERATE (1 file):
-- src/app/dashboard/page.tsx
+    const sysPrompt = `You are a senior SaaS frontend engineer. TypeScript, TailwindCSS, Next.js 14 App Router. Production quality. Output ONLY raw code — no JSON, no markdown fences.`;
 
-This is the CORE PRODUCT EXPERIENCE — the main app UI users interact with after login.
-Include: sidebar navigation, main content area, all ${idea.features.length} core features implemented as UI sections.
-MUST use useEffect + fetch('/api/...') to load real data — NO hardcoded placeholder data.
-Loading states, error states handled. Responsive. TypeScript + TailwindCSS.
+    const fileDefs: Array<{ path: string; desc: string; tokens: number }> = [
+      { path: 'src/app/globals.css', desc: `TailwindCSS @tailwind base/components/utilities + :root CSS variables for ${spec.designSystem.primaryColor} brand. Under 50 lines.`, tokens: 3500 },
+      { path: 'src/app/layout.tsx', desc: `Root layout. Imports globals.css. Responsive Navbar with logo, nav links (Home/Pricing/Dashboard), Login/Get Started CTA. Mobile hamburger. Children prop. Metadata for ${idea.title}.`, tokens: 7000 },
+      { path: 'src/app/page.tsx', desc: `Landing page. Hero: big headline about ${idea.title}, subline, "Get Started Free" CTA → /auth. 3 feature cards. Pricing preview (3 tiers). Bottom CTA. No hardcoded data.`, tokens: 7000 },
+      { path: 'src/app/pricing/page.tsx', desc: `Pricing page. 3 tiers: Free ($0), Pro ($12/mo), Business ($49/mo). Feature comparison list per tier. CTA buttons. Highlight Pro tier. FAQ section.`, tokens: 7000 },
+      { path: 'src/app/auth/page.tsx', desc: `Auth page. Toggle: Login / Sign Up. Email + password form. On submit POST /api/auth. OAuth placeholder buttons (Google, GitHub). Validation errors. Redirect to /dashboard on success.`, tokens: 7000 },
+      { path: 'src/app/dashboard/page.tsx', desc: `Dashboard — CORE PRODUCT. Sidebar nav with all feature sections: ${idea.features.join(', ')}. Main content area. useEffect + fetch('/api/...') to load data on mount. Loading spinner, error state. Each feature section fully interactive. Responsive.`, tokens: 8000 },
+    ];
 
-Return ONLY a JSON array: [{"path":"src/app/dashboard/page.tsx","content":"..."}]`;
-
-    // 20K per call × 2 parallel = ~23 min. With 55-min timeout that leaves 32min for repair+deploy.
-    const [resp1, resp2] = await Promise.all([
-      kimi.complete(call1Prompt, { maxTokens: 20000, temperature: 0.3, systemPrompt }),
-      kimi.complete(call2Prompt, { maxTokens: 20000, temperature: 0.3, systemPrompt }),
-    ]);
-
-    const files1 = extractJSON(resp1, 'array') || [];
-    const files2 = extractJSON(resp2, 'array') || [];
-    const allFiles = [...files1, ...files2].filter((f: any) => f?.path && f?.content);
+    const results = await Promise.all(
+      fileDefs.map(f => generateOneFile(f.path, f.desc, context, sysPrompt, f.tokens))
+    );
+    const allFiles = results.filter((f): f is { path: string; content: string } => f !== null && f.content.length > 30);
     if (!allFiles.length) throw new Error('SaaS frontend generation returned no files');
     return allFiles;
   }
 
-  // Standard web app (freemium / one-time)
+  // Standard web app: per-file parallel generation (1 LLM call per file, raw content)
+  // Defeats Kimi K2.5 thinking-mode exhaustion (was: 1×20K → 1 file; now: N×7K → N files)
   private async generateWebAppFrontend(idea: ValidatedIdea, spec: FrontendSpec): Promise<Array<{ path: string; content: string }>> {
-    const pagesDescription = spec.pages.map(p =>
-      `- Route: ${p.route} | Purpose: ${p.purpose} | Components: ${p.components.join(', ')} | Flow: ${p.userFlow}`
-    ).join('\n');
-
-    const prompt = `Generate COMPLETE, PRODUCTION-QUALITY frontend code for this application.
-
-PRODUCT: ${idea.title}
+    const context = `PRODUCT: ${idea.title}
 DESCRIPTION: ${idea.description}
 TARGET USERS: ${idea.targetUsers}
 FEATURES: ${idea.features.join(', ')}
+DESIGN: primary=${spec.designSystem.primaryColor}, secondary=${spec.designSystem.secondaryColor}, font=${spec.designSystem.fontFamily}, style=${spec.designSystem.style}, dark-mode=${spec.designSystem.darkMode}
+STACK: Next.js 14 App Router, TypeScript, TailwindCSS, Lucide-react
+RULES: No framer-motion. No hardcoded data — fetch('/api/...'). Forms POST to real routes. Lists via useEffect+fetch. Loading+error states. Mobile-first. Freemium upgrade CTAs.`;
 
-DESIGN SYSTEM:
-- Primary: ${spec.designSystem.primaryColor}
-- Secondary: ${spec.designSystem.secondaryColor}
-- Font: ${spec.designSystem.fontFamily}
-- Border Radius: ${spec.designSystem.borderRadius}
-- Dark Mode: ${spec.designSystem.darkMode}
-- Style: ${spec.designSystem.style}
+    const sysPrompt = `You are an elite frontend developer. Clean, accessible, performant React/TypeScript with TailwindCSS. No framer-motion. Production-quality code. Output ONLY raw code — no JSON, no markdown fences.`;
 
-PAGES TO BUILD:
-${pagesDescription}
+    const fileDefs: Array<{ path: string; desc: string; tokens: number }> = [
+      { path: 'src/app/globals.css', desc: `TailwindCSS @tailwind base/components/utilities + :root CSS variables for ${spec.designSystem.primaryColor} brand color. Under 50 lines.`, tokens: 3500 },
+      { path: 'src/app/layout.tsx', desc: `Root layout with responsive navbar, metadata for ${idea.title}, imports globals.css`, tokens: 6000 },
+      { path: 'src/app/page.tsx', desc: spec.pages.find(p => p.route === '/')?.purpose || `Main landing page: hero for ${idea.title}, feature overview, CTA. fetch('/api/...') for any dynamic content.`, tokens: 8000 },
+      ...spec.pages.filter(p => p.route !== '/').map(p => ({
+        path: `src/app${p.route}/page.tsx`,
+        desc: `${p.purpose}. Components: ${p.components.join(', ')}. User flow: ${p.userFlow}. Must use fetch('/api/...') for data. Loading + error states.`,
+        tokens: 8000,
+      })),
+    ];
 
-REQUIREMENTS:
-1. Next.js 14 App Router (src/app/ directory), TypeScript
-2. TailwindCSS — CUSTOM design matching the design system (not generic)
-3. Simple CSS transitions for animations (no framer-motion — reduces build failures)
-4. Lucide-react for icons ONLY
-5. Every feature calls a real API route (fetch('/api/...')) — NO hardcoded/sample/placeholder data
-6. All input forms MUST have submit handlers that POST to a real /api/ route with the correct body
-7. Data lists/tables MUST be populated by fetching from a real /api/ route (useEffect on mount)
-8. Loading states, error states, responsive design (mobile-first)
-9. Form validation with clear error messages
-10. Freemium upgrade CTA at key moments — "Upgrade for unlimited access"
-
-Generate ONLY:
-- src/app/layout.tsx
-- src/app/page.tsx
-- src/app/globals.css
-- src/components/*.tsx (all needed components)
-${spec.pages.filter(p => p.route !== '/').map(p => `- src/app${p.route}/page.tsx`).join('\n')}
-
-Do NOT generate: package.json, API routes, next.config.js
-
-Return ONLY a JSON array: [{"path":"...","content":"..."}]`;
-
-    // 20K with 55-min timeout — generates 6-8 complete pages in ~23 min
-    const response = await kimi.complete(prompt, {
-      maxTokens: 20000,
-      temperature: 0.35,
-      systemPrompt: `You are an elite frontend developer. Clean, accessible, performant React/TypeScript with TailwindCSS. No framer-motion. Production-quality code that actually builds. Style: ${spec.designSystem.style}. Return ONLY valid JSON array, no markdown.`,
-    });
-    const files = extractJSON(response, 'array');
-    if (!files || !Array.isArray(files) || files.length === 0) {
-      // Fallback: also try reducing pages and retrying
-      throw new Error('Frontend generation returned no files');
-    }
-    return files.filter((f: any) => f && typeof f.path === 'string' && typeof f.content === 'string');
+    const results = await Promise.all(
+      fileDefs.map(f => generateOneFile(f.path, f.desc, context, sysPrompt, f.tokens))
+    );
+    const allFiles = results.filter((f): f is { path: string; content: string } => f !== null && f.content.length > 30);
+    if (!allFiles.length) throw new Error('Frontend generation returned no files');
+    return allFiles;
   }
 }
 
@@ -2085,94 +2037,70 @@ Return ONLY this JSON (no markdown, no explanation):
   }
 
   private async generateBackendFiles(idea: ValidatedIdea, spec: BackendSpec): Promise<Array<{ path: string; content: string }>> {
-    const routeDescriptions = spec.apiRoutes.map(r =>
-      `${r.method} ${r.path}: ${r.purpose}\n  Input: ${r.inputSchema}\n  Output: ${r.outputSchema}\n  Logic: ${r.implementation}`
-    ).join('\n\n');
+    // Per-route parallel generation: 1 LLM call per API route, raw content output
+    // Defeats Kimi K2.5 thinking-mode exhaustion (was: 1×20K → 0 files; now: N×7K → N files)
+    const aiNote = idea.category === 'ai-assisted'
+      ? 'AI: NVIDIA Kimi K2.5 (https://integrate.api.nvidia.com/v1/chat/completions, model moonshotai/kimi-k2.5, key: process.env.NVIDIA_API_KEY). Write specific system prompts. Include fallback logic.'
+      : '';
+    const dataNote = (idea.category === 'utility' || idea.category === 'data-tool')
+      ? 'DATA: Implement REAL algorithms (regex, statistics, heuristics). Never pass-through stubs.'
+      : '';
 
-    const integrationsDesc = spec.integrations.map(i =>
-      `- ${i.service}: ${i.purpose} (${i.apiEndpoint}, auth: ${i.authMethod})`
-    ).join('\n');
-
-    const prompt = `Generate COMPLETE, WORKING backend code for this application. Every function must be fully implemented.
-
-PRODUCT: ${idea.title} (${idea.category})
+    const context = `PRODUCT: ${idea.title} (${idea.category})
 FEATURES: ${idea.features.join(', ')}
+DATA MODELS: ${spec.dataModels.map(m => `${m.name}: [${m.fields.join(', ')}]`).join('; ')}
+INTEGRATIONS: ${spec.integrations.map(i => `${i.service} via ${i.apiEndpoint}`).join(', ') || 'none'}
+AUTH: ${spec.authentication}
+ERROR FORMAT: { error: string, code: string }
+${aiNote}
+${dataNote}
+STACK: Next.js 14 API routes, TypeScript, Zod validation`;
 
-API ROUTES TO IMPLEMENT:
-${routeDescriptions}
+    const sysPrompt = `You are a senior backend engineer. Every function fully implemented — no stubs, no TODOs. Zod validation on all inputs. Structured error responses. Output ONLY raw TypeScript code — no JSON, no markdown fences.`;
 
-INTEGRATIONS:
-${integrationsDesc}
-
-DATA MODELS:
-${spec.dataModels.map(m => `${m.name}: ${m.fields.join(', ')}`).join('\n')}
-
-STRICT REQUIREMENTS:
-1. EVERY API route must be FULLY IMPLEMENTED (not stubs)
-2. All processing must happen server-side in Next.js API routes
-3. Each route must validate input with clear error messages
-4. Each route must return properly structured JSON responses
-5. Include proper TypeScript types for all inputs/outputs
-6. Error handling: catch errors, return meaningful messages with status codes
-7. Rate limiting headers on API responses
-8. Input validation with Zod (REQUIRED): import zod, define schemas, use .parse() on request bodies, return 400 with error details on validation failure
-9. Structured error responses: { error: string, code: string }
-
-${idea.category === 'ai-assisted' ? `
-AI IMPLEMENTATION (CRITICAL):
-- Use NVIDIA Kimi K2.5 API: https://integrate.api.nvidia.com/v1/chat/completions
-- Model: moonshotai/kimi-k2.5
-- API key from: process.env.NVIDIA_API_KEY
-- Write a SPECIFIC system prompt for each AI endpoint (not generic "analyze this")
-- Example: if the product analyzes resumes, the system prompt should say "You are a professional resume analyst..."
-- Include SMART fallback processing when API key is missing
-- The fallback must still provide USEFUL results using regex, algorithms, or heuristics
-` : ''}
-
-${idea.category === 'utility' || idea.category === 'data-tool' ? `
-DATA PROCESSING (CRITICAL):
-- Implement REAL algorithms, not just pass-through
-- String processing: use regex, tokenization, NLP heuristics
-- Number processing: implement actual calculations, statistics
-- Data transformation: proper mapping, filtering, aggregation
-- Always return structured results with metadata (counts, scores, timings)
-` : ''}
-
-GENERATE THESE FILES:
-- src/app/api/*/route.ts (one per API route, with FULL implementation)
-- src/lib/services/*.ts (service layer with business logic)
-- src/lib/types.ts (shared TypeScript types)
-- src/lib/utils.ts (utility functions)
-
-Do NOT generate:
-- Frontend files (frontend agent handles those)
-- Layout/page components
-- Config files (PM agent handles those)
-
-Return ONLY a JSON array:
-[{"path": "src/app/api/process/route.ts", "content": "full working code..."}, ...]`;
-
-    // 20K — generates 8-10 complete backend files in ~23 min (parallel with frontend)
-    const response = await kimi.complete(prompt, {
-      maxTokens: 20000,
-      temperature: 0.2,
-      systemPrompt: `You are a senior backend engineer who writes bulletproof API code. Every endpoint you create is fully functional with real processing logic, Zod schema validation, error handling, and structured responses. You NEVER create placeholder functions - every function has a complete implementation. You always validate request bodies with Zod schemas. For ${idea.category} products, you implement real algorithms.`,
+    // Generate each API route individually in parallel
+    const routePromises = spec.apiRoutes.map(route => {
+      // Convert /api/foo/bar → src/app/api/foo/bar/route.ts
+      const routePath = route.path.replace(/^\/api/, '');
+      const filePath = `src/app/api${routePath}/route.ts`;
+      const desc = `${route.method} handler. Purpose: ${route.purpose}. Input schema: ${route.inputSchema}. Output schema: ${route.outputSchema}. Implementation: ${route.implementation}. Use Zod to validate request body. Return NextResponse.json(). Fully implemented logic — no placeholder functions.`;
+      return generateOneFile(filePath, desc, context, sysPrompt, 7000);
     });
 
-    const files = extractJSON(response, 'array');
-    if (!files || !Array.isArray(files) || files.length === 0) {
-      throw new Error('Backend generation returned no files');
-    }
+    // Generate shared lib files in parallel with routes
+    const typesPromise = generateOneFile(
+      'src/lib/types.ts',
+      `TypeScript interfaces/types for: ${spec.dataModels.map(m => `${m.name} (${m.fields.join(', ')})`).join('; ')}. Export all. No imports needed.`,
+      context, sysPrompt, 4000
+    );
+    const utilsPromise = generateOneFile(
+      'src/lib/utils.ts',
+      'Shared utility functions: createErrorResponse(error, code), validateEnv(key), formatDate(d), generateId(). No external deps.',
+      context, sysPrompt, 4000
+    );
 
-    // Validate that API routes are real (not stubs)
-    const apiFiles = files.filter((f: any) => f.path?.includes('/api/'));
-    for (const apiFile of apiFiles) {
-      if (apiFile.content && apiFile.content.length < 200) {
-        await logger.agent(this.name, `WARNING: API route ${apiFile.path} seems too short (${apiFile.content.length} chars), may be a stub`);
+    const [routeResults, typesFile, utilsFile] = await Promise.all([
+      Promise.all(routePromises),
+      typesPromise,
+      utilsPromise,
+    ]);
+
+    const allFiles = [
+      ...routeResults,
+      typesFile,
+      utilsFile,
+    ].filter((f): f is { path: string; content: string } => f !== null && f.content.length > 30);
+
+    if (!allFiles.length) throw new Error('Backend generation returned no files');
+
+    // Log any suspiciously short routes
+    for (const f of allFiles) {
+      if (f.path.includes('/api/') && f.content.length < 200) {
+        await logger.agent(this.name, `WARNING: ${f.path} is short (${f.content.length} chars) — may be incomplete`);
       }
     }
 
-    return files.filter((f: any) => f && typeof f.path === 'string' && typeof f.content === 'string');
+    return allFiles;
   }
 }
 
