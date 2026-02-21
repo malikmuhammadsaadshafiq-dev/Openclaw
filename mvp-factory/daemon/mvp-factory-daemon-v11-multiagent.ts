@@ -1801,9 +1801,9 @@ Do NOT generate: package.json, API routes, next.config.js
 
 Return ONLY a JSON array: [{"path":"...","content":"..."}]`;
 
-    // 14K with thinking off — ~8 min for 6 focused files
+    // 22K — generates 6 focused files in ~25 min (fits in 55-min build window)
     const response = await kimi.complete(prompt, {
-      maxTokens: 14000,
+      maxTokens: 22000,
       temperature: 0.3,
       systemPrompt: `You are a senior frontend engineer who builds high-quality free utility tools. Your sites look professional and trustworthy — like ilovepdf.com or smallpdf.com. You use clean, semantic HTML with TailwindCSS. The tool logic actually works. Ad slots are properly integrated. You write production Next.js/TypeScript.`,
     });
@@ -1853,10 +1853,10 @@ Loading states, error states handled. Responsive. TypeScript + TailwindCSS.
 
 Return ONLY a JSON array: [{"path":"src/app/dashboard/page.tsx","content":"..."}]`;
 
-    // 12K per call × 2 parallel = ~7 min total (vs 23 min with 20K)
+    // 20K per call × 2 parallel = ~23 min. With 55-min timeout that leaves 32min for repair+deploy.
     const [resp1, resp2] = await Promise.all([
-      kimi.complete(call1Prompt, { maxTokens: 12000, temperature: 0.3, systemPrompt }),
-      kimi.complete(call2Prompt, { maxTokens: 12000, temperature: 0.3, systemPrompt }),
+      kimi.complete(call1Prompt, { maxTokens: 20000, temperature: 0.3, systemPrompt }),
+      kimi.complete(call2Prompt, { maxTokens: 20000, temperature: 0.3, systemPrompt }),
     ]);
 
     const files1 = extractJSON(resp1, 'array') || [];
@@ -1913,9 +1913,9 @@ Do NOT generate: package.json, API routes, next.config.js
 
 Return ONLY a JSON array: [{"path":"...","content":"..."}]`;
 
-    // 16K with thinking off — ~9 min per call, well within build window
+    // 20K with 55-min timeout — generates 6-8 complete pages in ~23 min
     const response = await kimi.complete(prompt, {
-      maxTokens: 16000,
+      maxTokens: 20000,
       temperature: 0.35,
       systemPrompt: `You are an elite frontend developer. Clean, accessible, performant React/TypeScript with TailwindCSS. No framer-motion. Production-quality code that actually builds. Style: ${spec.designSystem.style}. Return ONLY valid JSON array, no markdown.`,
     });
@@ -2152,9 +2152,9 @@ Do NOT generate:
 Return ONLY a JSON array:
 [{"path": "src/app/api/process/route.ts", "content": "full working code..."}, ...]`;
 
-    // 15K with thinking off — ~9 min, generates 4-6 real API routes + services
+    // 20K — generates 8-10 complete backend files in ~23 min (parallel with frontend)
     const response = await kimi.complete(prompt, {
-      maxTokens: 15000,
+      maxTokens: 20000,
       temperature: 0.2,
       systemPrompt: `You are a senior backend engineer who writes bulletproof API code. Every endpoint you create is fully functional with real processing logic, Zod schema validation, error handling, and structured responses. You NEVER create placeholder functions - every function has a complete implementation. You always validate request bodies with Zod schemas. For ${idea.category} products, you implement real algorithms.`,
     });
@@ -2492,10 +2492,11 @@ class PMAgent {
       })).catch(() => {});
 
       // Hard 35-minute timeout — prevents a single stuck LLM call from freezing the pipeline
-      // 35 min allows: 6min UX design + 12min frontend code gen (28K tokens) + 10min backend code gen + buffer
-      const BUILD_TIMEOUT_MS = 35 * 60 * 1000;
+      // 55 min timeout: Kimi K2.5 thinking mode streams ~14 tokens/sec — 20K tokens = 23min per call
+      // Total: 6min design + 23min code gen (parallel) + 15min repair + 5min deploy = ~49min
+      const BUILD_TIMEOUT_MS = 55 * 60 * 1000;
       const buildTimeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`Build timeout: "${buildable!.title}" exceeded 35 minutes — will retry next cycle`)), BUILD_TIMEOUT_MS)
+        setTimeout(() => reject(new Error(`Build timeout: "${buildable!.title}" exceeded 55 minutes — will retry next cycle`)), BUILD_TIMEOUT_MS)
       );
 
       const buildExecutionPromise = (async () => {
