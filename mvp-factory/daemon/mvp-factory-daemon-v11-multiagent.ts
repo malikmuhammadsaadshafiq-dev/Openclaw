@@ -495,15 +495,24 @@ No JSON. No markdown fences. No explanation. Just the code.`;
     if (!raw || raw.trim().length < 30) return null;
     let content = raw.trim();
 
-    // Strip markdown fences
+    // Strip leading/trailing markdown fences
     if (content.startsWith('```')) {
-      content = content.replace(/^```[a-z]*\n?/, '').replace(/\n?```$/, '').trim();
+      content = content.replace(/^```[a-z]*\n?/, '').replace(/\n?```\s*$/, '').trim();
     }
-    // Strip JSON wrapper
+    // Strip JSON wrapper if model returns it anyway
     if (content.startsWith('[') || content.startsWith('{')) {
       const parsed = extractJSON(content, content.startsWith('[') ? 'array' : 'object');
       if (Array.isArray(parsed) && parsed[0]?.content) return parsed[0].content;
       if (parsed?.content) return parsed.content;
+    }
+
+    // Strip Kimi K2.5 mid-file thinking interruptions.
+    // The model sometimes "closes" its imaginary code block (writes ```) mid-file,
+    // then continues with reasoning text ("Wait, I need to check...").
+    // Truncate the file at the first occurrence of a standalone ``` line.
+    const midFence = content.match(/\n```(?:[a-z]*)\s*\n/);
+    if (midFence && midFence.index !== undefined && midFence.index > 50) {
+      content = content.slice(0, midFence.index).trim();
     }
 
     // Detect Kimi K2.5 thinking text prepended before actual code.
