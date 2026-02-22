@@ -1280,15 +1280,15 @@ class ResearchAgent {
     const included = new Set(topPosts.map(p => p.sourcePost));
     const extras = posts.filter(p => !included.has(p.sourcePost)).sort((a, b) => b.upvotes - a.upvotes);
     topPosts.push(...extras);
-    const balancedPosts = topPosts.slice(0, 60);
+    const balancedPosts = topPosts.slice(0, 35);
     // Log platform breakdown for the sample sent to LLM
     const sampleBreakdown = ['reddit', 'hackernews', 'devto', 'github']
       .map(pl => `${pl}: ${balancedPosts.filter(p => p.sourcePlatform === pl).length}`)
       .join(', ');
-    await logger.agent(this.name, `LLM sample (60 posts): ${sampleBreakdown}`);
+    await logger.agent(this.name, `LLM sample (35 posts): ${sampleBreakdown}`);
 
     const postSummaries = balancedPosts
-      .map(p => `[${p.sourcePlatform}${p.tags?.[0] ? '/r/'+p.tags[0] : ''}] [${p.upvotes}↑ ${p.commentCount}💬] ${p.title}\n${p.description.slice(0, 200)}\nSource: ${p.sourcePost}`)
+      .map(p => `[${p.sourcePlatform}${p.tags?.[0] ? '/r/'+p.tags[0] : ''}] [${p.upvotes}↑] ${p.title}\n${p.description.slice(0, 120)}\nSource: ${p.sourcePost}`)
       .join('\n---\n');
 
     const prompt = `You are a product research analyst. Analyze these REAL posts from Reddit, HackerNews, Dev.to, and GitHub and extract CONCRETE, BUILDABLE software product ideas.
@@ -1298,22 +1298,16 @@ CRITICAL: These are REAL posts from many different communities. Your ideas must 
 REAL POSTS:
 ${postSummaries}
 
-Extract 12 product ideas that solve REAL problems visible in these posts. Each idea must:
+Extract 8 product ideas that solve REAL problems visible in these posts. Each idea must:
 1. Address a SPECIFIC pain point from the actual posts above
 2. Be buildable as a software product (web app, Chrome extension, SaaS, API, or browser tool) in 12-24 hours
 3. Have REAL functionality (not just a UI shell)
 4. Be something people would actually PAY for or regularly use
 
-SOURCE DIVERSITY — you MUST draw ideas from ALL platforms in the list above (reddit, hackernews, devto, github), not just Reddit.
-Aim for a mix of sources: ~4 from Reddit, ~3 from HackerNews, ~3 from Dev.to/GitHub, ~2 from any source.
+SOURCE DIVERSITY — draw from ALL platforms (reddit, hackernews, devto, github), not just Reddit.
 
-AUDIENCE DIVERSITY — you MUST cover a range of audiences. Do NOT only extract developer tools.
-Aim for a mix like:
-- 3-4 consumer/lifestyle products (health, finance, relationships, parenting, cooking, fitness, travel)
-- 2-3 business/professional tools (sales, HR, legal, accounting, real estate, teaching)
-- 2-3 creative/hobbyist tools (art, writing, music, gaming, photography)
-- 2-3 developer or technical tools (only if clearly visible in the posts)
-If the posts contain pain points from non-developer communities, PRIORITIZE those — they are underserved by existing apps.
+AUDIENCE DIVERSITY — cover a range: 2-3 consumer products, 2 business tools, 1-2 creative tools, 1-2 dev tools.
+Prioritize non-developer pain points — they are underserved.
 
 BAD examples (too generic): "AI writing assistant", "task manager", "portfolio builder", "code snippet tool"
 GOOD examples: "meal prep optimizer for diabetics", "landlord-tenant dispute tracker", "Etsy seller profit calculator", "band rehearsal scheduler", "IEP goal tracker for special ed teachers"
@@ -1334,7 +1328,7 @@ Return ONLY valid JSON array:
 
     try {
       const response = await retryLoop(
-        () => kimi.complete(prompt, { maxTokens: 9000, temperature: 0.7 }),
+        () => kimi.complete(prompt, { maxTokens: 6000, temperature: 0.7 }),
         { maxRetries: 2, baseDelay: 5000, label: 'AI idea extraction' }
       );
 
