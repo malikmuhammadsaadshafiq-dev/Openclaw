@@ -54,28 +54,36 @@ process.on('SIGINT',  () => { console.log('[Daemon] SIGINT received — shutting
 
 // ============================================================
 // Anti-zombie: kill any other daemon instances that were left behind
-// by previous pm2 restart cycles (tsx spawns child node processes
-// that survive when pm2 only kills the tsx launcher parent).
+// by previous pm2 restart cycles (tsx spawns a child node process
+// that survives when pm2 only kills the tsx launcher parent).
+// Uses PGID to identify our own process tree — safe even with tsx's
+// multi-process architecture (launcher + worker share the same PGID).
 // ============================================================
 (async function killZombies() {
   try {
-    const myPid = process.pid;
+    // Get our process group ID — all processes in our tsx tree share it
+    const pgidResult = await execAsync(`ps -o pgid= -p ${process.pid}`);
+    const myPgid = parseInt(pgidResult.stdout.trim(), 10);
+    if (isNaN(myPgid)) return; // Can't determine PGID — skip to be safe
+
     const { stdout } = await execAsync(
-      `ps aux | grep 'mvp-factory-daemon-v11-multiagent' | grep -v grep`
+      `ps -eo pid,pgid,cmd | grep 'mvp-factory-daemon-v11-multiagent' | grep -v grep`
     );
     const lines = stdout.trim().split('\n').filter(Boolean);
     const toKill: number[] = [];
     for (const line of lines) {
       const parts = line.trim().split(/\s+/);
-      const pid = parseInt(parts[1], 10);
-      if (!isNaN(pid) && pid !== myPid && pid !== process.ppid) {
+      const pid  = parseInt(parts[0], 10);
+      const pgid = parseInt(parts[1], 10);
+      // Only kill processes from a DIFFERENT process group — true orphans
+      if (!isNaN(pid) && !isNaN(pgid) && pgid !== myPgid) {
         toKill.push(pid);
       }
     }
     if (toKill.length > 0) {
-      console.log(`[Daemon] Anti-zombie: killing ${toKill.length} orphaned process(es): ${toKill.join(', ')}`);
-      // Use SIGKILL (-9) because SIGTERM can be ignored by processes blocked in
-      // long-running subprocess calls (npm install, LLM API, Vercel deploy, etc.)
+      console.log(`[Daemon] Anti-zombie: killing ${toKill.length} orphaned process(es) (PGID≠${myPgid}): ${toKill.join(', ')}`);
+      // SIGKILL because SIGTERM is ignored by processes blocked in long-running
+      // subprocess calls (npm install, LLM API, Vercel deploy, etc.)
       await execAsync(`kill -9 ${toKill.join(' ')} 2>/dev/null || true`);
     }
   } catch {
@@ -425,9 +433,12 @@ class KimiClient {
     const maxTokens = options.maxTokens || 16384;
     const temperature = options.temperature || 0.7;
 
-    // Acquire global semaphore — holds slot for entire call including retries
+    // Acquire global semaphore — limits total concurrent GPU calls
     await kimiSemaphore.acquire();
     try {
+      // Enforce global minimum gap between Kimi API requests
+      await kimiGlobalRateLimiter.wait();
+
       for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
         try {
           return await this.streamComplete(prompt, maxTokens, temperature, options.systemPrompt);
@@ -436,17 +447,20 @@ class KimiClient {
           console.log(`[KimiClient] Stream attempt ${attempt}/${this.maxRetries} failed: ${errMsg}`);
           if (attempt === this.maxRetries) {
             try {
+              // Final fallback: wait extra before non-stream attempt
+              await new Promise(r => setTimeout(r, 5000));
               return await this.nonStreamComplete(prompt, maxTokens, temperature, options.systemPrompt);
             } catch (fallbackErr) {
               throw new Error(`Kimi API failed after ${this.maxRetries}+1 attempts: ${errMsg}`);
             }
           }
           if (errMsg.includes('429') || errMsg.includes('Too Many Requests')) {
-            const rateLimitWait = 30000 + (attempt * 15000);
-            console.log(`[KimiClient] Rate limited (429), waiting ${rateLimitWait / 1000}s before retry...`);
+            // GPU rate limit: wait 60s base + 30s per attempt + jitter
+            const rateLimitWait = 60000 + (attempt * 30000) + Math.random() * 10000;
+            console.log(`[KimiClient] GPU rate limited (429), waiting ${Math.round(rateLimitWait / 1000)}s before retry...`);
             await new Promise(r => setTimeout(r, rateLimitWait));
           } else {
-            const backoff = 10000 * Math.pow(3, attempt - 1);
+            const backoff = 10000 * Math.pow(2, attempt - 1) + Math.random() * 5000;
             await new Promise(r => setTimeout(r, backoff));
           }
         }
@@ -478,7 +492,10 @@ class ApiSemaphore {
     else { this.slots++; }
   }
 }
-const kimiSemaphore = new ApiSemaphore(6); // max 6 concurrent Kimi API calls
+const kimiSemaphore = new ApiSemaphore(2); // max 2 concurrent Kimi API calls (GPU constraint)
+
+// Global minimum gap between Kimi API requests to avoid GPU exhaustion
+const kimiGlobalRateLimiter = new RateLimiter(3000); // ≥3s between consecutive calls
 
 // ============================================================
 // Utility Functions
