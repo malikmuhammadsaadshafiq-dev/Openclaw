@@ -287,7 +287,7 @@ class KimiClient {
 
   private async streamComplete(prompt: string, maxTokens: number, temperature: number, systemPrompt?: string): Promise<string> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 480000);  // 8-min stream timeout (was 10)
+    const timer = setTimeout(() => controller.abort(), 600000);  // 10-min stream timeout
 
     const messages: Array<{ role: string; content: string }> = [];
     if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
@@ -414,19 +414,21 @@ class KimiClient {
         try {
           return await this.streamComplete(prompt, maxTokens, temperature, options.systemPrompt);
         } catch (error: any) {
-          const errMsg = error?.name === 'AbortError' ? 'Timeout' : String(error).slice(0, 200);
+          const isTimeout = error?.name === 'AbortError';
+          const errMsg = isTimeout ? 'Timeout' : String(error).slice(0, 200);
           console.log(`[KimiClient] Stream attempt ${attempt}/${this.maxRetries} failed: ${errMsg}`);
-          if (attempt === this.maxRetries) {
+
+          // On timeout: skip remaining stream retries — go directly to nonstream fallback.
+          // Retrying a timed-out stream call wastes 10 more minutes with identical outcome.
+          if (attempt === this.maxRetries || isTimeout) {
             try {
-              // Final fallback: wait extra before non-stream attempt
               await new Promise(r => setTimeout(r, 5000));
               return await this.nonStreamComplete(prompt, maxTokens, temperature, options.systemPrompt);
             } catch (fallbackErr) {
-              throw new Error(`Kimi API failed after ${this.maxRetries}+1 attempts: ${errMsg}`);
+              throw new Error(`Kimi API failed after ${attempt} stream + nonstream: ${errMsg}`);
             }
           }
           if (errMsg.includes('429') || errMsg.includes('Too Many Requests')) {
-            // GPU rate limit: wait 60s base + 30s per attempt + jitter
             const rateLimitWait = 60000 + (attempt * 30000) + Math.random() * 10000;
             console.log(`[KimiClient] GPU rate limited (429), waiting ${Math.round(rateLimitWait / 1000)}s before retry...`);
             await new Promise(r => setTimeout(r, rateLimitWait));
