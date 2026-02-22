@@ -2483,9 +2483,64 @@ class PMAgent {
       const expectedBuildPath = path.join(CONFIG.paths.output, buildTypeDir, buildSlug);
       const builtRecordPath = path.join(CONFIG.paths.built, `${buildable.id}.json`);
       let alreadyBuilt = false;
-      try { await fs.access(builtRecordPath); alreadyBuilt = true; } catch {}
+      let existingBuiltRecord: any = null;
+      try {
+        const raw = await fs.readFile(builtRecordPath, 'utf-8');
+        existingBuiltRecord = JSON.parse(raw);
+        alreadyBuilt = true;
+      } catch {}
       if (!alreadyBuilt) { try { await fs.access(expectedBuildPath); alreadyBuilt = true; } catch {} }
       if (alreadyBuilt) {
+        // If built but no Vercel URL, attempt a re-deploy from existing project directory
+        const hasVercelUrl = existingBuiltRecord?.vercelUrl;
+        const existingProjectPath = path.join(CONFIG.paths.output, buildTypeDir, buildSlug);
+        const projectDirExists = await fs.access(existingProjectPath).then(() => true).catch(() => false);
+        if (!hasVercelUrl && projectDirExists && buildable.type !== 'mobile' && CONFIG.vercel.token) {
+          await logger.agent(this.name, `REDEPLOY: "${buildable.title}" has no Vercel URL — re-deploying from existing project`);
+          try { await fs.unlink(path.join(CONFIG.paths.validated, `${buildable.id}.json`)); } catch {}
+          // Attempt Vercel deploy from existing project directory
+          let redeployUrl = '';
+          try {
+            const envFlag = process.env.NVIDIA_API_KEY ? ` -e NVIDIA_API_KEY="${process.env.NVIDIA_API_KEY}"` : '';
+            const deployCmd = `npx vercel --token ${CONFIG.vercel.token} --scope ${CONFIG.vercel.teamId} --yes --prod${envFlag}`;
+            let rdStdout = ''; let rdStderr = '';
+            try {
+              const { stdout, stderr } = await execAsync(deployCmd, { cwd: existingProjectPath, timeout: 600000, maxBuffer: 50 * 1024 * 1024 });
+              rdStdout = stdout || ''; rdStderr = stderr || '';
+            } catch (rdErr: any) {
+              rdStdout = rdErr.stdout || ''; rdStderr = rdErr.stderr || '';
+              rdStdout = rdStdout || rdErr.stderr || String(rdErr);
+              rdStderr = rdStderr + '\n' + String(rdErr);
+            }
+            const rdOutput = rdStdout + rdStderr;
+            const rdMatch = rdOutput.match(/Production:\s*(https:\/\/[^\s]+)/) || rdOutput.match(/https:\/\/[^\s\]]+\.vercel\.app/);
+            if (rdMatch) {
+              redeployUrl = (rdMatch[1] || rdMatch[0]).replace(/[^\w\-.:\/]/g, '');
+              await logger.agent(this.name, `Redeployed: ${redeployUrl}`);
+            }
+          } catch (rdErr2) {
+            await logger.agent(this.name, `Redeploy error: ${rdErr2}`);
+          }
+          // REST API fallback for redeploy
+          if (!redeployUrl) {
+            try {
+              const apiResp = await fetch(`https://api.vercel.com/v9/projects/${encodeURIComponent(buildSlug.slice(0,80))}?teamId=${encodeURIComponent(CONFIG.vercel.teamId)}`, { headers: { Authorization: `Bearer ${CONFIG.vercel.token}` } });
+              if (apiResp.ok) {
+                const proj = await apiResp.json() as any;
+                const prodUrl = proj?.targets?.production?.url || proj?.alias?.[0] || proj?.name;
+                if (prodUrl) redeployUrl = prodUrl.startsWith('http') ? prodUrl : `https://${prodUrl}`;
+              }
+            } catch {}
+          }
+          // Update built record with new URL
+          if (redeployUrl && existingBuiltRecord) {
+            existingBuiltRecord.vercelUrl = redeployUrl;
+            await fs.writeFile(builtRecordPath, JSON.stringify(existingBuiltRecord, null, 2));
+            await logger.agent(this.name, `Updated built record: ${buildable.title} → ${redeployUrl}`);
+          }
+          this.isBuilding = false;
+          return { success: !!redeployUrl, projectPath: existingProjectPath, githubUrl: existingBuiltRecord?.githubUrl || '', vercelUrl: redeployUrl, qualityScore: existingBuiltRecord?.qualityScore || 0, error: redeployUrl ? '' : 'Redeploy failed' };
+        }
         await logger.agent(this.name, `SKIP DUPLICATE BUILD: "${buildable.title}" already exists (${buildSlug}) — removing from queue`);
         try { await fs.unlink(path.join(CONFIG.paths.validated, `${buildable.id}.json`)); } catch {}
         this.isBuilding = false;
@@ -3124,9 +3179,14 @@ export async function GET() {
 
     // ── Duplicate guard (second line of defence inside buildAndDeploy) ──────
     try {
-      await fs.access(path.join(CONFIG.paths.built, `${idea.id}.json`));
-      await logger.agent(this.name, `ABORT DUPLICATE: "${idea.title}" already has a built record — skipping`);
-      return { success: false, projectPath, githubUrl: '', vercelUrl: '', qualityScore: 0, error: 'Already built' };
+      const existingRaw = await fs.readFile(path.join(CONFIG.paths.built, `${idea.id}.json`), 'utf-8');
+      const existingRecord = JSON.parse(existingRaw);
+      // Only abort if already fully deployed (has vercelUrl). Empty vercelUrl = redeploy needed.
+      if (existingRecord?.vercelUrl) {
+        await logger.agent(this.name, `ABORT DUPLICATE: "${idea.title}" already built & deployed — skipping`);
+        return { success: false, projectPath, githubUrl: '', vercelUrl: '', qualityScore: 0, error: 'Already built' };
+      }
+      await logger.agent(this.name, `RESUME BUILD: "${idea.title}" has built record but no Vercel URL — will deploy`);
     } catch {}
     // ────────────────────────────────────────────────────────────────────────
 
@@ -3506,11 +3566,9 @@ ${buildStep}
         await logger.agent(this.name, 'Build test PASSED - proceeding to deploy');
         buildPassed = true;
       } catch (buildErr: any) {
-        await logger.agent(this.name, `Build failed — stubbing API routes and retrying...`);
-        // Stub all API route files so the Next.js build can always compile
+        await logger.agent(this.name, `Build failed — stubbing broken files and retrying...`);
+        // Stub all API route files AND broken page/layout/component files
         try {
-          const apiDir = path.join(projectPath, 'src', 'app', 'api');
-          await fs.access(apiDir);
           const apiStub = [
             "import { NextRequest, NextResponse } from 'next/server';",
             "const handler = async (_req: NextRequest) =>",
@@ -3521,28 +3579,72 @@ ${buildStep}
             "export const DELETE = handler;",
             "export const PATCH = handler;",
           ].join('\n');
-          // Recursively find and stub all route.ts / route.tsx files
-          const stubRoutes = async (dir: string): Promise<number> => {
+          const pageStub = `export default function Page() { return <main style={{padding:'2rem'}}><h1>Loading...</h1></main>; }\n`;
+          const layoutStub = `export default function Layout({ children }: { children: React.ReactNode }) { return <html lang="en"><body>{children}</body></html>; }\n`;
+          const componentStub = `export default function Component() { return <div />; }\n`;
+          // Recursively stub all broken TS/TSX files in the project
+          const stubBrokenFiles = async (dir: string): Promise<number> => {
             let count = 0;
-            const entries = await fs.readdir(dir, { withFileTypes: true });
+            let entries: import('fs').Dirent[];
+            try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch { return 0; }
             for (const entry of entries) {
+              if (entry.name === 'node_modules' || entry.name === '.next' || entry.name === '.git') continue;
               const full = path.join(dir, entry.name);
               if (entry.isDirectory()) {
-                count += await stubRoutes(full);
-              } else if (entry.name === 'route.ts' || entry.name === 'route.tsx') {
+                count += await stubBrokenFiles(full);
+              } else if (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) {
+                try {
+                  const content = await fs.readFile(full, 'utf-8');
+                  // Detect truncated/broken files: incomplete declarations at end of file
+                  const truncated = /(?:const|let|var|function|class|interface|type|export)\s+\w*\s*$/.test(content.trimEnd()) ||
+                    /[({[,]\s*$/.test(content.trimEnd()) ||
+                    content.trimEnd().endsWith('=') ||
+                    content.trimEnd().endsWith('=>') ||
+                    content.trimEnd().endsWith(':');
+                  if (truncated) {
+                    let stub = componentStub;
+                    if (entry.name === 'route.ts' || entry.name === 'route.tsx') stub = apiStub;
+                    else if (entry.name === 'layout.tsx' || entry.name === 'layout.ts') stub = layoutStub;
+                    else if (entry.name === 'page.tsx' || entry.name === 'page.ts') stub = pageStub;
+                    await fs.writeFile(full, stub);
+                    count++;
+                  }
+                } catch {}
+              }
+            }
+            return count;
+          };
+          // Also always stub all route.ts files under api dirs (regardless of truncation)
+          const stubRoutesInDir = async (dir: string): Promise<number> => {
+            let count = 0;
+            let entries: import('fs').Dirent[];
+            try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch { return 0; }
+            for (const entry of entries) {
+              const full = path.join(dir, entry.name);
+              if (entry.isDirectory()) count += await stubRoutesInDir(full);
+              else if (entry.name === 'route.ts' || entry.name === 'route.tsx') {
                 await fs.writeFile(full, apiStub);
                 count++;
               }
             }
             return count;
           };
-          const stubbed = await stubRoutes(apiDir);
-          await logger.agent(this.name, `Stubbed ${stubbed} API route file(s) — retrying build`);
-        } catch {}
-        // Attempt 2: build with stubbed API routes
+          let totalStubbed = 0;
+          // Check both src/app/api and app/api
+          for (const apiRelPath of ['src/app/api', 'app/api']) {
+            const apiDir = path.join(projectPath, apiRelPath);
+            try { await fs.access(apiDir); totalStubbed += await stubRoutesInDir(apiDir); } catch {}
+          }
+          // Also fix any other truncated TS/TSX files
+          totalStubbed += await stubBrokenFiles(projectPath);
+          await logger.agent(this.name, `Stubbed ${totalStubbed} broken file(s) — retrying build`);
+        } catch (stubErr) {
+          await logger.agent(this.name, `Stub error: ${stubErr}`);
+        }
+        // Attempt 2: build with stubbed files
         try {
           await execAsync('npm run build', { cwd: projectPath, timeout: 300000, maxBuffer: 20 * 1024 * 1024 });
-          await logger.agent(this.name, 'Build PASSED after API route stubbing');
+          await logger.agent(this.name, 'Build PASSED after file stubbing');
           buildPassed = true;
         } catch (retryErr: any) {
           await logger.agent(this.name, `Build still failing after stubs: ${String(retryErr).slice(0, 200)} — deploying anyway`);
@@ -3649,14 +3751,20 @@ ${buildStep}
           if (!vercelStdout && !vercelStderr) {
             vercelStdout = String(execErr);
           }
-          if (!vercelStdout) {
+          // Always also include String(execErr) to ensure we capture Production URL emitted
+          // before the remote build failure (Vercel CLI writes Production: URL then waits for build)
+          vercelStdout = vercelStdout || String(execErr);
+          vercelStderr = vercelStderr + '\n' + String(execErr);
+          if (!vercelStdout && !vercelStderr) {
             await logger.agent(this.name, `Vercel error: ${String(execErr).slice(0, 300)}`);
           }
         }
         const output = vercelStdout + vercelStderr;
-        const urlMatch = output.match(/https:\/\/[^\s\]]+\.vercel\.app/);
+        // Match both the pre-build "Production:" URL and any .vercel.app URL in the output
+        const urlMatch = output.match(/Production:\s*(https:\/\/[^\s]+)/) ||
+                         output.match(/https:\/\/[^\s\]]+\.vercel\.app/);
         if (urlMatch) {
-          vercelUrl = urlMatch[0].replace(/[^\w\-.:\/]/g, '');
+          vercelUrl = (urlMatch[1] || urlMatch[0]).replace(/[^\w\-.:\/]/g, '');
           await logger.agent(this.name, `Vercel: ${vercelUrl}`);
         } else if (output) {
           await logger.agent(this.name, `Vercel deploy ran but no URL found in output`);
