@@ -2638,9 +2638,9 @@ class PMAgent {
       // Hard 35-minute timeout — prevents a single stuck LLM call from freezing the pipeline
       // 55 min timeout: Kimi K2.5 thinking mode streams ~14 tokens/sec — 20K tokens = 23min per call
       // Total: 6min design + 23min code gen (parallel) + 15min repair + 5min deploy = ~49min
-      const BUILD_TIMEOUT_MS = 90 * 60 * 1000;
+      const BUILD_TIMEOUT_MS = 120 * 60 * 1000;
       const buildTimeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`Build timeout: "${buildable!.title}" exceeded 90 minutes — will retry next cycle`)), BUILD_TIMEOUT_MS)
+        setTimeout(() => reject(new Error(`Build timeout: "${buildable!.title}" exceeded 120 minutes — will retry next cycle`)), BUILD_TIMEOUT_MS)
       );
 
       const buildExecutionPromise = (async () => {
