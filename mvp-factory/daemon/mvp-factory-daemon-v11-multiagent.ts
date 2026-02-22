@@ -3539,6 +3539,9 @@ ${buildStep}
       await logger.agent(this.name, 'Generated GitHub Actions CI workflow');
     } catch {}
 
+    // Tracks whether local build passed — used by Vercel deploy section to decide prebuilt strategy
+    let buildPassed = false;
+
     // npm install + build (web/saas/api only — mobile uses Expo, extension has no build step)
     if (idea.type !== 'mobile' && idea.type !== 'extension') {
       try {
@@ -3573,7 +3576,6 @@ ${buildStep}
 
       // Build test before deployment
       await logger.agent(this.name, 'Running npm build test...');
-      let buildPassed = false;
       try {
         await execAsync('npm run build', { cwd: projectPath, timeout: 300000, maxBuffer: 20 * 1024 * 1024 });
         await logger.agent(this.name, 'Build test PASSED - proceeding to deploy');
@@ -3747,7 +3749,25 @@ ${buildStep}
 
       try {
         const envFlag = process.env.NVIDIA_API_KEY ? ` -e NVIDIA_API_KEY="${process.env.NVIDIA_API_KEY}"` : '';
-        const deployCmd = `npx vercel --token ${CONFIG.vercel.token} --scope ${CONFIG.vercel.teamId} --yes --prod${envFlag}`;
+        // Default: standard deploy (triggers remote build on Vercel)
+        let deployCmd = `npx vercel --token ${CONFIG.vercel.token} --scope ${CONFIG.vercel.teamId} --yes --prod${envFlag}`;
+
+        // For web/saas/api types where local build passed: use vercel build + deploy --prebuilt
+        // This deploys the locally-verified build artifacts instead of triggering a fresh remote
+        // rebuild on Vercel — eliminates remote SWC syntax errors from AI-truncated files.
+        if (buildPassed && idea.type !== 'extension' && idea.type !== 'mobile') {
+          try {
+            await execAsync(
+              `npx vercel build --yes --token ${CONFIG.vercel.token} --scope ${CONFIG.vercel.teamId}`,
+              { cwd: projectPath, timeout: 600000, maxBuffer: 50 * 1024 * 1024 }
+            );
+            deployCmd = `npx vercel deploy --prebuilt --token ${CONFIG.vercel.token} --scope ${CONFIG.vercel.teamId} --prod`;
+            await logger.agent(this.name, 'Pre-built output ready — using vercel deploy --prebuilt (no remote rebuild)');
+          } catch (vBuildErr) {
+            await logger.agent(this.name, `vercel build failed, falling back to standard deploy: ${String(vBuildErr).slice(0, 200)}`);
+          }
+        }
+
         let vercelStdout = '';
         let vercelStderr = '';
         try {
