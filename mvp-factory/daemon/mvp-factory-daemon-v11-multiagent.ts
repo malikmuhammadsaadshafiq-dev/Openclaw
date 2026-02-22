@@ -4084,11 +4084,18 @@ async function runForever(): Promise<never> {
   // already-queued ideas while validation is still scoring new ones.
   await logger.log('Starting Research+Validation and Build cycles concurrently...');
 
-  researchRunning = true;
-  pm.runResearchAndValidation()
-    .then(() => { lastResearch = Date.now(); })
-    .catch(async (e) => { await logger.log(`Init research error: ${e}`, 'ERROR'); lastResearch = Date.now(); })
-    .finally(() => { researchRunning = false; });
+  // Skip initial research if queue is already well-stocked
+  const initQueueSize = await fs.readdir(CONFIG.paths.validated).then(f => f.filter(x => x.endsWith('.json')).length).catch(() => 0);
+  if (initQueueSize >= 40) {
+    lastResearch = Date.now();
+    await logger.log(`Init research skipped — queue already has ${initQueueSize} ideas (≥40 threshold)`);
+  } else {
+    researchRunning = true;
+    pm.runResearchAndValidation()
+      .then(() => { lastResearch = Date.now(); })
+      .catch(async (e) => { await logger.log(`Init research error: ${e}`, 'ERROR'); lastResearch = Date.now(); })
+      .finally(() => { researchRunning = false; });
+  }
 
   // 30-second startup delay before first build — prevents hammering NVIDIA API
   // if pm2 does rapid restarts (e.g. during deployment or recovery)
@@ -4118,12 +4125,19 @@ async function runForever(): Promise<never> {
       const now = Date.now();
 
       // Research cycle — fire-and-forget so it doesn't block the build cycle
+      // Skip if queue is well-stocked (≥40 ideas) to avoid wasting GPU slots on timeouts
       if (!researchRunning && now - lastResearch >= RESEARCH_EVERY) {
-        researchRunning = true;
-        pm.runResearchAndValidation()
-          .then(() => { lastResearch = Date.now(); })
-          .catch(async (e) => { await logger.log(`Research cycle error: ${e}`, 'ERROR'); lastResearch = Date.now(); })
-          .finally(() => { researchRunning = false; });
+        const queueSize = await fs.readdir(CONFIG.paths.validated).then(f => f.filter(x => x.endsWith('.json')).length).catch(() => 0);
+        if (queueSize >= 40) {
+          lastResearch = Date.now(); // postpone without running — check again in 15 min
+          await logger.log(`Research skipped — queue has ${queueSize} ideas (≥40 threshold)`);
+        } else {
+          researchRunning = true;
+          pm.runResearchAndValidation()
+            .then(() => { lastResearch = Date.now(); })
+            .catch(async (e) => { await logger.log(`Research cycle error: ${e}`, 'ERROR'); lastResearch = Date.now(); })
+            .finally(() => { researchRunning = false; });
+        }
       }
 
       // Build cycle — fire-and-forget, PMAgent's internal isBuilding lock handles concurrency
