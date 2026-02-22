@@ -52,44 +52,9 @@ const execAsync = promisify(exec);
 process.on('SIGTERM', () => { console.log('[Daemon] SIGTERM received — shutting down'); process.exit(0); });
 process.on('SIGINT',  () => { console.log('[Daemon] SIGINT received — shutting down');  process.exit(0); });
 
-// ============================================================
-// Anti-zombie: kill any other daemon instances that were left behind
-// by previous pm2 restart cycles (tsx spawns a child node process
-// that survives when pm2 only kills the tsx launcher parent).
-// Uses PGID to identify our own process tree — safe even with tsx's
-// multi-process architecture (launcher + worker share the same PGID).
-// ============================================================
-(async function killZombies() {
-  try {
-    // Get our process group ID — all processes in our tsx tree share it
-    const pgidResult = await execAsync(`ps -o pgid= -p ${process.pid}`);
-    const myPgid = parseInt(pgidResult.stdout.trim(), 10);
-    if (isNaN(myPgid)) return; // Can't determine PGID — skip to be safe
-
-    const { stdout } = await execAsync(
-      `ps -eo pid,pgid,cmd | grep 'mvp-factory-daemon-v11-multiagent' | grep -v grep`
-    );
-    const lines = stdout.trim().split('\n').filter(Boolean);
-    const toKill: number[] = [];
-    for (const line of lines) {
-      const parts = line.trim().split(/\s+/);
-      const pid  = parseInt(parts[0], 10);
-      const pgid = parseInt(parts[1], 10);
-      // Only kill processes from a DIFFERENT process group — true orphans
-      if (!isNaN(pid) && !isNaN(pgid) && pgid !== myPgid) {
-        toKill.push(pid);
-      }
-    }
-    if (toKill.length > 0) {
-      console.log(`[Daemon] Anti-zombie: killing ${toKill.length} orphaned process(es) (PGID≠${myPgid}): ${toKill.join(', ')}`);
-      // SIGKILL because SIGTERM is ignored by processes blocked in long-running
-      // subprocess calls (npm install, LLM API, Vercel deploy, etc.)
-      await execAsync(`kill -9 ${toKill.join(' ')} 2>/dev/null || true`);
-    }
-  } catch {
-    // ignore — best-effort cleanup
-  }
-})();
+// pm2 ecosystem.config.cjs has treekill:true which kills the entire
+// tsx process tree (launcher + worker) on restart — no manual zombie
+// cleanup needed here.
 
 // ============================================================
 // Retry Loop Utility (exponential backoff)
