@@ -1900,8 +1900,8 @@ RULES: No framer-motion. Responsive. For dynamic data fetch() the BACKEND API RO
       { path: 'src/app/layout.tsx', desc: `Root layout. Imports globals.css. Responsive Navbar with logo, nav links (Home/Pricing/Dashboard), Login/Get Started CTA. Mobile hamburger. Children prop. Metadata for ${idea.title}.`, tokens: 8000 },
       { path: 'src/app/page.tsx', desc: `Landing page. Hero: big headline about ${idea.title}, subline, "Get Started Free" CTA → /auth. 3 feature cards with hardcoded titles/descriptions. Pricing preview (3 tiers) with hardcoded prices. Bottom CTA. Use ONLY hardcoded static content — do NOT call fetch() or any API from this page.`, tokens: 8000 },
       { path: 'src/app/pricing/page.tsx', desc: `Pricing page. 3 tiers: Free ($0), Pro ($12/mo), Business ($49/mo). Feature comparison list per tier. CTA buttons. Highlight Pro tier. FAQ section.`, tokens: 8000 },
-      { path: 'src/app/auth/page.tsx', desc: `Auth page. Toggle: Login / Sign Up. Email + password form. On submit POST /api/auth. OAuth placeholder buttons (Google, GitHub). Validation errors. Redirect to /dashboard on success.`, tokens: 8000 },
-      { path: 'src/app/dashboard/page.tsx', desc: `Dashboard — CORE PRODUCT. 'use client'. localStorage mock auth guard (check for token, redirect to /auth if missing). 4 impressive stat cards with hardcoded demo numbers (use realistic values relevant to ${idea.title}). Sidebar nav with sections for: ${idea.features.join(', ')}. Main content area with a rich data table (5 mock rows with status badges, progress bars, action buttons). Activity timeline (5 recent mock events with colored dots). Quick action panel. All data is hardcoded mock — do NOT use useEffect+fetch, just useState with the mock data pre-loaded. Responsive sidebar.`, tokens: 14000 },
+      { path: 'src/app/auth/page.tsx', desc: `Auth page. Toggle: Login / Sign Up. Email + password form. Client-side validation (check email format, password length >= 6). On submit: set localStorage.setItem("auth_token", "demo_" + Date.now()) then router.push("/dashboard") — no real API call needed. OAuth placeholder buttons (Google, GitHub) that show "Coming soon" toast. Show inline validation errors.`, tokens: 8000 },
+      { path: 'src/app/dashboard/page.tsx', desc: `Dashboard — CORE PRODUCT. 'use client'. localStorage mock auth guard (check for token key "auth_token", redirect to /auth if missing). Layout: collapsible sidebar + main content area. Sidebar nav links for each feature: ${idea.features.join(', ')}. Top of main: 4 stat cards with hardcoded impressive numbers relevant to ${idea.title} (e.g. total items, score, savings, time). Below stats: one interactive feature section per feature — each has a small input form (1-2 fields relevant to the feature) with a Submit button that POSTs to the matching backend API route listed in context; show the API response result below the form after submit (loading spinner during fetch, error message on failure). Also show a pre-populated data table (5 mock rows) for the first feature. Activity timeline (4 recent mock events) on the right panel. Fully responsive. All initial display data is hardcoded; forms call real API routes.`, tokens: 14000 },
     ];
 
     // Stagger: 2s per file to avoid 429 burst from NVIDIA API
@@ -2137,7 +2137,20 @@ ${aiNote}
 ${dataNote}
 STACK: Next.js 14 API routes, TypeScript, Zod validation`;
 
-    const sysPrompt = `You are a backend engineer building an MVP demo. Each route returns realistic hardcoded mock/demo data immediately — no external API calls, no database connections, no complex algorithms. The goal is a working demo that looks real. Keep each handler under 60 lines. Include 2-3 TODO comments marking where real implementation goes. Output ONLY raw TypeScript code — no JSON, no markdown fences.`;
+    const sysPrompt = `You are a backend engineer building an MVP. Rules:
+REAL logic (always implement these for real, using pure TypeScript):
+- Input validation (check required fields, types, ranges — return 400 on failure)
+- Simple calculations (scores, percentages, averages, rankings, risk levels)
+- Text processing (keyword extraction, word count, readability, formatting)
+- Rule-based decisions (if/else scoring, tier classification, flag detection)
+- Data transformations (sorting, filtering, grouping, aggregating input data)
+MOCKED (no external services available — return realistic demo data):
+- Database reads/writes → return an in-memory array of 3-5 realistic objects
+- AI/LLM calls → return a plausible hardcoded AI-style response string
+- Email/SMS/push → log the action and return { sent: true }
+- Payment/billing → return { status: "demo", message: "Payment processing disabled in demo" }
+Structure each handler: validate input → run real logic on the input → return result (or mock for DB/AI parts).
+Keep under 80 lines. Add TODO comments only for the mocked parts. Output ONLY raw TypeScript — no markdown fences.`;
 
     // Generate each API route individually — stagger 2s each to avoid 429 burst from NVIDIA API
     const routePromises = spec.apiRoutes.map((route, i) => {
@@ -2148,7 +2161,13 @@ STACK: Next.js 14 API routes, TypeScript, Zod validation`;
         .replace(/:([a-zA-Z_]+)/g, '[$1]')     // :id → [id]
         .replace(/\{([a-zA-Z_]+)\}/g, '[$1]');  // {id} → [id]
       const filePath = `src/app/api${routePath}/route.ts`;
-      const desc = `${route.method} handler for: ${route.purpose}. Return NextResponse.json() with realistic hardcoded mock data matching this shape: ${route.outputSchema}. DEMO MODE — no database, no external API calls. Just return plausible mock JSON with 2-4 realistic entries. Add TODO comments: "TODO: replace with real DB query" and "TODO: add authentication". Keep it under 50 lines.`;
+      const desc = `${route.method} handler. Purpose: ${route.purpose}. Input: ${route.inputSchema}. Output: ${route.outputSchema}.
+Implement this handler with REAL logic where possible:
+- Validate the incoming request body (check required fields, return NextResponse.json({error}, {status:400}) on bad input)
+- If the route involves scoring/calculation/text-analysis/classification: implement the actual algorithm in pure TypeScript
+- If the route needs database records: use a realistic hardcoded in-memory array (TODO: replace with DB)
+- If the route needs AI/external API: return a plausible hardcoded response string (TODO: replace with real API call)
+Return NextResponse.json() with the result. Under 80 lines.`;
       return new Promise<{ path: string; content: string } | null>(resolve =>
         setTimeout(() => generateOneFile(filePath, desc, context, sysPrompt, 16000).then(resolve).catch(() => resolve(null)), i * 2000)
       );
@@ -3341,45 +3360,84 @@ ${idea.type !== 'mobile' ? `[🚀 **Live Demo**](https://github.com/${CONFIG.git
 
 ---
 
-## ⚠️ MVP Demo Mode
+## ⚠️ What's Built vs What's Left
 
-> This project was autonomously generated by **MVP Factory v11** using a free-tier AI API (NVIDIA / Kimi K2.5).
-> To keep every build fast and reliable, the backend routes return **realistic mock/demo data** instead of live integrations.
-> The frontend UI is fully functional and uses this demo data to showcase the complete product experience.
+> This MVP was autonomously generated by **MVP Factory v11** using a free-tier AI API (NVIDIA / Kimi K2.5).
+> Simple logic runs for real. Complex external dependencies are stubbed so the app always works.
 
-### What's simplified in this MVP:
-| Feature | Current State | Why |
-|---------|--------------|-----|
-| Backend API routes | Return hardcoded mock data | Free API rate limits + build reliability |
-| Authentication | localStorage mock token | No DB provisioned in free tier |
-| AI integrations | Stubbed with sample responses | NVIDIA API quota limitations |
-| Database / storage | In-memory / static arrays | No DB connection in free tier |
+### What's real and working right now:
+| Layer | What it does |
+|-------|-------------|
+| ✅ Frontend UI | Fully interactive — forms submit, responses render, auth guard works |
+| ✅ Input validation | Every API route checks required fields, returns 400 on bad input |
+| ✅ Calculations & scoring | Algorithms (risk scores, percentages, rankings, text analysis) run in pure TypeScript |
+| ✅ Rule-based logic | Classification, tier detection, flag rules — all real code |
+| ✅ Auth flow | Email+password client validation → localStorage token → dashboard guard |
 
-### How to implement the full production version:
+### What's stubbed and why:
+| Feature | Current State | Why it's stubbed | How to fix it |
+|---------|--------------|-----------------|--------------|
+| 🗄️ Database persistence | In-memory arrays (resets on restart) | No DB provisioned in free tier | See Step 1 below |
+| 🤖 AI/LLM responses | Hardcoded plausible strings | NVIDIA free API has strict rate limits during bulk builds | See Step 2 below |
+| 🔐 Real authentication | localStorage demo token | No JWT/session infra provisioned | See Step 3 below |
+| 📧 Email / notifications | Logged + returns \`{sent: true}\` | No email service configured | See Step 4 below |
+| 💳 Payments | Returns demo status | Stripe not configured | See Step 5 below |
 
-**1. Add a real database** (Supabase, PlanetScale, or MongoDB Atlas — all have free tiers):
+---
+
+### Step 1 — Add a real database (15 min setup)
 \`\`\`bash
+# Option A: Supabase (Postgres, free tier)
 npm install @supabase/supabase-js
-# Replace mock arrays in /src/app/api/**/route.ts with real DB queries
-\`\`\`
+# In each route: import { createClient } from '@supabase/supabase-js'
+# Replace the mock array with: const { data } = await supabase.from('table').select()
 
-**2. Add real authentication** (NextAuth.js):
-\`\`\`bash
-npm install next-auth
-# Replace localStorage mock in dashboard/page.tsx with useSession()
+# Option B: PlanetScale (MySQL, free tier)
+npm install @planetscale/database
 \`\`\`
+> Look for `// TODO: replace with DB` comments in `src/app/api/**/route.ts`
 
-**3. Enable real AI features** (swap mock responses for live Kimi K2.5 calls):
+### Step 2 — Enable real AI responses
 \`\`\`typescript
-// In any API route, replace the mock return with:
+// In any API route, replace the hardcoded AI string with:
 const res = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
   method: 'POST',
-  headers: { Authorization: \`Bearer \${process.env.NVIDIA_API_KEY}\` },
-  body: JSON.stringify({ model: 'moonshotai/kimi-k2.5', messages: [...] })
+  headers: { 'Authorization': \`Bearer \${process.env.NVIDIA_API_KEY}\`,
+             'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    model: 'moonshotai/kimi-k2.5',
+    messages: [{ role: 'user', content: yourPrompt }],
+    max_tokens: 1024
+  })
 });
+const { choices } = await res.json();
+return NextResponse.json({ result: choices[0].message.content });
+\`\`\`
+> Add `NVIDIA_API_KEY=your_key` to `.env.local`
+
+### Step 3 — Replace demo auth with real sessions (NextAuth.js)
+\`\`\`bash
+npm install next-auth
+# 1. Create src/app/api/auth/[...nextauth]/route.ts with your provider
+# 2. Replace localStorage.setItem("auth_token",...) in auth/page.tsx with signIn()
+# 3. Replace localStorage.getItem("auth_token") in dashboard/page.tsx with useSession()
 \`\`\`
 
-**4. Each feature is fully wired** — the UI already calls the correct API routes. Just replace the mock \`return NextResponse.json({...})\` in each route file with your real logic.
+### Step 4 — Add email (Resend — free 3000 emails/mo)
+\`\`\`bash
+npm install resend
+# Replace the { sent: true } mock in notification routes with:
+# await resend.emails.send({ from: 'you@domain.com', to: email, subject, html })
+\`\`\`
+
+### Step 5 — Add payments (Stripe)
+\`\`\`bash
+npm install stripe @stripe/stripe-js
+# Replace demo payment routes with real Stripe checkout sessions
+\`\`\`
+
+> **All the UI is already wired up.** Every form already calls the right API route.
+> You only need to swap the stubbed returns for real implementations.
 
 ---
 
