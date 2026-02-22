@@ -287,7 +287,7 @@ class KimiClient {
 
   private async streamComplete(prompt: string, maxTokens: number, temperature: number, systemPrompt?: string): Promise<string> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 600000);
+    const timer = setTimeout(() => controller.abort(), 360000);  // 6-min stream timeout (was 10)
 
     const messages: Array<{ role: string; content: string }> = [];
     if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
@@ -565,15 +565,16 @@ No JSON. No markdown fences. No explanation. Just the code.`;
     return content.length >= 30 ? content : null;
   };
 
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    try {
-      const response = await kimi.complete(prompt, { maxTokens, temperature: 0.2, systemPrompt });
-      const code = extractCode(response);
-      if (code) return { path: filePath, content: code };
-      // Attempt 1 returned thinking text — retry once
-    } catch {
-      if (attempt === 2) return null;
-    }
+  // Single attempt — retry ONLY if response is pure thinking text, never on timeout/error
+  try {
+    const response = await kimi.complete(prompt, { maxTokens, temperature: 0.2, systemPrompt });
+    const code = extractCode(response);
+    if (code) return { path: filePath, content: code };
+    // Pure thinking text response — try once more with a nudge
+    const response2 = await kimi.complete(prompt + '\n\nRespond with ONLY the file content, no explanations.', { maxTokens, temperature: 0.1, systemPrompt });
+    return extractCode(response2) ? { path: filePath, content: extractCode(response2)! } : null;
+  } catch {
+    return null;  // Timeout or API error — fail fast, don't retry
   }
   return null;
 }
@@ -1896,12 +1897,11 @@ RULES: No framer-motion. Responsive. For dynamic data fetch() the BACKEND API RO
     const sysPrompt = `You are a senior SaaS frontend engineer. TypeScript, TailwindCSS, Next.js 14 App Router. Production quality. Output ONLY raw code — no JSON, no markdown fences.`;
 
     const fileDefs: Array<{ path: string; desc: string; tokens: number }> = [
-      { path: 'src/app/globals.css', desc: `TailwindCSS @tailwind base/components/utilities + :root CSS variables for ${spec.designSystem.primaryColor} brand. Under 50 lines.`, tokens: 3500 },
-      { path: 'src/app/layout.tsx', desc: `Root layout. Server component — NO 'use client' directive at all. Imports globals.css. export const metadata with title and description for ${idea.title}. Responsive Navbar with logo, nav links (Home/Pricing/Dashboard), Login/Get Started CTA. Mobile hamburger. Children prop.`, tokens: 8000 },
-      { path: 'src/app/page.tsx', desc: `Landing page. Hero: big headline about ${idea.title}, subline, "Get Started Free" CTA → /auth. 3 feature cards with hardcoded titles/descriptions. Pricing preview (3 tiers) with hardcoded prices. Bottom CTA. Use ONLY hardcoded static content — do NOT call fetch() or any API from this page.`, tokens: 8000 },
-      { path: 'src/app/pricing/page.tsx', desc: `Pricing page. 3 tiers: Free ($0), Pro ($12/mo), Business ($49/mo). Feature comparison list per tier. CTA buttons. Highlight Pro tier. FAQ section.`, tokens: 8000 },
-      { path: 'src/app/auth/page.tsx', desc: `Auth page. Toggle: Login / Sign Up. Email + password form. Client-side validation (check email format, password length >= 6). On submit: set localStorage.setItem("auth_token", "demo_" + Date.now()) then router.push("/dashboard") — no real API call needed. OAuth placeholder buttons (Google, GitHub) that show "Coming soon" toast. Show inline validation errors.`, tokens: 8000 },
-      { path: 'src/app/dashboard/page.tsx', desc: `Dashboard — CORE PRODUCT. 'use client'. localStorage mock auth guard (check for token key "auth_token", redirect to /auth if missing). Layout: collapsible sidebar + main content area. Sidebar nav links for each feature: ${idea.features.join(', ')}. Top of main: 4 stat cards with hardcoded impressive numbers relevant to ${idea.title} (e.g. total items, score, savings, time). Below stats: one interactive feature section per feature — each has a small input form (1-2 fields relevant to the feature) with a Submit button that POSTs to the matching backend API route listed in context; show the API response result below the form after submit (loading spinner during fetch, error message on failure). Also show a pre-populated data table (5 mock rows) for the first feature. Activity timeline (4 recent mock events) on the right panel. Fully responsive. All initial display data is hardcoded; forms call real API routes.`, tokens: 14000 },
+      { path: 'src/app/globals.css', desc: `TailwindCSS @tailwind base/components/utilities + :root CSS variables for ${spec.designSystem.primaryColor} brand. Under 40 lines.`, tokens: 2500 },
+      { path: 'src/app/layout.tsx', desc: `Root layout. Server component — NO 'use client' directive at all. Imports globals.css. export const metadata with title and description for ${idea.title}. Responsive Navbar with logo, nav links (Home/Dashboard), Login/Get Started CTA. Children prop.`, tokens: 5000 },
+      { path: 'src/app/page.tsx', desc: `Landing page. Hero: big headline about ${idea.title}, subline, "Get Started Free" CTA → /auth. 3 feature cards with hardcoded titles/descriptions. Pricing preview (3 tiers: Free $0/Pro $12/Business $49) with hardcoded prices. Bottom CTA. Use ONLY hardcoded static content — do NOT call fetch() or any API from this page.`, tokens: 5000 },
+      { path: 'src/app/auth/page.tsx', desc: `Auth page. Toggle: Login / Sign Up. Email + password form. Client-side validation. On submit: localStorage.setItem("auth_token", "demo_" + Date.now()) then router.push("/dashboard"). Show inline validation errors.`, tokens: 5000 },
+      { path: 'src/app/dashboard/page.tsx', desc: `Dashboard — CORE PRODUCT. 'use client'. localStorage mock auth guard (check "auth_token", redirect to /auth if missing). Layout: sidebar + main. Sidebar nav for features: ${idea.features.join(', ')}. Top: 4 stat cards with hardcoded numbers. Below: one input form per feature (1-2 fields) with Submit button that POSTs to matching API route; show response result. Pre-populated data table (5 mock rows) for first feature. Fully responsive. Hardcoded initial data; forms call real API routes.`, tokens: 8000 },
     ];
 
     // Stagger: 2s per file to avoid 429 burst from NVIDIA API
@@ -1931,14 +1931,16 @@ RULES: No framer-motion. No hardcoded data — fetch() the BACKEND API ROUTES li
 
     const sysPrompt = `You are an elite frontend developer. Clean, accessible, performant React/TypeScript with TailwindCSS. No framer-motion. Production-quality code. Output ONLY raw code — no JSON, no markdown fences.`;
 
+    // Cap extra pages to 2 max to avoid excessive LLM calls
+    const extraPages = spec.pages.filter(p => p.route !== '/').slice(0, 2);
     const fileDefs: Array<{ path: string; desc: string; tokens: number }> = [
-      { path: 'src/app/globals.css', desc: `TailwindCSS @tailwind base/components/utilities + :root CSS variables for ${spec.designSystem.primaryColor} brand color. Under 50 lines.`, tokens: 3500 },
-      { path: 'src/app/layout.tsx', desc: `Root layout. Server component — NO 'use client' directive at all. export const metadata with title and description for ${idea.title}. Imports globals.css. Responsive navbar.`, tokens: 8000 },
-      { path: 'src/app/page.tsx', desc: spec.pages.find(p => p.route === '/')?.purpose || `Main landing page: hero for ${idea.title}, feature overview, CTA. Use ONLY hardcoded static content — do NOT call fetch() or any API from this page.`, tokens: 10000 },
-      ...spec.pages.filter(p => p.route !== '/').map(p => ({
+      { path: 'src/app/globals.css', desc: `TailwindCSS @tailwind base/components/utilities + :root CSS variables for ${spec.designSystem.primaryColor} brand color. Under 40 lines.`, tokens: 2500 },
+      { path: 'src/app/layout.tsx', desc: `Root layout. Server component — NO 'use client' directive at all. export const metadata with title and description for ${idea.title}. Imports globals.css. Responsive navbar.`, tokens: 5000 },
+      { path: 'src/app/page.tsx', desc: spec.pages.find(p => p.route === '/')?.purpose || `Main landing page: hero for ${idea.title}, feature overview, CTA. Use ONLY hardcoded static content — do NOT call fetch() or any API from this page.`, tokens: 6000 },
+      ...extraPages.map(p => ({
         path: `src/app${p.route}/page.tsx`,
-        desc: `${p.purpose}. Components: ${p.components.join(', ')}. User flow: ${p.userFlow}. Use hardcoded mock data in useState (pre-loaded, no loading delay). If fetching from an API route, always fall back to mock data silently on error — never show an error to the user. Responsive.`,
-        tokens: 10000,
+        desc: `${p.purpose}. Components: ${p.components.join(', ')}. User flow: ${p.userFlow}. Use hardcoded mock data in useState (pre-loaded). If fetching from an API route, fall back to mock data silently on error. Responsive.`,
+        tokens: 6000,
       })),
     ];
 
@@ -2034,6 +2036,8 @@ AUTOMATION REQUIREMENTS:
 - Provide execution logs and status tracking
 ` : ''}
 
+Design EXACTLY 4 API routes (not more, not fewer). Each route must be essential.
+
 For each API route, specify:
 - HTTP method and path
 - Exact input/output schemas
@@ -2080,6 +2084,11 @@ Return ONLY valid JSON:
     const parsed = extractJSON(response, 'object');
     if (!parsed || !parsed.apiRoutes) {
       throw new Error(`Backend architecture AI returned invalid JSON (response length: ${response?.length || 0}) - will retry`);
+    }
+
+    // Hard cap: never generate more than 4 route files (speed guard)
+    if (Array.isArray(parsed.apiRoutes) && parsed.apiRoutes.length > 4) {
+      parsed.apiRoutes = parsed.apiRoutes.slice(0, 4);
     }
 
     return parsed as BackendSpec;
@@ -2169,7 +2178,7 @@ Implement this handler with REAL logic where possible:
 - If the route needs AI/external API: return a plausible hardcoded response string (TODO: replace with real API call)
 Return NextResponse.json() with the result. Under 80 lines.`;
       return new Promise<{ path: string; content: string } | null>(resolve =>
-        setTimeout(() => generateOneFile(filePath, desc, context, sysPrompt, 16000).then(resolve).catch(() => resolve(null)), i * 2000)
+        setTimeout(() => generateOneFile(filePath, desc, context, sysPrompt, 5000).then(resolve).catch(() => resolve(null)), i * 2000)
       );
     });
 
