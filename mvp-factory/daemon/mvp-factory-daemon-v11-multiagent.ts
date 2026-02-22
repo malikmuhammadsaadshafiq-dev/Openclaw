@@ -2531,6 +2531,17 @@ class PMAgent {
         (buildable as any).type = 'web';
         await logger.agent(this.name, `RECLASSIFY: "${buildable.title}" type mobile → web (mobile not supported)`);
       }
+      // ── Auto-simplify guard: 6+ features → trim to 3 core features to prevent timeout ──
+      if (buildable.features && buildable.features.length >= 6) {
+        const original = buildable.features.length;
+        buildable.features = buildable.features.slice(0, 3);
+        // Also simplify tech stack to avoid LLM trying to implement complex external deps
+        if (buildable.techStack && (buildable.techStack.includes('Tesseract') || buildable.techStack.includes('OpenAI') || buildable.techStack.includes('Vision') || buildable.techStack.includes('Blob'))) {
+          buildable.techStack = 'Next.js 14 App Router + TypeScript + TailwindCSS';
+        }
+        await logger.agent(this.name, `AUTO-SIMPLIFY: "${buildable.title}" had ${original} features → trimmed to 3 to prevent timeout`);
+      }
+
       await logger.agent(this.name, `SELECTED: "${buildable.title}" (score: ${buildable.validation.overallScore}/10) | ${remaining.length} remaining in queue after this`);
       await logger.agent(this.name, `Idea details: type=${buildable.type} | monetization=${buildable.monetizationType || 'free_ads'} | audience=${buildable.audienceProfile?.demographics?.slice(0, 80)} | stack=${buildable.techStack?.slice(0, 60)}`);
 
