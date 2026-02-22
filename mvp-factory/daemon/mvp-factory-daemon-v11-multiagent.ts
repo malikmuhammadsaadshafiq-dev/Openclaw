@@ -310,9 +310,11 @@ class KimiClient {
       signal: controller.signal,
     });
 
-    clearTimeout(timer);
+    // DO NOT clearTimeout here — keep the abort signal live through the entire stream read
+    // so a stalled stream mid-response also gets killed after 10 minutes
 
     if (!response.ok) {
+      clearTimeout(timer);
       const errBody = await response.text().catch(() => '');
       throw new Error(`Kimi API ${response.status}: ${response.statusText} - ${errBody.slice(0, 200)}`);
     }
@@ -320,30 +322,34 @@ class KimiClient {
     let content = '';
     let reasoning = '';
     const reader = response.body?.getReader();
-    if (!reader) throw new Error('No response body reader');
+    if (!reader) { clearTimeout(timer); throw new Error('No response body reader'); }
 
     const decoder = new TextDecoder();
     let buffer = '';
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
 
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const data = line.slice(6).trim();
-        if (data === '[DONE]') continue;
-        try {
-          const parsed = JSON.parse(data);
-          const delta = parsed?.choices?.[0]?.delta;
-          if (delta?.content) content += delta.content;
-          if (delta?.reasoning_content) reasoning += delta.reasoning_content;
-        } catch {}
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const data = line.slice(6).trim();
+          if (data === '[DONE]') continue;
+          try {
+            const parsed = JSON.parse(data);
+            const delta = parsed?.choices?.[0]?.delta;
+            if (delta?.content) content += delta.content;
+            if (delta?.reasoning_content) reasoning += delta.reasoning_content;
+          } catch {}
+        }
       }
+    } finally {
+      clearTimeout(timer);  // always clear after stream finishes or aborts
     }
 
     const result = content || reasoning;
@@ -1897,7 +1903,7 @@ RULES: No framer-motion. Responsive. For dynamic data fetch() the BACKEND API RO
 
     const fileDefs: Array<{ path: string; desc: string; tokens: number }> = [
       { path: 'src/app/globals.css', desc: `TailwindCSS @tailwind base/components/utilities + :root CSS variables for ${spec.designSystem.primaryColor} brand. Under 50 lines.`, tokens: 3500 },
-      { path: 'src/app/layout.tsx', desc: `Root layout. Imports globals.css. Responsive Navbar with logo, nav links (Home/Pricing/Dashboard), Login/Get Started CTA. Mobile hamburger. Children prop. Metadata for ${idea.title}.`, tokens: 8000 },
+      { path: 'src/app/layout.tsx', desc: `Root layout. Server component — NO 'use client' directive at all. Imports globals.css. export const metadata with title and description for ${idea.title}. Responsive Navbar with logo, nav links (Home/Pricing/Dashboard), Login/Get Started CTA. Mobile hamburger. Children prop.`, tokens: 8000 },
       { path: 'src/app/page.tsx', desc: `Landing page. Hero: big headline about ${idea.title}, subline, "Get Started Free" CTA → /auth. 3 feature cards with hardcoded titles/descriptions. Pricing preview (3 tiers) with hardcoded prices. Bottom CTA. Use ONLY hardcoded static content — do NOT call fetch() or any API from this page.`, tokens: 8000 },
       { path: 'src/app/pricing/page.tsx', desc: `Pricing page. 3 tiers: Free ($0), Pro ($12/mo), Business ($49/mo). Feature comparison list per tier. CTA buttons. Highlight Pro tier. FAQ section.`, tokens: 8000 },
       { path: 'src/app/auth/page.tsx', desc: `Auth page. Toggle: Login / Sign Up. Email + password form. Client-side validation (check email format, password length >= 6). On submit: set localStorage.setItem("auth_token", "demo_" + Date.now()) then router.push("/dashboard") — no real API call needed. OAuth placeholder buttons (Google, GitHub) that show "Coming soon" toast. Show inline validation errors.`, tokens: 8000 },
@@ -1933,7 +1939,7 @@ RULES: No framer-motion. No hardcoded data — fetch() the BACKEND API ROUTES li
 
     const fileDefs: Array<{ path: string; desc: string; tokens: number }> = [
       { path: 'src/app/globals.css', desc: `TailwindCSS @tailwind base/components/utilities + :root CSS variables for ${spec.designSystem.primaryColor} brand color. Under 50 lines.`, tokens: 3500 },
-      { path: 'src/app/layout.tsx', desc: `Root layout with responsive navbar, metadata for ${idea.title}, imports globals.css`, tokens: 8000 },
+      { path: 'src/app/layout.tsx', desc: `Root layout. Server component — NO 'use client' directive at all. export const metadata with title and description for ${idea.title}. Imports globals.css. Responsive navbar.`, tokens: 8000 },
       { path: 'src/app/page.tsx', desc: spec.pages.find(p => p.route === '/')?.purpose || `Main landing page: hero for ${idea.title}, feature overview, CTA. Use ONLY hardcoded static content — do NOT call fetch() or any API from this page.`, tokens: 10000 },
       ...spec.pages.filter(p => p.route !== '/').map(p => ({
         path: `src/app${p.route}/page.tsx`,
@@ -2734,6 +2740,14 @@ class PMAgent {
     // Add backend files (won't overwrite frontend since paths differ)
     for (const f of backendResult.files) {
       fileMap.set(f.path, f.content);
+    }
+
+    // Sanitize layout.tsx: strip "use client" if it also exports metadata
+    // Next.js forbids exporting metadata from a Client Component — this breaks every build
+    const layoutContent = fileMap.get('src/app/layout.tsx');
+    if (layoutContent && layoutContent.includes('"use client"') && layoutContent.includes('export const metadata')) {
+      fileMap.set('src/app/layout.tsx', layoutContent.replace(/^['"]use client['"];\s*\n?/m, ''));
+      await logger.agent(this.name, 'Sanitized layout.tsx: removed "use client" (conflicts with metadata export)');
     }
 
     // Generate config files
