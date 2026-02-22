@@ -1898,10 +1898,10 @@ RULES: No framer-motion. Responsive. For dynamic data fetch() the BACKEND API RO
     const fileDefs: Array<{ path: string; desc: string; tokens: number }> = [
       { path: 'src/app/globals.css', desc: `TailwindCSS @tailwind base/components/utilities + :root CSS variables for ${spec.designSystem.primaryColor} brand. Under 50 lines.`, tokens: 3500 },
       { path: 'src/app/layout.tsx', desc: `Root layout. Imports globals.css. Responsive Navbar with logo, nav links (Home/Pricing/Dashboard), Login/Get Started CTA. Mobile hamburger. Children prop. Metadata for ${idea.title}.`, tokens: 8000 },
-      { path: 'src/app/page.tsx', desc: `Landing page. Hero: big headline about ${idea.title}, subline, "Get Started Free" CTA → /auth. 3 feature cards. Pricing preview (3 tiers). Bottom CTA. No hardcoded data.`, tokens: 8000 },
+      { path: 'src/app/page.tsx', desc: `Landing page. Hero: big headline about ${idea.title}, subline, "Get Started Free" CTA → /auth. 3 feature cards with hardcoded titles/descriptions. Pricing preview (3 tiers) with hardcoded prices. Bottom CTA. Use ONLY hardcoded static content — do NOT call fetch() or any API from this page.`, tokens: 8000 },
       { path: 'src/app/pricing/page.tsx', desc: `Pricing page. 3 tiers: Free ($0), Pro ($12/mo), Business ($49/mo). Feature comparison list per tier. CTA buttons. Highlight Pro tier. FAQ section.`, tokens: 8000 },
       { path: 'src/app/auth/page.tsx', desc: `Auth page. Toggle: Login / Sign Up. Email + password form. On submit POST /api/auth. OAuth placeholder buttons (Google, GitHub). Validation errors. Redirect to /dashboard on success.`, tokens: 8000 },
-      { path: 'src/app/dashboard/page.tsx', desc: `Dashboard — CORE PRODUCT. Sidebar nav with all feature sections: ${idea.features.join(', ')}. Main content area. useEffect + fetch() calls to the BACKEND API ROUTES listed in context to load real data on mount. Loading spinner, error state. Each feature section fully interactive with forms that POST to real routes. Render actual API response data. Responsive.`, tokens: 10000 },
+      { path: 'src/app/dashboard/page.tsx', desc: `Dashboard — CORE PRODUCT. Sidebar nav with all feature sections: ${idea.features.join(', ')}. Main content area. useEffect + fetch() calls to the BACKEND API ROUTES listed in context to load real data on mount. Loading spinner, error state. Each feature section fully interactive with forms that POST to real routes. Render actual API response data. Responsive.`, tokens: 14000 },
     ];
 
     // Stagger: 2s per file to avoid 429 burst from NVIDIA API
@@ -1934,7 +1934,7 @@ RULES: No framer-motion. No hardcoded data — fetch() the BACKEND API ROUTES li
     const fileDefs: Array<{ path: string; desc: string; tokens: number }> = [
       { path: 'src/app/globals.css', desc: `TailwindCSS @tailwind base/components/utilities + :root CSS variables for ${spec.designSystem.primaryColor} brand color. Under 50 lines.`, tokens: 3500 },
       { path: 'src/app/layout.tsx', desc: `Root layout with responsive navbar, metadata for ${idea.title}, imports globals.css`, tokens: 8000 },
-      { path: 'src/app/page.tsx', desc: spec.pages.find(p => p.route === '/')?.purpose || `Main landing page: hero for ${idea.title}, feature overview, CTA. fetch('/api/...') for any dynamic content.`, tokens: 10000 },
+      { path: 'src/app/page.tsx', desc: spec.pages.find(p => p.route === '/')?.purpose || `Main landing page: hero for ${idea.title}, feature overview, CTA. Use ONLY hardcoded static content — do NOT call fetch() or any API from this page.`, tokens: 10000 },
       ...spec.pages.filter(p => p.route !== '/').map(p => ({
         path: `src/app${p.route}/page.tsx`,
         desc: `${p.purpose}. Components: ${p.components.join(', ')}. User flow: ${p.userFlow}. Must use fetch('/api/...') for data. Loading + error states.`,
@@ -2150,7 +2150,7 @@ STACK: Next.js 14 API routes, TypeScript, Zod validation`;
       const filePath = `src/app/api${routePath}/route.ts`;
       const desc = `${route.method} handler. Purpose: ${route.purpose}. Input schema: ${route.inputSchema}. Output schema: ${route.outputSchema}. Implementation: ${route.implementation}. Use Zod to validate request body. Return NextResponse.json(). Fully implemented logic — no placeholder functions.`;
       return new Promise<{ path: string; content: string } | null>(resolve =>
-        setTimeout(() => generateOneFile(filePath, desc, context, sysPrompt, 12000).then(resolve).catch(() => resolve(null)), i * 2000)
+        setTimeout(() => generateOneFile(filePath, desc, context, sysPrompt, 16000).then(resolve).catch(() => resolve(null)), i * 2000)
       );
     });
 
@@ -2187,17 +2187,43 @@ STACK: Next.js 14 API routes, TypeScript, Zod validation`;
       }
     }
 
-    // Repair truncated TypeScript files — add missing closing braces caused by max_tokens cutoff.
+    // Repair truncated TypeScript files — add missing closing delimiters caused by max_tokens cutoff.
     // Kimi K2.5 thinking tokens can consume budget, leaving code truncated mid-function.
     const repairedFiles = allFiles.map(f => {
       if (!f.path.endsWith('.ts') && !f.path.endsWith('.tsx')) return f;
-      const open = (f.content.match(/\{/g) || []).length;
-      const close = (f.content.match(/\}/g) || []).length;
-      const missing = open - close;
-      if (missing > 0 && missing <= 15) {
-        const fixed = f.content.trimEnd() + '\n' + '}\n'.repeat(missing);
-        logger.agent(this.name, `Repaired ${f.path}: added ${missing} missing closing brace(s)`);
-        return { ...f, content: fixed };
+      let content = f.content.trimEnd();
+      let repaired = false;
+
+      // Fix missing closing braces { }
+      const openBraces = (content.match(/\{/g) || []).length;
+      const closeBraces = (content.match(/\}/g) || []).length;
+      const missingBraces = openBraces - closeBraces;
+      if (missingBraces > 0 && missingBraces <= 20) {
+        content = content + '\n' + '}\n'.repeat(missingBraces);
+        repaired = true;
+      }
+
+      // Fix missing closing brackets [ ]
+      const openBrackets = (content.match(/\[/g) || []).length;
+      const closeBrackets = (content.match(/\]/g) || []).length;
+      const missingBrackets = openBrackets - closeBrackets;
+      if (missingBrackets > 0 && missingBrackets <= 10) {
+        content = content + ']\n'.repeat(missingBrackets);
+        repaired = true;
+      }
+
+      // Fix missing closing parens ( )
+      const openParens = (content.match(/\(/g) || []).length;
+      const closeParens = (content.match(/\)/g) || []).length;
+      const missingParens = openParens - closeParens;
+      if (missingParens > 0 && missingParens <= 10) {
+        content = content + ')\n'.repeat(missingParens);
+        repaired = true;
+      }
+
+      if (repaired) {
+        logger.agent(this.name, `Repaired ${f.path}: +${missingBraces > 0 ? missingBraces + '} ' : ''}${missingBrackets > 0 ? missingBrackets + '] ' : ''}${missingParens > 0 ? missingParens + ')' : ''}`);
+        return { ...f, content };
       }
       return f;
     });
