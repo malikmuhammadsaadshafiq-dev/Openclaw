@@ -287,7 +287,7 @@ class KimiClient {
 
   private async streamComplete(prompt: string, maxTokens: number, temperature: number, systemPrompt?: string): Promise<string> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 360000);  // 6-min stream timeout (was 10)
+    const timer = setTimeout(() => controller.abort(), 480000);  // 8-min stream timeout (was 10)
 
     const messages: Array<{ role: string; content: string }> = [];
     if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
