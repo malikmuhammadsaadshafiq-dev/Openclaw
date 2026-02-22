@@ -3395,7 +3395,7 @@ npm install @supabase/supabase-js
 # Option B: PlanetScale (MySQL, free tier)
 npm install @planetscale/database
 \`\`\`
-> Look for `// TODO: replace with DB` comments in `src/app/api/**/route.ts`
+> Look for \`// TODO: replace with DB\` comments in \`src/app/api/**/route.ts\`
 
 ### Step 2 — Enable real AI responses
 \`\`\`typescript
@@ -3413,7 +3413,7 @@ const res = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', 
 const { choices } = await res.json();
 return NextResponse.json({ result: choices[0].message.content });
 \`\`\`
-> Add `NVIDIA_API_KEY=your_key` to `.env.local`
+> Add \`NVIDIA_API_KEY=your_key\` to \`.env.local\`
 
 ### Step 3 — Replace demo auth with real sessions (NextAuth.js)
 \`\`\`bash
