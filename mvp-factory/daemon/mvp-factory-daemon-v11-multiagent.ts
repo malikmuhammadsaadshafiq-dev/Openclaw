@@ -581,6 +581,64 @@ No JSON. No markdown fences. No explanation. Just the code.`;
   return null;
 }
 
+// ============================================================
+// Batch file generation — generates ALL files in ONE LLM call.
+// Collapses N generateOneFile calls into 1, eliminating N-1
+// semaphore wait cycles and timeout chains.
+// Format: ===FILE: path=== delimiter between files.
+// ============================================================
+async function generateBatchFiles(
+  fileDefs: Array<{ path: string; desc: string; tokens?: number }>,
+  context: string,
+  systemPrompt: string,
+  maxTokensTotal = 20000,
+): Promise<Array<{ path: string; content: string }>> {
+  const fileList = fileDefs.map((f, i) =>
+    `FILE ${i + 1}: ${f.path}\n  PURPOSE: ${f.desc}`
+  ).join('\n\n');
+
+  const prompt = `${context}
+
+Generate ALL of the following ${fileDefs.length} files. Output each file using EXACTLY this delimiter:
+
+===FILE: <path>===
+<complete file content>
+
+Files to generate:
+${fileList}
+
+Output ALL ${fileDefs.length} files in order. Start each file with ===FILE: <path>=== on its own line. Raw code only — no markdown fences around file contents.`;
+
+  let response: string;
+  try {
+    response = await kimi.complete(prompt, { maxTokens: maxTokensTotal, temperature: 0.2, systemPrompt });
+  } catch {
+    return [];
+  }
+
+  const files: Array<{ path: string; content: string }> = [];
+  const sections = response.split(/\n===FILE:\s*/);
+  const expectedPaths = fileDefs.map(f => f.path);
+
+  for (const section of sections) {
+    if (!section.trim()) continue;
+    const eolIdx = section.indexOf('\n');
+    if (eolIdx === -1) continue;
+    const rawPath = section.slice(0, eolIdx).replace(/===\s*$/, '').trim();
+    let content = section.slice(eolIdx + 1).trim();
+    // Strip markdown fences if model wrapped content anyway
+    content = content.replace(/^```[a-z]*\n?/, '').replace(/\n?```\s*$/, '').trim();
+    // Match to expected path (exact or suffix)
+    const matchedPath = expectedPaths.find(p =>
+      p === rawPath || p.endsWith(rawPath) || rawPath.endsWith(p.replace(/^src\//, ''))
+    ) || rawPath;
+    if (content.length > 30 && rawPath.length > 0) {
+      files.push({ path: matchedPath, content });
+    }
+  }
+  return files;
+}
+
 function toSlug(title: string): string {
   return title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
@@ -1870,13 +1928,8 @@ STYLE: Clean professional like ilovepdf.com${apiRoutesContext}`;
       { path: 'src/app/page.tsx', desc: `Main page: ToolHeader at top, AdBanner (slot="1111111111"), then THE WORKING TOOL centered (${idea.features[0] || idea.description}), AdBanner (slot="2222222222") at bottom, OtherTools grid. Tool logic: user inputs → POST to /api/process → show result with download/copy button. Progress indicator during fetch. Drag-drop if file upload relevant. Responsive.`, tokens: 8000 },
     ];
 
-    // Stagger: 2s per file to avoid 429 burst from NVIDIA API
-    const results = await Promise.all(
-      fileDefs.map((f, i) => new Promise<{ path: string; content: string } | null>(resolve =>
-        setTimeout(() => generateOneFile(f.path, f.desc, context, sysPrompt, f.tokens).then(resolve).catch(() => resolve(null)), i * 2000)
-      ))
-    );
-    const allFiles = results.filter((f): f is { path: string; content: string } => f !== null && f.content.length > 30);
+    // Batch: generate ALL files in one LLM call (eliminates N semaphore waits)
+    const allFiles = await generateBatchFiles(fileDefs, context, sysPrompt, 20000);
     if (!allFiles.length) throw new Error('Free-ads frontend generation returned no files');
     return allFiles;
   }
@@ -1906,13 +1959,8 @@ RULES: No framer-motion. Responsive. For dynamic data fetch() the BACKEND API RO
       { path: 'src/app/dashboard/page.tsx', desc: `Dashboard — CORE PRODUCT. 'use client'. localStorage mock auth guard (check "auth_token", redirect to /auth if missing). Layout: sidebar + main. Sidebar nav for features: ${idea.features.join(', ')}. Top: 4 stat cards with hardcoded numbers. Below: one input form per feature (1-2 fields) with Submit button that POSTs to matching API route; show response result. Pre-populated data table (5 mock rows) for first feature. Fully responsive. Hardcoded initial data; forms call real API routes.`, tokens: 8000 },
     ];
 
-    // Stagger: 2s per file to avoid 429 burst from NVIDIA API
-    const results = await Promise.all(
-      fileDefs.map((f, i) => new Promise<{ path: string; content: string } | null>(resolve =>
-        setTimeout(() => generateOneFile(f.path, f.desc, context, sysPrompt, f.tokens).then(resolve).catch(() => resolve(null)), i * 2000)
-      ))
-    );
-    const allFiles = results.filter((f): f is { path: string; content: string } => f !== null && f.content.length > 30);
+    // Batch: generate ALL files in one LLM call (eliminates N semaphore waits)
+    const allFiles = await generateBatchFiles(fileDefs, context, sysPrompt, 20000);
     if (!allFiles.length) throw new Error('SaaS frontend generation returned no files');
     return allFiles;
   }
@@ -1946,13 +1994,8 @@ RULES: No framer-motion. No hardcoded data — fetch() the BACKEND API ROUTES li
       })),
     ];
 
-    // Stagger: 2s per file to avoid 429 burst from NVIDIA API
-    const results = await Promise.all(
-      fileDefs.map((f, i) => new Promise<{ path: string; content: string } | null>(resolve =>
-        setTimeout(() => generateOneFile(f.path, f.desc, context, sysPrompt, f.tokens).then(resolve).catch(() => resolve(null)), i * 2000)
-      ))
-    );
-    const allFiles = results.filter((f): f is { path: string; content: string } => f !== null && f.content.length > 30);
+    // Batch: generate ALL files in one LLM call (eliminates N semaphore waits)
+    const allFiles = await generateBatchFiles(fileDefs, context, sysPrompt, 20000);
     if (!allFiles.length) throw new Error('Frontend generation returned no files');
     return allFiles;
   }
@@ -2163,50 +2206,32 @@ MOCKED (no external services available — return realistic demo data):
 Structure each handler: validate input → run real logic on the input → return result (or mock for DB/AI parts).
 Keep under 80 lines. Add TODO comments only for the mocked parts. Output ONLY raw TypeScript — no markdown fences.`;
 
-    // Generate each API route individually — stagger 2s each to avoid 429 burst from NVIDIA API
-    const routePromises = spec.apiRoutes.map((route, i) => {
-      // Convert /api/foo/:id/bar or /api/foo/{id}/bar → src/app/api/foo/[id]/bar/route.ts
-      // Next.js dynamic routes use [id] syntax, not :id or {id}
-      const routePath = route.path
-        .replace(/^\/api/, '')
-        .replace(/:([a-zA-Z_]+)/g, '[$1]')     // :id → [id]
-        .replace(/\{([a-zA-Z_]+)\}/g, '[$1]');  // {id} → [id]
-      const filePath = `src/app/api${routePath}/route.ts`;
-      const desc = `${route.method} handler. Purpose: ${route.purpose}. Input: ${route.inputSchema}. Output: ${route.outputSchema}.
-Implement this handler with REAL logic where possible:
-- Validate the incoming request body (check required fields, return NextResponse.json({error}, {status:400}) on bad input)
-- If the route involves scoring/calculation/text-analysis/classification: implement the actual algorithm in pure TypeScript
-- If the route needs database records: use a realistic hardcoded in-memory array (TODO: replace with DB)
-- If the route needs AI/external API: return a plausible hardcoded response string (TODO: replace with real API call)
-Return NextResponse.json() with the result. Under 80 lines.`;
-      return new Promise<{ path: string; content: string } | null>(resolve =>
-        setTimeout(() => generateOneFile(filePath, desc, context, sysPrompt, 5000).then(resolve).catch(() => resolve(null)), i * 2000)
-      );
-    });
+    // Build combined fileDefs for all routes + shared lib files
+    const backendFileDefs = [
+      ...spec.apiRoutes.map(route => {
+        // Convert /api/foo/:id/bar or /api/foo/{id}/bar → src/app/api/foo/[id]/bar/route.ts
+        const routePath = route.path
+          .replace(/^\/api/, '')
+          .replace(/:([a-zA-Z_]+)/g, '[$1]')
+          .replace(/\{([a-zA-Z_]+)\}/g, '[$1]');
+        return {
+          path: `src/app/api${routePath}/route.ts`,
+          desc: `${route.method} handler. Purpose: ${route.purpose}. Input: ${route.inputSchema}. Output: ${route.outputSchema}. Validate input → real logic → NextResponse.json(). Under 80 lines.`,
+        };
+      }),
+      {
+        path: 'src/lib/types.ts',
+        desc: `TypeScript interfaces/types for: ${spec.dataModels.map(m => `${m.name} (${m.fields.join(', ')})`).join('; ')}. Export all. No imports needed.`,
+      },
+      {
+        path: 'src/lib/utils.ts',
+        desc: 'Shared utility functions: createErrorResponse(error, code), validateEnv(key), formatDate(d), generateId(). No external deps.',
+      },
+    ];
 
-    // Generate shared lib files in parallel with routes
-    const typesPromise = generateOneFile(
-      'src/lib/types.ts',
-      `TypeScript interfaces/types for: ${spec.dataModels.map(m => `${m.name} (${m.fields.join(', ')})`).join('; ')}. Export all. No imports needed.`,
-      context, sysPrompt, 4000
-    );
-    const utilsPromise = generateOneFile(
-      'src/lib/utils.ts',
-      'Shared utility functions: createErrorResponse(error, code), validateEnv(key), formatDate(d), generateId(). No external deps.',
-      context, sysPrompt, 4000
-    );
-
-    const [routeResults, typesFile, utilsFile] = await Promise.all([
-      Promise.all(routePromises),
-      typesPromise,
-      utilsPromise,
-    ]);
-
-    const allFiles = [
-      ...routeResults,
-      typesFile,
-      utilsFile,
-    ].filter((f): f is { path: string; content: string } => f !== null && f.content.length > 30);
+    // Batch: generate ALL backend files in one LLM call (eliminates N semaphore waits)
+    const allFiles = (await generateBatchFiles(backendFileDefs, context, sysPrompt, 22000))
+      .filter(f => f.content.length > 30);
 
     if (!allFiles.length) throw new Error('Backend generation returned no files');
 
