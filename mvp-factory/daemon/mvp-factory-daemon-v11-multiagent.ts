@@ -3993,6 +3993,12 @@ ${buildStep}
     try { await fs.unlink(path.join(CONFIG.paths.validated, `${idea.id}.json`)); } catch {}
     await clearFailure(idea.id);
 
+    // Cleanup node_modules — 500-900MB per project, not needed after deploy (source is on GitHub)
+    try {
+      await fs.rm(path.join(projectPath, 'node_modules'), { recursive: true, force: true });
+      await logger.agent(this.name, 'Cleaned up node_modules (disk space recovered)');
+    } catch {}
+
     // Notify
     const successMsg = `MVP BUILT: *${idea.title}*\nScore: ${idea.validation.overallScore}/10 | Quality: ${qualityScore}/20\n${githubUrl ? `GitHub: ${githubUrl}` : ''}${vercelUrl ? `\nLive: ${vercelUrl}` : ''}`;
     await notifyTelegram(successMsg);
