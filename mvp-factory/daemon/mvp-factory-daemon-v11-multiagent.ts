@@ -74,7 +74,9 @@ process.on('SIGINT',  () => { console.log('[Daemon] SIGINT received — shutting
     }
     if (toKill.length > 0) {
       console.log(`[Daemon] Anti-zombie: killing ${toKill.length} orphaned process(es): ${toKill.join(', ')}`);
-      await execAsync(`kill -SIGTERM ${toKill.join(' ')} 2>/dev/null || true`);
+      // Use SIGKILL (-9) because SIGTERM can be ignored by processes blocked in
+      // long-running subprocess calls (npm install, LLM API, Vercel deploy, etc.)
+      await execAsync(`kill -9 ${toKill.join(' ')} 2>/dev/null || true`);
     }
   } catch {
     // ignore — best-effort cleanup
