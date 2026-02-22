@@ -53,6 +53,35 @@ process.on('SIGTERM', () => { console.log('[Daemon] SIGTERM received — shuttin
 process.on('SIGINT',  () => { console.log('[Daemon] SIGINT received — shutting down');  process.exit(0); });
 
 // ============================================================
+// Anti-zombie: kill any other daemon instances that were left behind
+// by previous pm2 restart cycles (tsx spawns child node processes
+// that survive when pm2 only kills the tsx launcher parent).
+// ============================================================
+(async function killZombies() {
+  try {
+    const myPid = process.pid;
+    const { stdout } = await execAsync(
+      `ps aux | grep 'mvp-factory-daemon-v11-multiagent' | grep -v grep`
+    );
+    const lines = stdout.trim().split('\n').filter(Boolean);
+    const toKill: number[] = [];
+    for (const line of lines) {
+      const parts = line.trim().split(/\s+/);
+      const pid = parseInt(parts[1], 10);
+      if (!isNaN(pid) && pid !== myPid && pid !== process.ppid) {
+        toKill.push(pid);
+      }
+    }
+    if (toKill.length > 0) {
+      console.log(`[Daemon] Anti-zombie: killing ${toKill.length} orphaned process(es): ${toKill.join(', ')}`);
+      await execAsync(`kill -SIGTERM ${toKill.join(' ')} 2>/dev/null || true`);
+    }
+  } catch {
+    // ignore — best-effort cleanup
+  }
+})();
+
+// ============================================================
 // Retry Loop Utility (exponential backoff)
 // ============================================================
 async function retryLoop<T>(
