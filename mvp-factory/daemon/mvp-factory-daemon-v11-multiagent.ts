@@ -623,8 +623,13 @@ Return ONLY the JSON array. Each "content" is the complete raw file (properly JS
   }
 
   const parsed = extractJSON(response, 'array') as Array<{ path: string; content: string }> | null;
-  if (!parsed || !Array.isArray(parsed)) return [];
-  return parsed.filter(f => f && typeof f.path === 'string' && typeof f.content === 'string' && f.content.length > 30);
+  if (!parsed || !Array.isArray(parsed)) {
+    console.log(`[BatchGen] JSON parse failed. Response length: ${response.length}. First 300 chars: ${response.slice(0, 300).replace(/\n/g, '\\n')}`);
+    return [];
+  }
+  const files = parsed.filter(f => f && typeof f.path === 'string' && typeof f.content === 'string' && f.content.length > 30);
+  console.log(`[BatchGen] Parsed ${files.length}/${fileDefs.length} files from ${response.length}-char response`);
+  return files;
 }
 
 function toSlug(title: string): string {
