@@ -1829,17 +1829,17 @@ REQUIREMENTS:
 
 Return ONLY the JSON array, no markdown.`;
 
-    type ExtFile = Array<{ path: string; content: string }>;
-    const parse = (r: string): ExtFile => (extractJSON(r, 'array') as ExtFile) || [];
-    const safe = (p: Promise<string>): Promise<ExtFile> => p.then(parse).catch(() => [] as ExtFile);
+    // ExtFile type removed
+    const parse = (r: string) => (extractJSON(r, 'array') as Array<{ path: string; content: string }>) || [];
+    const safe = (p: Promise<string>): Promise<Array<{ path: string; content: string }>> => p.then(parse).catch(() => [] as Array<{ path: string; content: string }>);
 
     const [batch1, batch2] = await Promise.all([
       safe(kimi.complete(prompt1, { maxTokens: 5000, temperature: 0.2 })),
       safe(kimi.complete(prompt2, { maxTokens: 6000, temperature: 0.2 })),
     ]);
 
-    const files = [...batch1, ...batch2].filter(f => f && typeof f.path === string && typeof f.content === string && f.content.length > 10);
-    if (!files.length) throw new Error(Extension file generation returned empty);
+    const files = [...batch1, ...batch2].filter(f => f && typeof f.path === 'string' && typeof f.content === 'string' && f.content.length > 10);
+    if (!files.length) throw new Error('Extension file generation returned empty');
     return files;
   }
 
