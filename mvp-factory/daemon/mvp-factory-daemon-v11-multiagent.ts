@@ -1962,10 +1962,10 @@ STYLE: Clean professional like ilovepdf.com${apiRoutesContext}`;
     // Sequential-friendly: staggered starts + semaphore(2) = max 2 concurrent Kimi calls
     const results = await Promise.all(
       fileDefs.map((f, i) => new Promise<{ path: string; content: string } | null>(resolve =>
-        setTimeout(() => generateOneFile(f.path, f.desc, context, sysPrompt, f.tokens).then(resolve).catch(() => resolve(makeFileStub(f.path))), i * 2000)
+        setTimeout(() => generateOneFile(f.path, f.desc, context, sysPrompt, f.tokens).then(r => resolve(r ?? makeFileStub(f.path))).catch(() => resolve(makeFileStub(f.path))), i * 2000)
       ))
     );
-    const allFiles = results.filter((f): f is { path: string; content: string } => f !== null && f.content.length > 30);
+    const allFiles = results.filter((f): f is { path: string; content: string } => f.content.length > 30);
     if (!allFiles.length) throw new Error('Free-ads frontend generation returned no files');
     return allFiles;
   }
@@ -1998,10 +1998,10 @@ RULES: No framer-motion. Responsive. For dynamic data fetch() the BACKEND API RO
     // Sequential-friendly: staggered starts + semaphore(2) = max 2 concurrent Kimi calls
     const results = await Promise.all(
       fileDefs.map((f, i) => new Promise<{ path: string; content: string } | null>(resolve =>
-        setTimeout(() => generateOneFile(f.path, f.desc, context, sysPrompt, f.tokens).then(resolve).catch(() => resolve(makeFileStub(f.path))), i * 2000)
+        setTimeout(() => generateOneFile(f.path, f.desc, context, sysPrompt, f.tokens).then(r => resolve(r ?? makeFileStub(f.path))).catch(() => resolve(makeFileStub(f.path))), i * 2000)
       ))
     );
-    const allFiles = results.filter((f): f is { path: string; content: string } => f !== null && f.content.length > 30);
+    const allFiles = results.filter((f): f is { path: string; content: string } => f.content.length > 30);
     if (!allFiles.length) throw new Error('SaaS frontend generation returned no files');
     return allFiles;
   }
@@ -2038,10 +2038,10 @@ RULES: No framer-motion. No hardcoded data — fetch() the BACKEND API ROUTES li
     // Sequential-friendly: staggered starts + semaphore(2) = max 2 concurrent Kimi calls
     const results = await Promise.all(
       fileDefs.map((f, i) => new Promise<{ path: string; content: string } | null>(resolve =>
-        setTimeout(() => generateOneFile(f.path, f.desc, context, sysPrompt, f.tokens).then(resolve).catch(() => resolve(makeFileStub(f.path))), i * 2000)
+        setTimeout(() => generateOneFile(f.path, f.desc, context, sysPrompt, f.tokens).then(r => resolve(r ?? makeFileStub(f.path))).catch(() => resolve(makeFileStub(f.path))), i * 2000)
       ))
     );
-    const allFiles = results.filter((f): f is { path: string; content: string } => f !== null && f.content.length > 30);
+    const allFiles = results.filter((f): f is { path: string; content: string } => f.content.length > 30);
     if (!allFiles.length) throw new Error('Frontend generation returned no files');
     return allFiles;
   }
@@ -2268,7 +2268,7 @@ Implement this handler with REAL logic where possible:
 - If the route needs AI/external API: return a plausible hardcoded response string (TODO: replace with real API call)
 Return NextResponse.json() with the result. Under 80 lines.`;
       return new Promise<{ path: string; content: string } | null>(resolve =>
-        setTimeout(() => generateOneFile(filePath, desc, context, sysPrompt, 5000).then(resolve).catch(() => resolve(makeFileStub(filePath))), i * 2000)
+        setTimeout(() => generateOneFile(filePath, desc, context, sysPrompt, 5000).then(r => resolve(r ?? makeFileStub(filePath))).catch(() => resolve(makeFileStub(filePath))), i * 2000)
       );
     });
 
