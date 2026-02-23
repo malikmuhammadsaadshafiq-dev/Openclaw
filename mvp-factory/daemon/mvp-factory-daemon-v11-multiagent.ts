@@ -1556,7 +1556,7 @@ ALSO PROVIDE:
 - Type: choose the BEST fit:
   * web = single-page utility tool OR simple dashboard, works in browser (Next.js)
   * saas = multi-user platform with auth, user accounts, billing, subscriptions
-  * api = developer tool, headless service, no frontend needed
+  * (api disabled - use web or saas)
   * mobile = native mobile app (React Native + Expo) — for on-the-go use cases, camera, GPS, push notifications
   * (extension disabled - use web or saas)
 
@@ -1582,7 +1582,7 @@ Return ONLY valid JSON:
   "problem": "Specific pain point",
   "targetUsers": "Exact audience",
   "features": ["real feature 1 with server logic", "real feature 2", ...],
-  "type": "web|saas|api", // NEVER use mobile — pipeline is web/SaaS only
+  "type": "web|saas", // NEVER use mobile — pipeline is web/SaaS only
   "monetizationType": "free_ads|freemium|saas|one_time",
   "category": "ai-assisted|utility|data-tool|automation|saas-platform",
   "techStack": "Next.js 14 + API Routes + specific tools (or 'Chrome Extension: Manifest V3 + vanilla JS' for extensions)",
@@ -2619,6 +2619,11 @@ class PMAgent {
       if ((buildable as any).type === 'extension') {
         (buildable as any).type = 'web';
         await logger.agent(this.name, 'RECLASSIFY: extension->web (disabled)');
+      // Reclassify api -> web (api pipeline disabled)
+      if ((buildable as any).type === 'api') {
+        (buildable as any).type = 'web';
+        await logger.agent(this.name, 'RECLASSIFY: api->web (disabled)');
+      }
       }
       // ── Auto-simplify guard: 6+ features → trim to 3 core features to prevent timeout ──
       if (buildable.features && buildable.features.length >= 6) {
@@ -3367,7 +3372,13 @@ export async function GET() {
     try {
       const pkgPath = path.join(projectPath, 'package.json');
       const pkgRaw = await fs.readFile(pkgPath, 'utf-8');
-      const pkg = JSON.parse(pkgRaw);
+      let pkg: any;
+      try { pkg = JSON.parse(pkgRaw); } catch {
+        const slug = path.basename(projectPath);
+        pkg = { name: slug, version: '0.1.0', private: true, scripts: { dev: 'next dev', build: 'next build', start: 'next start' }, dependencies: { next: '^14.2.0', react: '^18', 'react-dom': '^18', typescript: '^5', tailwindcss: '^3', '@types/react': '^18', '@types/node': '^20' } };
+        await fs.writeFile(pkgPath, JSON.stringify(pkg, null, 2));
+        await logger.agent(this.name, 'Replaced malformed package.json with minimal fallback');
+      }
       const validPkgName = /^(@[a-z0-9\-~][a-z0-9\-._~]*\/)?[a-z0-9\-~][a-z0-9\-._~]*$/i;
       let cleaned = 0;
       for (const section of ['dependencies', 'devDependencies', 'peerDependencies'] as const) {
@@ -3849,7 +3860,10 @@ ${buildStep}
                     content.trimEnd().endsWith('=') ||
                     content.trimEnd().endsWith('=>') ||
                     content.trimEnd().endsWith(':');
-                  if (truncated) {
+                  // Also stub pages/components with no export default (catches mid-file JSX errors)
+                  const isPageOrComp = ['page.tsx', 'page.ts', 'layout.tsx', 'layout.ts'].includes(entry.name) || (entry.name.endsWith('.tsx') && !entry.name.includes('route'));
+                  const missingExport = isPageOrComp && !content.includes('export default');
+                  if (truncated || missingExport) {
                     let stub = componentStub;
                     if (entry.name === 'route.ts' || entry.name === 'route.tsx') stub = apiStub;
                     else if (entry.name === 'layout.tsx' || entry.name === 'layout.ts') stub = layoutStub;
