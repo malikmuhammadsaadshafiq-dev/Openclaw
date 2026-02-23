@@ -287,7 +287,7 @@ class KimiClient {
 
   private async streamComplete(prompt: string, maxTokens: number, temperature: number, systemPrompt?: string): Promise<string> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 600000);  // 10-min stream timeout
+    const timer = setTimeout(() => controller.abort(), 300000);  // 5-min stream timeout — fail fast, fall to nonstream sooner
 
     const messages: Array<{ role: string; content: string }> = [];
     if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
@@ -1686,7 +1686,7 @@ class FrontendAgent {
     try {
       spec = await retryLoop(
         () => this.designUX(idea),
-        { maxRetries: 3, baseDelay: 5000, label: 'Frontend UX design' }
+        { maxRetries: 1, baseDelay: 5000, label: 'Frontend UX design' }
       );
     } catch (err) {
       await logger.agent(this.name, `Complex UX design failed, using audience-matched defaults...`);
@@ -2067,7 +2067,7 @@ class BackendAgent {
     try {
       spec = await retryLoop(
         () => this.designBackend(idea),
-        { maxRetries: 3, baseDelay: 5000, label: 'Backend architecture design' }
+        { maxRetries: 1, baseDelay: 5000, label: 'Backend architecture design' }
       );
     } catch (err) {
       await logger.agent(this.name, `Complex backend design failed, trying simplified prompt...`);
