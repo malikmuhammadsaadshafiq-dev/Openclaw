@@ -3817,6 +3817,15 @@ ${buildStep}
         await fs.writeFile(path.join(projectPath, 'next.config.js'), permissiveConfig);
       } catch {}
 
+      // Ensure layout.tsx exists (required by Next.js App Router)
+      const layoutPath = path.join(projectPath, 'src', 'app', 'layout.tsx');
+      try { await fs.access(layoutPath); } catch {
+        const layoutStubContent = `export default function RootLayout({ children }: { children: React.ReactNode }) { return (<html lang="en"><head><meta charSet="utf-8" /></head><body>{children}</body></html>); }
+`;
+        await fs.writeFile(layoutPath, layoutStubContent);
+        await logger.agent(this.name, 'Created missing layout.tsx stub (was absent from generated files)');
+      }
+
       // Build test before deployment
       await logger.agent(this.name, 'Running npm build test...');
       try {
