@@ -604,7 +604,7 @@ function makeFileStub(filePath: string): { path: string; content: string } {
 }
 
 // Rich stub: context-aware fallback using product info — much better than "Loading…"
-function makeRichStub(filePath: string, idea: { title: string; description: string; features: string[]; targetUsers: string; monetizationType?: string }): { path: string; content: string } {
+function makeRichStub(filePath: string, idea: { title: string; description: string; features: string[]; targetUsers: string; monetizationType?: string }, knownPages?: string[]): { path: string; content: string } {
   if (filePath.endsWith('globals.css'))
     return makeFileStub(filePath);
   if (filePath.endsWith('route.ts') || filePath.endsWith('route.tsx'))
@@ -656,19 +656,21 @@ export default function Dashboard() {
   }
 
   // main landing page (page.tsx)
-  // free_ads = no login, CTA scrolls to tool; freemium/saas = login flow
+  // Determine best CTA target from known generated pages; never link to a page that doesn't exist
   const isFreeAds = idea.monetizationType === 'free_ads';
+  const pages = knownPages || [];
+  const hasAuth = pages.some(p => p.includes('/auth'));
+  const hasDashboard = pages.some(p => p.includes('/dashboard'));
+  const ctaTarget = isFreeAds ? null : (hasAuth ? '/auth' : hasDashboard ? '/dashboard' : null);
   const featureCards = features.map((f, i) => `<div key={${i}} className="bg-slate-800 border border-slate-700 rounded-2xl p-6"><h3 className="text-lg font-semibold text-white mb-2">${f.replace(/'/g, "\\'")}</h3><p className="text-slate-400 text-sm">Streamline your workflow with ${f.replace(/'/g, "\\'").toLowerCase()}.</p></div>`).join('');
-  const ctaNav = isFreeAds
-    ? `<a href="#tool" className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium">Use Free Tool</a>`
-    : `<Link href="/auth" className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium">Get Started</Link>`;
-  const ctaHero = isFreeAds
-    ? `<a href="#tool" className="inline-block px-8 py-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-lg mb-16">Try It Free</a>`
-    : `<Link href="/auth" className="inline-block px-8 py-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-lg mb-16">Start Free Today</Link>`;
-  const toolSection = isFreeAds
-    ? `\n      <section id="tool" className="max-w-3xl mx-auto px-8 py-16"><div className="bg-slate-800 rounded-2xl p-8"><h2 className="text-2xl font-bold text-white mb-4">${title}</h2><p className="text-slate-300 mb-6">${desc}</p><button className="px-6 py-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold">Run Tool</button></div></section>`
-    : '';
-  const importLine = isFreeAds ? '' : "import Link from 'next/link';\n";
+  const ctaNav = ctaTarget
+    ? `<Link href="${ctaTarget}" className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium">Get Started</Link>`
+    : `<a href="#tool" className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium">${isFreeAds ? 'Use Free Tool' : 'Explore'}</a>`;
+  const ctaHero = ctaTarget
+    ? `<Link href="${ctaTarget}" className="inline-block px-8 py-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-lg mb-16">Start Free Today</Link>`
+    : `<a href="#tool" className="inline-block px-8 py-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-lg mb-16">${isFreeAds ? 'Try It Free' : 'Explore App'}</a>`;
+  const toolSection = `\n      <section id="tool" className="max-w-3xl mx-auto px-8 py-16"><div className="bg-slate-800 rounded-2xl p-8"><h2 className="text-2xl font-bold text-white mb-4">${title}</h2><p className="text-slate-300 mb-6">${desc}</p>${hasDashboard && !hasAuth ? `<Link href="/dashboard" className="px-6 py-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold">Open Dashboard</Link>` : ''}</div></section>`;
+  const importLine = ctaTarget || hasDashboard ? "import Link from 'next/link';\n" : '';
   return { path: filePath, content: `${importLine}export default function Home() {
   return (
     <main className="min-h-screen bg-slate-950 text-slate-50">
@@ -2052,7 +2054,7 @@ STYLE: Clean professional like ilovepdf.com${psychContext}${pageContext}${apiRou
     // Sequential-friendly: staggered starts + semaphore(2) = max 2 concurrent Kimi calls
     const results = await Promise.all(
       fileDefs.map((f, i) => new Promise<{ path: string; content: string } | null>(resolve =>
-        setTimeout(() => generateOneFile(f.path, f.desc, context, sysPrompt, f.tokens).then(r => resolve(r ?? makeRichStub(f.path, idea))).catch(() => resolve(makeRichStub(f.path, idea))), i * 2000)
+        setTimeout(() => generateOneFile(f.path, f.desc, context, sysPrompt, f.tokens).then(r => resolve(r ?? makeRichStub(f.path, idea, fileDefs.map(x => x.path)))).catch(() => resolve(makeRichStub(f.path, idea, fileDefs.map(x => x.path)))), i * 2000)
       ))
     );
     const allFiles = results.filter((f): f is { path: string; content: string } => f.content.length > 30);
@@ -2094,7 +2096,7 @@ RULES: No framer-motion. Responsive. For dynamic data fetch() the BACKEND API RO
     // Sequential-friendly: staggered starts + semaphore(2) = max 2 concurrent Kimi calls
     const results = await Promise.all(
       fileDefs.map((f, i) => new Promise<{ path: string; content: string } | null>(resolve =>
-        setTimeout(() => generateOneFile(f.path, f.desc, context, sysPrompt, f.tokens).then(r => resolve(r ?? makeRichStub(f.path, idea))).catch(() => resolve(makeRichStub(f.path, idea))), i * 2000)
+        setTimeout(() => generateOneFile(f.path, f.desc, context, sysPrompt, f.tokens).then(r => resolve(r ?? makeRichStub(f.path, idea, fileDefs.map(x => x.path)))).catch(() => resolve(makeRichStub(f.path, idea, fileDefs.map(x => x.path)))), i * 2000)
       ))
     );
     const allFiles = results.filter((f): f is { path: string; content: string } => f.content.length > 30);
@@ -2137,7 +2139,7 @@ RULES: No framer-motion. No hardcoded data — fetch() the BACKEND API ROUTES li
     // Sequential-friendly: staggered starts + semaphore(2) = max 2 concurrent Kimi calls
     const results = await Promise.all(
       fileDefs.map((f, i) => new Promise<{ path: string; content: string } | null>(resolve =>
-        setTimeout(() => generateOneFile(f.path, f.desc, context, sysPrompt, f.tokens).then(r => resolve(r ?? makeRichStub(f.path, idea))).catch(() => resolve(makeRichStub(f.path, idea))), i * 2000)
+        setTimeout(() => generateOneFile(f.path, f.desc, context, sysPrompt, f.tokens).then(r => resolve(r ?? makeRichStub(f.path, idea, fileDefs.map(x => x.path)))).catch(() => resolve(makeRichStub(f.path, idea, fileDefs.map(x => x.path)))), i * 2000)
       ))
     );
     const allFiles = results.filter((f): f is { path: string; content: string } => f.content.length > 30);
@@ -3947,7 +3949,7 @@ ${buildStep}
       // Ensure root page.tsx exists (App Router requires it; missing = 404 on every route)
       const rootPagePath = path.join(projectPath, 'src', 'app', 'page.tsx');
       try { await fs.access(rootPagePath); } catch {
-        await fs.writeFile(rootPagePath, makeRichStub('src/app/page.tsx', idea).content);
+        await fs.writeFile(rootPagePath, makeRichStub('src/app/page.tsx', idea, files.map(f => f.path)).content);
         await logger.agent(this.name, 'Created missing root page.tsx stub');
       }
 
