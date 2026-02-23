@@ -1641,6 +1641,7 @@ Return ONLY valid JSON:
       parsed.monetizationType = parsed.type === 'saas' ? 'saas'
         : parsed.category === 'utility' ? 'free_ads'
         : parsed.type === 'api' ? 'freemium'
+        : parsed.type === 'extension' ? 'freemium'
         : 'free_ads';
     }
 
@@ -3053,8 +3054,6 @@ Built by MVP Factory v11 (Multi-Agent Architecture)
     const interactivePages = files.filter(f =>
       f.path.endsWith('page.tsx') &&
       !f.path.includes('/api/') &&
-      !f.path.includes('/auth/') &&
-      !f.path.includes('/pricing/') &&
       f.content.length > 300
     ).sort((a, b) => {
       // Dashboard first, then app/page.tsx, then other pages
@@ -3062,7 +3061,7 @@ Built by MVP Factory v11 (Multi-Agent Architecture)
         f.path.includes('dashboard') ? 2 :
         f.path === 'src/app/page.tsx' ? 1 : 0;
       return score(b) - score(a);
-    }).slice(0, 2); // Repair up to 2 most important pages
+    }).slice(0, 3); // Repair up to 3 most important pages
 
     if (interactivePages.length === 0) return files;
 
