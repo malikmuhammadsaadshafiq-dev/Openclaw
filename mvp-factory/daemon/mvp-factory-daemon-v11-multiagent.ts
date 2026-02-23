@@ -4022,9 +4022,14 @@ ${buildStep}
           );
           if (apiResp.ok) {
             const proj = await apiResp.json() as any;
-            const prodUrl = proj?.targets?.production?.url || proj?.alias?.[0] || proj?.name;
+            const prodUrl = proj?.targets?.production?.url || proj?.alias?.[0];
             if (prodUrl) {
               vercelUrl = prodUrl.startsWith('http') ? prodUrl : `https://${prodUrl}`;
+            } else if (proj?.name) {
+              // Standard Vercel URL pattern when production alias not yet set
+              vercelUrl = `https://${proj.name}.vercel.app`;
+            }
+            if (vercelUrl) {
               await logger.agent(this.name, `Vercel URL (API fallback): ${vercelUrl}`);
             }
           }
