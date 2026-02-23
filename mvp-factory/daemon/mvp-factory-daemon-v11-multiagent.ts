@@ -585,58 +585,46 @@ No JSON. No markdown fences. No explanation. Just the code.`;
 // Batch file generation — generates ALL files in ONE LLM call.
 // Collapses N generateOneFile calls into 1, eliminating N-1
 // semaphore wait cycles and timeout chains.
-// Format: ===FILE: path=== delimiter between files.
+// Uses JSON array format (same as extension generation which works).
 // ============================================================
 async function generateBatchFiles(
   fileDefs: Array<{ path: string; desc: string; tokens?: number }>,
   context: string,
-  systemPrompt: string,
+  _sysPrompt: string, // Not used — batch uses its own JSON-focused sysPrompt
   maxTokensTotal = 20000,
 ): Promise<Array<{ path: string; content: string }>> {
+  const exampleLines = fileDefs.slice(0, 2).map(f =>
+    `  {"path":"${f.path}","content":"...complete file content..."}`
+  ).join(',\n');
   const fileList = fileDefs.map((f, i) =>
-    `FILE ${i + 1}: ${f.path}\n  PURPOSE: ${f.desc}`
-  ).join('\n\n');
+    `${i + 1}. ${f.path} — ${f.desc.slice(0, 120)}`
+  ).join('\n');
+
+  const batchSysPrompt = `You are a senior full-stack engineer. Generate complete, production-quality files. Return ONLY a valid JSON array — no markdown, no explanation.`;
 
   const prompt = `${context}
 
-Generate ALL of the following ${fileDefs.length} files. Output each file using EXACTLY this delimiter:
+Generate these ${fileDefs.length} files as a JSON array:
+[
+${exampleLines},
+  ...
+]
 
-===FILE: <path>===
-<complete file content>
-
-Files to generate:
+Files:
 ${fileList}
 
-Output ALL ${fileDefs.length} files in order. Start each file with ===FILE: <path>=== on its own line. Raw code only — no markdown fences around file contents.`;
+Return ONLY the JSON array. Each "content" is the complete raw file (properly JSON-escaped strings).`;
 
   let response: string;
   try {
-    response = await kimi.complete(prompt, { maxTokens: maxTokensTotal, temperature: 0.2, systemPrompt });
+    response = await kimi.complete(prompt, { maxTokens: maxTokensTotal, temperature: 0.2, systemPrompt: batchSysPrompt });
   } catch {
     return [];
   }
 
-  const files: Array<{ path: string; content: string }> = [];
-  const sections = response.split(/\n===FILE:\s*/);
-  const expectedPaths = fileDefs.map(f => f.path);
-
-  for (const section of sections) {
-    if (!section.trim()) continue;
-    const eolIdx = section.indexOf('\n');
-    if (eolIdx === -1) continue;
-    const rawPath = section.slice(0, eolIdx).replace(/===\s*$/, '').trim();
-    let content = section.slice(eolIdx + 1).trim();
-    // Strip markdown fences if model wrapped content anyway
-    content = content.replace(/^```[a-z]*\n?/, '').replace(/\n?```\s*$/, '').trim();
-    // Match to expected path (exact or suffix)
-    const matchedPath = expectedPaths.find(p =>
-      p === rawPath || p.endsWith(rawPath) || rawPath.endsWith(p.replace(/^src\//, ''))
-    ) || rawPath;
-    if (content.length > 30 && rawPath.length > 0) {
-      files.push({ path: matchedPath, content });
-    }
-  }
-  return files;
+  const parsed = extractJSON(response, 'array') as Array<{ path: string; content: string }> | null;
+  if (!parsed || !Array.isArray(parsed)) return [];
+  return parsed.filter(f => f && typeof f.path === 'string' && typeof f.content === 'string' && f.content.length > 30);
 }
 
 function toSlug(title: string): string {
