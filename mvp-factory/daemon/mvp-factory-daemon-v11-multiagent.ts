@@ -2022,6 +2022,12 @@ Return ONLY the JSON array, no markdown.`;
     const apiRoutesContext = backendSpec?.apiRoutes?.length
       ? `\nBACKEND API ROUTES — use ONLY these exact paths when calling fetch():\n${backendSpec.apiRoutes.map(r => `  ${r.method} ${r.path} | purpose: ${r.purpose} | input: ${r.inputSchema} | output: ${r.outputSchema}`).join('\n')}`
       : '';
+    const psychContext = spec.psychologyTactics?.length
+      ? `\nPSYCHOLOGY TACTICS — embed EVERY one of these into the UI:\n${spec.psychologyTactics.map((t, i) => `  ${i + 1}. ${t}`).join('\n')}`
+      : '';
+    const pageContext = spec.pages?.length
+      ? `\nPAGE SPECS:\n${spec.pages.map(p => `  ${p.route}: ${p.purpose}`).join('\n')}`
+      : '';
     const context = `PRODUCT: ${idea.title}
 DESCRIPTION: ${idea.description}
 TARGET USERS: ${idea.targetUsers}
@@ -2030,9 +2036,9 @@ PRIMARY COLOR: ${spec.designSystem.primaryColor}
 MONETIZATION: Free with Google AdSense (publisher: ca-pub-XXXXXXXXXX). No login required.
 STACK: Next.js 14 App Router, TypeScript, TailwindCSS
 ADSENSE PATTERN: <ins className="adsbygoogle" data-ad-client="ca-pub-XXXXXXXXXX" data-ad-slot="1234567890" data-ad-format="auto" data-full-width-responsive="true" />
-STYLE: Clean professional like ilovepdf.com${apiRoutesContext}`;
+STYLE: Clean professional like ilovepdf.com${psychContext}${pageContext}${apiRoutesContext}`;
 
-    const sysPrompt = `You are a senior frontend engineer building free utility tools. Professional trustworthy design like ilovepdf.com. Tool logic actually works. Output ONLY raw code — no JSON, no markdown fences.`;
+    const sysPrompt = `You are a senior frontend engineer building free utility tools. Professional trustworthy design like ilovepdf.com. Tool logic actually works. Each psychology tactic listed in PSYCHOLOGY TACTICS must be visibly implemented in the UI (e.g. social proof, urgency, reciprocity). Output ONLY raw code — no JSON, no markdown fences.`;
 
     const fileDefs: Array<{ path: string; desc: string; tokens: number }> = [
       { path: 'src/components/AdBanner.tsx', desc: `'use client' AdSense component. Props: slot (string), format (string, default 'auto'). Renders <ins className="adsbygoogle" style={{display:'block'}} data-ad-client="ca-pub-XXXXXXXXXX" data-ad-slot={slot} data-ad-format={format} data-full-width-responsive="true" />. 25 lines total.`, tokens: 4000 },
@@ -2060,6 +2066,12 @@ STYLE: Clean professional like ilovepdf.com${apiRoutesContext}`;
     const apiRoutesContext = backendSpec?.apiRoutes?.length
       ? `\nBACKEND API ROUTES — use ONLY these exact paths when calling fetch():\n${backendSpec.apiRoutes.map(r => `  ${r.method} ${r.path} | purpose: ${r.purpose} | input: ${r.inputSchema} | output: ${r.outputSchema}`).join('\n')}`
       : '';
+    const psychContext = spec.psychologyTactics?.length
+      ? `\nPSYCHOLOGY TACTICS — embed EVERY one of these into the UI:\n${spec.psychologyTactics.map((t, i) => `  ${i + 1}. ${t}`).join('\n')}`
+      : '';
+    const pageContext = spec.pages?.length
+      ? `\nPAGE SPECS:\n${spec.pages.map(p => `  ${p.route}: ${p.purpose}`).join('\n')}`
+      : '';
     const context = `PRODUCT: ${idea.title}
 DESCRIPTION: ${idea.description}
 FEATURES: ${idea.features.join(', ')}
@@ -2067,9 +2079,9 @@ TARGET USERS: ${idea.targetUsers}
 PRIMARY COLOR: ${spec.designSystem.primaryColor}
 STYLE: ${spec.designSystem.style}
 STACK: Next.js 14 App Router, TypeScript, TailwindCSS, Lucide-react icons
-RULES: No framer-motion. Responsive. For dynamic data fetch() the BACKEND API ROUTES listed below. Mobile hamburger nav.${apiRoutesContext}`;
+RULES: No framer-motion. Responsive. For dynamic data fetch() the BACKEND API ROUTES listed below. Mobile hamburger nav.${psychContext}${pageContext}${apiRoutesContext}`;
 
-    const sysPrompt = `You are a senior SaaS frontend engineer. TypeScript, TailwindCSS, Next.js 14 App Router. Production quality. Output ONLY raw code — no JSON, no markdown fences.`;
+    const sysPrompt = `You are a senior SaaS frontend engineer. TypeScript, TailwindCSS, Next.js 14 App Router. Production quality. Each psychology tactic listed in PSYCHOLOGY TACTICS must be visibly implemented in the UI (e.g. social proof counters, urgency banners, trust badges, progress indicators). Output ONLY raw code — no JSON, no markdown fences.`;
 
     const fileDefs: Array<{ path: string; desc: string; tokens: number }> = [
       { path: 'src/app/globals.css', desc: `TailwindCSS @tailwind base/components/utilities + :root CSS variables for ${spec.designSystem.primaryColor} brand. Under 40 lines.`, tokens: 2500 },
@@ -2096,15 +2108,18 @@ RULES: No framer-motion. Responsive. For dynamic data fetch() the BACKEND API RO
     const apiRoutesContext = backendSpec?.apiRoutes?.length
       ? `\nBACKEND API ROUTES — use ONLY these exact paths when calling fetch():\n${backendSpec.apiRoutes.map(r => `  ${r.method} ${r.path} | purpose: ${r.purpose} | input: ${r.inputSchema} | output: ${r.outputSchema}`).join('\n')}`
       : '';
+    const psychContext = spec.psychologyTactics?.length
+      ? `\nPSYCHOLOGY TACTICS — embed EVERY one of these into the UI:\n${spec.psychologyTactics.map((t, i) => `  ${i + 1}. ${t}`).join('\n')}`
+      : '';
     const context = `PRODUCT: ${idea.title}
 DESCRIPTION: ${idea.description}
 TARGET USERS: ${idea.targetUsers}
 FEATURES: ${idea.features.join(', ')}
 DESIGN: primary=${spec.designSystem.primaryColor}, secondary=${spec.designSystem.secondaryColor}, font=${spec.designSystem.fontFamily}, style=${spec.designSystem.style}, dark-mode=${spec.designSystem.darkMode}
 STACK: Next.js 14 App Router, TypeScript, TailwindCSS, Lucide-react
-RULES: No framer-motion. No hardcoded data — fetch() the BACKEND API ROUTES listed below. Forms POST to real routes. Lists via useEffect+fetch. Loading+error states. Mobile-first. Freemium upgrade CTAs.${apiRoutesContext}`;
+RULES: No framer-motion. No hardcoded data — fetch() the BACKEND API ROUTES listed below. Forms POST to real routes. Lists via useEffect+fetch. Loading+error states. Mobile-first. Freemium upgrade CTAs.${psychContext}${apiRoutesContext}`;
 
-    const sysPrompt = `You are an elite frontend developer. Clean, accessible, performant React/TypeScript with TailwindCSS. No framer-motion. Production-quality code. Output ONLY raw code — no JSON, no markdown fences.`;
+    const sysPrompt = `You are an elite frontend developer. Clean, accessible, performant React/TypeScript with TailwindCSS. No framer-motion. Production-quality code. Each psychology tactic listed in PSYCHOLOGY TACTICS must be visibly implemented in the UI (e.g. social proof counters, urgency timers, reciprocity value-first sections, commitment progress bars). Output ONLY raw code — no JSON, no markdown fences.`;
 
     // Cap extra pages to 2 max to avoid excessive LLM calls
     const extraPages = spec.pages.filter(p => p.route !== '/').slice(0, 2);
