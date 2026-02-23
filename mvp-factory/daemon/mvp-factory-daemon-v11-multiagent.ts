@@ -1792,7 +1792,12 @@ class FrontendAgent {
           { route: '/', purpose: 'Landing + demo', components: ['Hero', 'Demo', 'Features', 'CTA'], userFlow: 'Land -> See value -> Try demo -> Sign up' },
           { route: '/dashboard', purpose: 'Main workspace', components: ['Sidebar', 'MainContent', 'ActionBar'], userFlow: 'Navigate -> Use features -> See results' },
         ],
-        psychologyTactics: ['Reciprocity: show free value first', 'Commitment: progressive feature unlock'],
+        psychologyTactics: [
+          `Loss aversion: show cost of NOT solving "${idea.audienceProfile?.painPoints?.[0] || idea.description}"`,
+          `Reciprocity: give immediate free value — let users try ${idea.features[0]} before signup`,
+          `Social proof: show how many ${idea.targetUsers} already use this to achieve ${idea.audienceProfile?.motivations?.[0] || 'their goals'}`,
+          `Authority: display credentials, certifications, or expert endorsements relevant to ${idea.targetUsers}`,
+        ],
         accessibilityLevel: 'AA',
       };
     }
@@ -2085,12 +2090,17 @@ RULES: No framer-motion. Responsive. For dynamic data fetch() the BACKEND API RO
 
     const sysPrompt = `You are a senior SaaS frontend engineer. TypeScript, TailwindCSS, Next.js 14 App Router. Production quality. Each psychology tactic listed in PSYCHOLOGY TACTICS must be visibly implemented in the UI (e.g. social proof counters, urgency banners, trust badges, progress indicators). Output ONLY raw code — no JSON, no markdown fences.`;
 
+    const painPoint = idea.audienceProfile?.painPoints?.[0] || idea.description;
+    const motivations = idea.audienceProfile?.motivations?.slice(0, 2).join(' and ') || idea.features.slice(0, 2).join(', ');
+    const tactics3 = spec.psychologyTactics.slice(0, 3).join(' | ');
+    const tactics2 = spec.psychologyTactics.slice(0, 2).join(' | ');
+
     const fileDefs: Array<{ path: string; desc: string; tokens: number }> = [
       { path: 'src/app/globals.css', desc: `TailwindCSS @tailwind base/components/utilities + :root CSS variables for ${spec.designSystem.primaryColor} brand. Under 40 lines.`, tokens: 2500 },
-      { path: 'src/app/layout.tsx', desc: `Root layout. Server component — NO 'use client' directive at all. Imports globals.css. export const metadata with title and description for ${idea.title}. Responsive Navbar with logo, nav links (Home/Dashboard), Login/Get Started CTA. Children prop.`, tokens: 5000 },
-      { path: 'src/app/page.tsx', desc: `Landing page. Hero: big headline about ${idea.title}, subline, "Get Started Free" CTA → /auth. 3 feature cards with hardcoded titles/descriptions. Pricing preview (3 tiers: Free $0/Pro $12/Business $49) with hardcoded prices. Bottom CTA. Use ONLY hardcoded static content — do NOT call fetch() or any API from this page.`, tokens: 5000 },
+      { path: 'src/app/layout.tsx', desc: `Root layout. Server component — NO 'use client' directive at all. Imports globals.css. export const metadata with title="${idea.title}". Responsive Navbar with logo, nav links (Home/Dashboard), Login/Get Started CTA → /auth. Children prop.`, tokens: 5000 },
+      { path: 'src/app/page.tsx', desc: `Landing page for "${idea.title}" targeting ${idea.targetUsers}. Their core problem: ${painPoint}. IMPLEMENT THESE PSYCHOLOGY TACTICS VISIBLY IN THE UI: ${tactics3}. Hero: emotionally resonant headline about their specific fear/problem (NOT a generic headline), powerful subheadline, "Get Started Free" CTA → /auth. 3-4 sections tied to their motivations: ${motivations}. Trust signals and social proof specific to ${idea.targetUsers}. Pricing (Free/Pro/Business tiers with value props matching audience). Bottom emotional CTA. Hardcoded static content only — no fetch().`, tokens: 6000 },
       { path: 'src/app/auth/page.tsx', desc: `Auth page. Toggle: Login / Sign Up. Email + password form. Client-side validation. On submit: localStorage.setItem("auth_token", "demo_" + Date.now()) then router.push("/dashboard"). Show inline validation errors.`, tokens: 5000 },
-      { path: 'src/app/dashboard/page.tsx', desc: `Dashboard — CORE PRODUCT. 'use client'. localStorage mock auth guard (check "auth_token", redirect to /auth if missing). Layout: sidebar + main. Sidebar nav for features: ${idea.features.join(', ')}. Top: 4 stat cards with hardcoded numbers. Below: one input form per feature (1-2 fields) with Submit button that POSTs to matching API route; show response result. Pre-populated data table (5 mock rows) for first feature. Fully responsive. Hardcoded initial data; forms call real API routes.`, tokens: 8000 },
+      { path: 'src/app/dashboard/page.tsx', desc: `Dashboard — CORE PRODUCT for ${idea.targetUsers}. PSYCHOLOGY: ${tactics2}. 'use client'. Auth guard: check localStorage "auth_token", redirect to /auth if missing. Sidebar nav + main content. Features: ${idea.features.join(', ')}. 4 stat cards with metrics relevant to ${idea.features[0]}. One functional form per feature (1-2 fields) that POSTs to matching API route; show response result. Pre-populated data table (5 mock rows). Designed for ${idea.audienceProfile?.techSavviness || 'medium'} tech users. Fully responsive.`, tokens: 8000 },
     ];
 
     // Sequential-friendly: staggered starts + semaphore(2) = max 2 concurrent Kimi calls
