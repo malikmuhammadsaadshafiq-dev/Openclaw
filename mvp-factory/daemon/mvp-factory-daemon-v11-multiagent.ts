@@ -602,6 +602,79 @@ function makeFileStub(filePath: string): { path: string; content: string } {
     return { path: filePath, content: 'export {};\n' };
   return { path: filePath, content: "export default function Page(){return<main style={{padding:'2rem'}}><h1>Loading\u2026</h1></main>;}\n" };
 }
+
+// Rich stub: context-aware fallback using product info — much better than "Loading…"
+function makeRichStub(filePath: string, idea: { title: string; description: string; features: string[]; targetUsers: string }): { path: string; content: string } {
+  if (filePath.endsWith('globals.css'))
+    return makeFileStub(filePath);
+  if (filePath.endsWith('route.ts') || filePath.endsWith('route.tsx'))
+    return makeFileStub(filePath);
+  if (filePath.endsWith('.css'))
+    return makeFileStub(filePath);
+  if (filePath.endsWith('.ts') && !filePath.endsWith('.tsx'))
+    return makeFileStub(filePath);
+
+  const title = (idea.title || 'App').replace(/'/g, "\\'");
+  const desc = (idea.description || '').slice(0, 120).replace(/'/g, "\\'");
+  const features = (idea.features || []).slice(0, 3);
+
+  // layout.tsx — proper root layout with metadata
+  if (filePath.endsWith('layout.tsx') || filePath.endsWith('layout.ts')) {
+    return { path: filePath, content: `import type { Metadata } from 'next';
+import './globals.css';
+export const metadata: Metadata = { title: '${title}', description: '${desc}' };
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (<html lang="en"><head /><body className="bg-slate-950 text-slate-50 antialiased">{children}</body></html>);
+}\n` };
+  }
+
+  // auth page
+  if (filePath.includes('/auth/')) {
+    return { path: filePath, content: `'use client';
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+export default function AuthPage() {
+  const router = useRouter();
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const handle = (e: React.FormEvent) => { e.preventDefault(); localStorage.setItem('auth_token','demo_'+Date.now()); router.push('/dashboard'); };
+  return (<main className="min-h-screen flex items-center justify-center bg-slate-950"><form onSubmit={handle} className="bg-slate-800 p-8 rounded-2xl w-full max-w-sm space-y-4"><h1 className="text-2xl font-bold text-white">${title}</h1><input className="w-full px-4 py-2 rounded-lg bg-slate-700 text-white" placeholder="Email" type="email" value={email} onChange={e=>setEmail(e.target.value)} required /><input className="w-full px-4 py-2 rounded-lg bg-slate-700 text-white" placeholder="Password" type="password" value={password} onChange={e=>setPassword(e.target.value)} required /><button className="w-full py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold" type="submit">Get Started</button></form></main>);
+}\n` };
+  }
+
+  // dashboard page
+  if (filePath.includes('/dashboard/')) {
+    const featureItems = features.map((f, i) => `<div key={${i}} className="bg-slate-800 rounded-xl p-6"><h3 className="font-semibold text-slate-200 mb-2">${f.replace(/'/g, "\\'")}</h3><p className="text-slate-400 text-sm">Feature active</p></div>`).join('');
+    return { path: filePath, content: `'use client';
+import { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+export default function Dashboard() {
+  const router = useRouter();
+  useEffect(() => { if (!localStorage.getItem('auth_token')) router.push('/auth'); }, [router]);
+  return (<main className="min-h-screen bg-slate-950 text-slate-50 p-8"><div className="max-w-5xl mx-auto"><h1 className="text-3xl font-bold mb-2">${title}</h1><p className="text-slate-400 mb-8">${desc}</p><div className="grid grid-cols-1 md:grid-cols-3 gap-6">${featureItems}</div></div></main>);
+}\n` };
+  }
+
+  // main landing page (page.tsx)
+  const featureCards = features.map((f, i) => `<div key={${i}} className="bg-slate-800 border border-slate-700 rounded-2xl p-6"><h3 className="text-lg font-semibold text-white mb-2">${f.replace(/'/g, "\\'")}</h3><p className="text-slate-400 text-sm">Streamline your workflow with ${f.replace(/'/g, "\\'").toLowerCase()}.</p></div>`).join('');
+  return { path: filePath, content: `import Link from 'next/link';
+export default function Home() {
+  return (
+    <main className="min-h-screen bg-slate-950 text-slate-50">
+      <nav className="flex items-center justify-between px-8 py-4 border-b border-slate-800">
+        <span className="text-xl font-bold text-indigo-400">${title}</span>
+        <Link href="/auth" className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium">Get Started</Link>
+      </nav>
+      <div className="max-w-5xl mx-auto px-8 py-20 text-center">
+        <h1 className="text-5xl font-extrabold mb-6 bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">${title}</h1>
+        <p className="text-xl text-slate-300 mb-12 max-w-2xl mx-auto">${desc}</p>
+        <Link href="/auth" className="inline-block px-8 py-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-lg mb-16">Start Free Today</Link>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-left">${featureCards}</div>
+      </div>
+    </main>
+  );
+}\n` };
+}
 async function generateBatchFiles(
   fileDefs: Array<{ path: string; desc: string; tokens?: number }>,
   context: string,
@@ -1962,7 +2035,7 @@ STYLE: Clean professional like ilovepdf.com${apiRoutesContext}`;
     // Sequential-friendly: staggered starts + semaphore(2) = max 2 concurrent Kimi calls
     const results = await Promise.all(
       fileDefs.map((f, i) => new Promise<{ path: string; content: string } | null>(resolve =>
-        setTimeout(() => generateOneFile(f.path, f.desc, context, sysPrompt, f.tokens).then(r => resolve(r ?? makeFileStub(f.path))).catch(() => resolve(makeFileStub(f.path))), i * 2000)
+        setTimeout(() => generateOneFile(f.path, f.desc, context, sysPrompt, f.tokens).then(r => resolve(r ?? makeRichStub(f.path, idea))).catch(() => resolve(makeRichStub(f.path, idea))), i * 2000)
       ))
     );
     const allFiles = results.filter((f): f is { path: string; content: string } => f.content.length > 30);
@@ -1998,7 +2071,7 @@ RULES: No framer-motion. Responsive. For dynamic data fetch() the BACKEND API RO
     // Sequential-friendly: staggered starts + semaphore(2) = max 2 concurrent Kimi calls
     const results = await Promise.all(
       fileDefs.map((f, i) => new Promise<{ path: string; content: string } | null>(resolve =>
-        setTimeout(() => generateOneFile(f.path, f.desc, context, sysPrompt, f.tokens).then(r => resolve(r ?? makeFileStub(f.path))).catch(() => resolve(makeFileStub(f.path))), i * 2000)
+        setTimeout(() => generateOneFile(f.path, f.desc, context, sysPrompt, f.tokens).then(r => resolve(r ?? makeRichStub(f.path, idea))).catch(() => resolve(makeRichStub(f.path, idea))), i * 2000)
       ))
     );
     const allFiles = results.filter((f): f is { path: string; content: string } => f.content.length > 30);
@@ -2038,7 +2111,7 @@ RULES: No framer-motion. No hardcoded data — fetch() the BACKEND API ROUTES li
     // Sequential-friendly: staggered starts + semaphore(2) = max 2 concurrent Kimi calls
     const results = await Promise.all(
       fileDefs.map((f, i) => new Promise<{ path: string; content: string } | null>(resolve =>
-        setTimeout(() => generateOneFile(f.path, f.desc, context, sysPrompt, f.tokens).then(r => resolve(r ?? makeFileStub(f.path))).catch(() => resolve(makeFileStub(f.path))), i * 2000)
+        setTimeout(() => generateOneFile(f.path, f.desc, context, sysPrompt, f.tokens).then(r => resolve(r ?? makeRichStub(f.path, idea))).catch(() => resolve(makeRichStub(f.path, idea))), i * 2000)
       ))
     );
     const allFiles = results.filter((f): f is { path: string; content: string } => f.content.length > 30);
@@ -3848,7 +3921,7 @@ ${buildStep}
       // Ensure root page.tsx exists (App Router requires it; missing = 404 on every route)
       const rootPagePath = path.join(projectPath, 'src', 'app', 'page.tsx');
       try { await fs.access(rootPagePath); } catch {
-        await fs.writeFile(rootPagePath, `export default function Home() {\n  return (\n    <main style={{ padding: '2rem', fontFamily: 'sans-serif' }}>\n      <h1>${idea.title}</h1>\n      <p>${idea.description || 'Loading…'}</p>\n    </main>\n  );\n}\n`);
+        await fs.writeFile(rootPagePath, makeRichStub('src/app/page.tsx', idea).content);
         await logger.agent(this.name, 'Created missing root page.tsx stub');
       }
 
