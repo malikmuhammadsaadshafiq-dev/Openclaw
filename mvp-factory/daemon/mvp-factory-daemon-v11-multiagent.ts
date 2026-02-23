@@ -1788,36 +1788,58 @@ Return ONLY valid JSON:
   }
 
   private async generateExtensionFiles(idea: ValidatedIdea, spec: FrontendSpec): Promise<Array<{ path: string; content: string }>> {
-    const prompt = `Generate a COMPLETE, PRODUCTION-QUALITY Chrome Extension (Manifest V3) for this product.
-
-PRODUCT: ${idea.title}
+    // Split into 2 parallel smaller calls to avoid Kimi API timeout (single 8K-token call was too heavy)
+    const featStr = idea.features.slice(0, 3).join(', ');
+    const ctx = `PRODUCT: ${idea.title}
 DESCRIPTION: ${idea.description}
-FEATURES: ${idea.features.join(', ')}
-DESIGN: primary=${spec.designSystem.primaryColor}, font=${spec.designSystem.fontFamily}, style=${spec.designSystem.style}
+FEATURES: ${featStr}
+DESIGN: primary=${spec.designSystem.primaryColor}, font=${spec.designSystem.fontFamily}, style=${spec.designSystem.style}`;
 
-Generate these files as a JSON array:
+    // Batch 1: Structure files (manifest + HTML + CSS)
+    const prompt1 = ctx + `
+
+Generate these 3 Chrome Extension (Manifest V3) structure files as a JSON array:
 [
   {"path":"manifest.json","content":"..."},
   {"path":"popup.html","content":"..."},
-  {"path":"popup.js","content":"..."},
-  {"path":"content.js","content":"..."},
-  {"path":"background.js","content":"..."},
   {"path":"styles.css","content":"..."}
 ]
 
 REQUIREMENTS:
-1. manifest.json: Manifest V3, include permissions, content_scripts, background service_worker, action popup
-2. popup.html: Beautiful 400x500px popup UI using the design system colors, modern CSS, no external deps
-3. popup.js: All popup logic, chrome.storage.sync for state, chrome.tabs for tab control, chrome.runtime messaging
-4. content.js: Page content script - inject UI overlays, read page content, send messages to background
-5. background.js: Service worker - handle messages, chrome.alarms, chrome.notifications, fetch APIs
-6. styles.css: Shared styles for popup and content script injected elements
+1. manifest.json: Manifest V3, permissions for tabs/storage/scripting, content_scripts, background service_worker, action popup
+2. popup.html: Beautiful 400x500px popup UI using the design system colors, modern CSS, no external deps. Include <script src=popup.js> and <link rel=stylesheet href=styles.css>
+3. styles.css: Shared styles for popup and injected content script elements, using primary color ${spec.designSystem.primaryColor}
 
 Return ONLY the JSON array, no markdown.`;
 
-    const response = await kimi.complete(prompt, { maxTokens: 8000, temperature: 0.2 });
-    const files = extractJSON(response, 'array') as Array<{ path: string; content: string }>;
-    if (!files || !files.length) throw new Error('Extension file generation returned empty');
+    // Batch 2: Logic files (JS)
+    const prompt2 = ctx + `
+
+Generate these 3 Chrome Extension logic files as a JSON array:
+[
+  {"path":"popup.js","content":"..."},
+  {"path":"content.js","content":"..."},
+  {"path":"background.js","content":"..."}
+]
+
+REQUIREMENTS:
+1. popup.js: All popup logic, chrome.storage.sync for state, chrome.tabs for tab control, chrome.runtime.sendMessage for messaging
+2. content.js: Page content script - inject minimal UI overlays on relevant pages, send messages to background via chrome.runtime.sendMessage
+3. background.js: Service worker - handle messages from popup and content script, chrome.notifications for alerts, fetch external APIs as needed
+
+Return ONLY the JSON array, no markdown.`;
+
+    type ExtFile = Array<{ path: string; content: string }>;
+    const parse = (r: string): ExtFile => (extractJSON(r, 'array') as ExtFile) || [];
+    const safe = (p: Promise<string>): Promise<ExtFile> => p.then(parse).catch(() => [] as ExtFile);
+
+    const [batch1, batch2] = await Promise.all([
+      safe(kimi.complete(prompt1, { maxTokens: 5000, temperature: 0.2 })),
+      safe(kimi.complete(prompt2, { maxTokens: 6000, temperature: 0.2 })),
+    ]);
+
+    const files = [...batch1, ...batch2].filter(f => f && typeof f.path === string && typeof f.content === string && f.content.length > 10);
+    if (!files.length) throw new Error(Extension file generation returned empty);
     return files;
   }
 
