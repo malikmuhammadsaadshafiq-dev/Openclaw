@@ -2666,7 +2666,7 @@ class PMAgent {
               rdStderr = rdStderr + '\n' + String(rdErr);
             }
             const rdOutput = rdStdout + rdStderr;
-            const rdMatch = rdOutput.match(/Production:\s*(https:\/\/[^\s]+)/) || rdOutput.match(/https:\/\/[^\s\]]+\.vercel\.app/);
+            const rdMatch = rdOutput.match(/Production:\s*(https:\/\/[^\s]+)/) || rdOutput.match(/https:\/\/[a-z0-9][a-z0-9-]*\.vercel\.app/);
             if (rdMatch) {
               redeployUrl = (rdMatch[1] || rdMatch[0]).replace(/[^\w\-.:\/]/g, '');
               await logger.agent(this.name, `Redeployed: ${redeployUrl}`);
@@ -3822,7 +3822,8 @@ ${buildStep}
             "export const PATCH = handler;",
           ].join('\n');
           const pageStub = `export default function Page() { return <main style={{padding:'2rem'}}><h1>Loading...</h1></main>; }\n`;
-          const layoutStub = `export default function Layout({ children }: { children: React.ReactNode }) { return <html lang="en"><body>{children}</body></html>; }\n`;
+          const layoutStub = `export default function RootLayout({ children }: { children: React.ReactNode }) { return (<html lang="en"><head><meta charSet="utf-8" /></head><body>{children}</body></html>); }
+`;
           const componentStub = `export default function Component() { return <div />; }\n`;
           // Recursively stub all broken TS/TSX files in the project
           const stubBrokenFiles = async (dir: string): Promise<number> => {
@@ -4022,7 +4023,7 @@ ${buildStep}
         const output = vercelStdout + vercelStderr;
         // Match both the pre-build "Production:" URL and any .vercel.app URL in the output
         const urlMatch = output.match(/Production:\s*(https:\/\/[^\s]+)/) ||
-                         output.match(/https:\/\/[^\s\]]+\.vercel\.app/);
+                         output.match(/https:\/\/[a-z0-9][a-z0-9-]*\.vercel\.app/);
         if (urlMatch) {
           vercelUrl = (urlMatch[1] || urlMatch[0]).replace(/[^\w\-.:\/]/g, '');
           await logger.agent(this.name, `Vercel: ${vercelUrl}`);
