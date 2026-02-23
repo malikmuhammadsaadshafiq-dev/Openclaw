@@ -591,7 +591,7 @@ async function generateBatchFiles(
   fileDefs: Array<{ path: string; desc: string; tokens?: number }>,
   context: string,
   _sysPrompt: string, // Not used — batch uses its own JSON-focused sysPrompt
-  maxTokensTotal = 20000,
+  maxTokensTotal = 8000,
 ): Promise<Array<{ path: string; content: string }>> {
   const exampleLines = fileDefs.slice(0, 2).map(f =>
     `  {"path":"${f.path}","content":"...complete file content..."}`
@@ -1917,7 +1917,7 @@ STYLE: Clean professional like ilovepdf.com${apiRoutesContext}`;
     ];
 
     // Batch: generate ALL files in one LLM call (eliminates N semaphore waits)
-    const allFiles = await generateBatchFiles(fileDefs, context, sysPrompt, 20000);
+    const allFiles = await generateBatchFiles(fileDefs, context, sysPrompt, 8000);
     if (!allFiles.length) throw new Error('Free-ads frontend generation returned no files');
     return allFiles;
   }
@@ -1948,7 +1948,7 @@ RULES: No framer-motion. Responsive. For dynamic data fetch() the BACKEND API RO
     ];
 
     // Batch: generate ALL files in one LLM call (eliminates N semaphore waits)
-    const allFiles = await generateBatchFiles(fileDefs, context, sysPrompt, 20000);
+    const allFiles = await generateBatchFiles(fileDefs, context, sysPrompt, 8000);
     if (!allFiles.length) throw new Error('SaaS frontend generation returned no files');
     return allFiles;
   }
@@ -1983,7 +1983,7 @@ RULES: No framer-motion. No hardcoded data — fetch() the BACKEND API ROUTES li
     ];
 
     // Batch: generate ALL files in one LLM call (eliminates N semaphore waits)
-    const allFiles = await generateBatchFiles(fileDefs, context, sysPrompt, 20000);
+    const allFiles = await generateBatchFiles(fileDefs, context, sysPrompt, 8000);
     if (!allFiles.length) throw new Error('Frontend generation returned no files');
     return allFiles;
   }
@@ -2218,7 +2218,7 @@ Keep under 80 lines. Add TODO comments only for the mocked parts. Output ONLY ra
     ];
 
     // Batch: generate ALL backend files in one LLM call (eliminates N semaphore waits)
-    const allFiles = (await generateBatchFiles(backendFileDefs, context, sysPrompt, 22000))
+    const allFiles = (await generateBatchFiles(backendFileDefs, context, sysPrompt, 8000))
       .filter(f => f.content.length > 30);
 
     if (!allFiles.length) throw new Error('Backend generation returned no files');
