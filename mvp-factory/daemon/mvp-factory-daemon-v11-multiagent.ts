@@ -1558,7 +1558,7 @@ ALSO PROVIDE:
   * saas = multi-user platform with auth, user accounts, billing, subscriptions
   * api = developer tool, headless service, no frontend needed
   * mobile = native mobile app (React Native + Expo) — for on-the-go use cases, camera, GPS, push notifications
-  * extension = Chrome extension (Manifest V3) — for browser productivity, page enhancement, tab management, content scripts
+  * (extension disabled - use web or saas)
 
 - monetizationType: choose the BEST business model:
   * free_ads = FREE to use, monetized by Google AdSense ads — best for: utility tools, calculators, converters,
@@ -1582,7 +1582,7 @@ Return ONLY valid JSON:
   "problem": "Specific pain point",
   "targetUsers": "Exact audience",
   "features": ["real feature 1 with server logic", "real feature 2", ...],
-  "type": "web|saas|api|extension", // NEVER use mobile — pipeline is web/SaaS only
+  "type": "web|saas|api", // NEVER use mobile — pipeline is web/SaaS only
   "monetizationType": "free_ads|freemium|saas|one_time",
   "category": "ai-assisted|utility|data-tool|automation|saas-platform",
   "techStack": "Next.js 14 + API Routes + specific tools (or 'Chrome Extension: Manifest V3 + vanilla JS' for extensions)",
@@ -2614,6 +2614,11 @@ class PMAgent {
       if ((buildable as any).type === 'mobile') {
         (buildable as any).type = 'web';
         await logger.agent(this.name, `RECLASSIFY: "${buildable.title}" type mobile → web (mobile not supported)`);
+      }
+      // Reclassify extension -> web (disabled)
+      if ((buildable as any).type === 'extension') {
+        (buildable as any).type = 'web';
+        await logger.agent(this.name, 'RECLASSIFY: extension->web (disabled)');
       }
       // ── Auto-simplify guard: 6+ features → trim to 3 core features to prevent timeout ──
       if (buildable.features && buildable.features.length >= 6) {
