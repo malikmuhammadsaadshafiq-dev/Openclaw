@@ -4060,7 +4060,7 @@ ${buildStep}
         if (buildPassed && idea.type !== 'extension' && idea.type !== 'mobile') {
           try {
             await execAsync(
-              `npx vercel build --yes --token ${CONFIG.vercel.token} --scope ${CONFIG.vercel.teamId}`,
+              `npx vercel build --prod --yes --token ${CONFIG.vercel.token} --scope ${CONFIG.vercel.teamId}`,
               { cwd: projectPath, timeout: 600000, maxBuffer: 50 * 1024 * 1024 }
             );
             deployCmd = `npx vercel deploy --prebuilt --token ${CONFIG.vercel.token} --scope ${CONFIG.vercel.teamId} --prod`;
