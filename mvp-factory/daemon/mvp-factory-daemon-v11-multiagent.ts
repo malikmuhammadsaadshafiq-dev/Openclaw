@@ -465,10 +465,10 @@ class ApiSemaphore {
     else { this.slots++; }
   }
 }
-const kimiSemaphore = new ApiSemaphore(5); // 5 concurrent calls: small files (800-2k tokens) complete in 2-4 min each
+const kimiSemaphore = new ApiSemaphore(2); // 2 concurrent calls max — prevents GPU saturation & rate-limit cascades
 
 // Global minimum gap between Kimi API requests to avoid GPU exhaustion
-const kimiGlobalRateLimiter = new RateLimiter(3000); // ≥3s between consecutive calls
+const kimiGlobalRateLimiter = new RateLimiter(5000); // ≥5s between consecutive calls — reduces 429 rate-limit hits
 
 // ============================================================
 // Utility Functions
@@ -1959,10 +1959,10 @@ STYLE: Clean professional like ilovepdf.com${apiRoutesContext}`;
       { path: 'src/app/page.tsx', desc: `Main page: ToolHeader at top, AdBanner (slot="1111111111"), then THE WORKING TOOL centered (${idea.features[0] || idea.description}), AdBanner (slot="2222222222") at bottom, OtherTools grid. Tool logic: user inputs → POST to /api/process → show result with download/copy button. Progress indicator during fetch. Drag-drop if file upload relevant. Responsive.`, tokens: 8000 },
     ];
 
-    // Parallel: all files in parallel, capped by semaphore (5 concurrent)
+    // Sequential-friendly: staggered starts + semaphore(2) = max 2 concurrent Kimi calls
     const results = await Promise.all(
       fileDefs.map((f, i) => new Promise<{ path: string; content: string } | null>(resolve =>
-        setTimeout(() => generateOneFile(f.path, f.desc, context, sysPrompt, f.tokens).then(resolve).catch(() => resolve(makeFileStub(f.path))), i * 500)
+        setTimeout(() => generateOneFile(f.path, f.desc, context, sysPrompt, f.tokens).then(resolve).catch(() => resolve(makeFileStub(f.path))), i * 2000)
       ))
     );
     const allFiles = results.filter((f): f is { path: string; content: string } => f !== null && f.content.length > 30);
@@ -1995,10 +1995,10 @@ RULES: No framer-motion. Responsive. For dynamic data fetch() the BACKEND API RO
       { path: 'src/app/dashboard/page.tsx', desc: `Dashboard — CORE PRODUCT. 'use client'. localStorage mock auth guard (check "auth_token", redirect to /auth if missing). Layout: sidebar + main. Sidebar nav for features: ${idea.features.join(', ')}. Top: 4 stat cards with hardcoded numbers. Below: one input form per feature (1-2 fields) with Submit button that POSTs to matching API route; show response result. Pre-populated data table (5 mock rows) for first feature. Fully responsive. Hardcoded initial data; forms call real API routes.`, tokens: 8000 },
     ];
 
-    // Parallel: all files in parallel, capped by semaphore (5 concurrent)
+    // Sequential-friendly: staggered starts + semaphore(2) = max 2 concurrent Kimi calls
     const results = await Promise.all(
       fileDefs.map((f, i) => new Promise<{ path: string; content: string } | null>(resolve =>
-        setTimeout(() => generateOneFile(f.path, f.desc, context, sysPrompt, f.tokens).then(resolve).catch(() => resolve(makeFileStub(f.path))), i * 500)
+        setTimeout(() => generateOneFile(f.path, f.desc, context, sysPrompt, f.tokens).then(resolve).catch(() => resolve(makeFileStub(f.path))), i * 2000)
       ))
     );
     const allFiles = results.filter((f): f is { path: string; content: string } => f !== null && f.content.length > 30);
@@ -2035,10 +2035,10 @@ RULES: No framer-motion. No hardcoded data — fetch() the BACKEND API ROUTES li
       })),
     ];
 
-    // Parallel: all files in parallel, capped by semaphore (5 concurrent)
+    // Sequential-friendly: staggered starts + semaphore(2) = max 2 concurrent Kimi calls
     const results = await Promise.all(
       fileDefs.map((f, i) => new Promise<{ path: string; content: string } | null>(resolve =>
-        setTimeout(() => generateOneFile(f.path, f.desc, context, sysPrompt, f.tokens).then(resolve).catch(() => resolve(makeFileStub(f.path))), i * 500)
+        setTimeout(() => generateOneFile(f.path, f.desc, context, sysPrompt, f.tokens).then(resolve).catch(() => resolve(makeFileStub(f.path))), i * 2000)
       ))
     );
     const allFiles = results.filter((f): f is { path: string; content: string } => f !== null && f.content.length > 30);
@@ -2252,7 +2252,7 @@ MOCKED (no external services available — return realistic demo data):
 Structure each handler: validate input → run real logic on the input → return result (or mock for DB/AI parts).
 Keep under 80 lines. Add TODO comments only for the mocked parts. Output ONLY raw TypeScript — no markdown fences.`;
 
-    // Generate each API route individually — all in parallel, capped by semaphore (5 concurrent)
+    // Generate each API route individually — staggered starts + semaphore(2) caps concurrent calls
     const routePromises = spec.apiRoutes.map((route, i) => {
       // Convert /api/foo/:id/bar or /api/foo/{id}/bar → src/app/api/foo/[id]/bar/route.ts
       const routePath = route.path
@@ -2268,7 +2268,7 @@ Implement this handler with REAL logic where possible:
 - If the route needs AI/external API: return a plausible hardcoded response string (TODO: replace with real API call)
 Return NextResponse.json() with the result. Under 80 lines.`;
       return new Promise<{ path: string; content: string } | null>(resolve =>
-        setTimeout(() => generateOneFile(filePath, desc, context, sysPrompt, 5000).then(resolve).catch(() => resolve(makeFileStub(filePath))), i * 500)
+        setTimeout(() => generateOneFile(filePath, desc, context, sysPrompt, 5000).then(resolve).catch(() => resolve(makeFileStub(filePath))), i * 2000)
       );
     });
 
@@ -2538,12 +2538,10 @@ class PMAgent {
       // PHASE 3a: Backend design first — get API routes so frontend knows exact paths
       await logger.agent(this.name, 'PHASE 3a: BackendAgent designing API architecture (frontend needs route map)...');
       const backendSpec = await this.backendAgent.designSpec(bestIdea);
-      await logger.agent(this.name, `PHASE 3b: FrontendAgent + BackendAgent code gen in PARALLEL (frontend has ${backendSpec.apiRoutes.length} real routes)...`);
-
-      const [frontendResult, backendFiles] = await Promise.all([
-        this.frontendAgent.run(bestIdea, backendSpec),
-        this.backendAgent.generateFiles(bestIdea, backendSpec),
-      ]);
+      await logger.agent(this.name, `PHASE 3b: Frontend code gen first (has ${backendSpec.apiRoutes.length} real routes) — sequential to avoid GPU saturation...`);
+      const frontendResult = await this.frontendAgent.run(bestIdea, backendSpec);
+      await logger.agent(this.name, `PHASE 3c: Backend code gen (${backendSpec.apiRoutes.length} routes)...`);
+      const backendFiles = await this.backendAgent.generateFiles(bestIdea, backendSpec);
       const backendResult = { spec: backendSpec, files: backendFiles };
 
       // PHASE 4: Merge, Integration Repair & Quality Check
@@ -2768,11 +2766,10 @@ class PMAgent {
           // Design backend first — get API routes so frontend generates with real paths
           await logger.agent(this.name, `PHASE 3a: BackendAgent designing API architecture for "${buildable!.title}"...`);
           const queueBackendSpec = await this.backendAgent.designSpec(buildable!);
-          await logger.agent(this.name, `PHASE 3b: Frontend code gen + backend code gen in PARALLEL (${queueBackendSpec.apiRoutes.length} routes)...`);
-          const [qFrontendResult, qBackendFiles] = await Promise.all([
-            this.frontendAgent.run(buildable!, queueBackendSpec),
-            this.backendAgent.generateFiles(buildable!, queueBackendSpec),
-          ]);
+          await logger.agent(this.name, `PHASE 3b: Frontend code gen first, then backend (${queueBackendSpec.apiRoutes.length} routes) — sequential to avoid GPU saturation...`);
+          const qFrontendResult = await this.frontendAgent.run(buildable!, queueBackendSpec);
+          await logger.agent(this.name, `PHASE 3c: Backend code gen (${queueBackendSpec.apiRoutes.length} routes)...`);
+          const qBackendFiles = await this.backendAgent.generateFiles(buildable!, queueBackendSpec);
           frontendResult = qFrontendResult;
           backendResult = { spec: queueBackendSpec, files: qBackendFiles };
         }
