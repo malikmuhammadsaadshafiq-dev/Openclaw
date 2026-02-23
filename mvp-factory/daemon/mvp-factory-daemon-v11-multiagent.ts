@@ -3845,6 +3845,13 @@ ${buildStep}
         await logger.agent(this.name, 'Created missing globals.css stub');
       }
 
+      // Ensure root page.tsx exists (App Router requires it; missing = 404 on every route)
+      const rootPagePath = path.join(projectPath, 'src', 'app', 'page.tsx');
+      try { await fs.access(rootPagePath); } catch {
+        await fs.writeFile(rootPagePath, `export default function Home() {\n  return (\n    <main style={{ padding: '2rem', fontFamily: 'sans-serif' }}>\n      <h1>${idea.title}</h1>\n      <p>${idea.description || 'Loading…'}</p>\n    </main>\n  );\n}\n`);
+        await logger.agent(this.name, 'Created missing root page.tsx stub');
+      }
+
       // Build test before deployment
       await logger.agent(this.name, 'Running npm build test...');
       try {
