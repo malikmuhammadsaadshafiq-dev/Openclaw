@@ -604,7 +604,7 @@ function makeFileStub(filePath: string): { path: string; content: string } {
 }
 
 // Rich stub: context-aware fallback using product info — much better than "Loading…"
-function makeRichStub(filePath: string, idea: { title: string; description: string; features: string[]; targetUsers: string }): { path: string; content: string } {
+function makeRichStub(filePath: string, idea: { title: string; description: string; features: string[]; targetUsers: string; monetizationType?: string }): { path: string; content: string } {
   if (filePath.endsWith('globals.css'))
     return makeFileStub(filePath);
   if (filePath.endsWith('route.ts') || filePath.endsWith('route.tsx'))
@@ -656,21 +656,32 @@ export default function Dashboard() {
   }
 
   // main landing page (page.tsx)
+  // free_ads = no login, CTA scrolls to tool; freemium/saas = login flow
+  const isFreeAds = idea.monetizationType === 'free_ads';
   const featureCards = features.map((f, i) => `<div key={${i}} className="bg-slate-800 border border-slate-700 rounded-2xl p-6"><h3 className="text-lg font-semibold text-white mb-2">${f.replace(/'/g, "\\'")}</h3><p className="text-slate-400 text-sm">Streamline your workflow with ${f.replace(/'/g, "\\'").toLowerCase()}.</p></div>`).join('');
-  return { path: filePath, content: `import Link from 'next/link';
-export default function Home() {
+  const ctaNav = isFreeAds
+    ? `<a href="#tool" className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium">Use Free Tool</a>`
+    : `<Link href="/auth" className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium">Get Started</Link>`;
+  const ctaHero = isFreeAds
+    ? `<a href="#tool" className="inline-block px-8 py-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-lg mb-16">Try It Free</a>`
+    : `<Link href="/auth" className="inline-block px-8 py-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-lg mb-16">Start Free Today</Link>`;
+  const toolSection = isFreeAds
+    ? `\n      <section id="tool" className="max-w-3xl mx-auto px-8 py-16"><div className="bg-slate-800 rounded-2xl p-8"><h2 className="text-2xl font-bold text-white mb-4">${title}</h2><p className="text-slate-300 mb-6">${desc}</p><button className="px-6 py-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold">Run Tool</button></div></section>`
+    : '';
+  const importLine = isFreeAds ? '' : "import Link from 'next/link';\n";
+  return { path: filePath, content: `${importLine}export default function Home() {
   return (
     <main className="min-h-screen bg-slate-950 text-slate-50">
       <nav className="flex items-center justify-between px-8 py-4 border-b border-slate-800">
         <span className="text-xl font-bold text-indigo-400">${title}</span>
-        <Link href="/auth" className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium">Get Started</Link>
+        ${ctaNav}
       </nav>
       <div className="max-w-5xl mx-auto px-8 py-20 text-center">
         <h1 className="text-5xl font-extrabold mb-6 bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">${title}</h1>
         <p className="text-xl text-slate-300 mb-12 max-w-2xl mx-auto">${desc}</p>
-        <Link href="/auth" className="inline-block px-8 py-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-lg mb-16">Start Free Today</Link>
+        ${ctaHero}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-left">${featureCards}</div>
-      </div>
+      </div>${toolSection}
     </main>
   );
 }\n` };
