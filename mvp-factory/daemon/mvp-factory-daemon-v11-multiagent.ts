@@ -678,6 +678,18 @@ export default function Dashboard() {
   const hasAuth = pages.some(p => p.includes('/auth'));
   const hasDashboard = pages.some(p => p.includes('/dashboard'));
   const ctaTarget = isFreeAds ? null : (hasAuth ? '/auth' : hasDashboard ? '/dashboard' : null);
+
+  // Audience psychology — extract from audienceProfile if present
+  const targetUsers = (idea as any).targetUsers || 'professionals';
+  const painPoint = ((idea as any).audienceProfile?.painPoints?.[0] || desc).replace(/'/g, "\\'").slice(0, 120);
+  const motivation = ((idea as any).audienceProfile?.motivations?.[0] || features[0] || '').replace(/'/g, "\\'");
+  const heroTitle = painPoint.length > 10
+    ? `Stop ${painPoint.slice(0, 60).toLowerCase()}`
+    : `The smarter way to ${(features[0] || title).toLowerCase()}`;
+  const heroSub = motivation
+    ? `Join thousands of ${targetUsers} who ${motivation.toLowerCase()}`
+    : desc;
+
   const featureCards = features.map((f, i) => `<div key={${i}} className="bg-slate-800 border border-slate-700 rounded-2xl p-6"><h3 className="text-lg font-semibold text-white mb-2">${f.replace(/'/g, "\\'")}</h3><p className="text-slate-400 text-sm">Streamline your workflow with ${f.replace(/'/g, "\\'").toLowerCase()}.</p></div>`).join('');
   const ctaNav = ctaTarget
     ? `<Link href="${ctaTarget}" className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium">Get Started</Link>`
@@ -695,9 +707,11 @@ export default function Dashboard() {
         ${ctaNav}
       </nav>
       <div className="max-w-5xl mx-auto px-8 py-20 text-center">
-        <h1 className="text-5xl font-extrabold mb-6 bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">${title}</h1>
-        <p className="text-xl text-slate-300 mb-12 max-w-2xl mx-auto">${desc}</p>
+        <h1 className="text-5xl font-extrabold mb-6 bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent">${heroTitle}</h1>
+        <p className="text-xl text-slate-300 mb-4 max-w-2xl mx-auto">${heroSub}</p>
+        <p className="text-sm text-gray-500 mt-3 mb-12">&#11088; Trusted by 2,400+ ${targetUsers}</p>
         ${ctaHero}
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-8 text-sm text-amber-800 text-left">&#9888;&#65039; Without this: ${painPoint}</div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-left">${featureCards}</div>
       </div>${toolSection}
     </main>
