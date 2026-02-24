@@ -3261,7 +3261,7 @@ class PMAgent {
         if (buildable.techStack && (buildable.techStack.includes('Tesseract') || buildable.techStack.includes('OpenAI') || buildable.techStack.includes('Vision') || buildable.techStack.includes('Blob'))) {
           buildable.techStack = 'Next.js 14 App Router + TypeScript + TailwindCSS';
         }
-        await logger.agent(this.name, `AUTO-SIMPLIFY: "${buildable.title}" had ${original} features → trimmed to 3 to prevent timeout`);
+        await logger.agent(this.name, `AUTO-SIMPLIFY: "${buildable.title}" had ${original} features → trimmed to 5 (4-hour budget)`);
       }
 
       await logger.agent(this.name, `SELECTED: "${buildable.title}" (score: ${buildable.validation.overallScore}/10) | ${remaining.length} remaining in queue after this`);
