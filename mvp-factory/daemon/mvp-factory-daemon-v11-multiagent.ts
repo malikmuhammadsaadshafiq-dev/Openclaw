@@ -416,7 +416,7 @@ class KimiClient {
     return result;
   }
 
-  async complete(prompt: string, options: { maxTokens?: number; temperature?: number; systemPrompt?: string } = {}): Promise<string> {
+  async complete(prompt: string, options: { maxTokens?: number; temperature?: number; systemPrompt?: string; nonStream?: boolean } = {}): Promise<string> {
     const maxTokens = options.maxTokens || 16384;
     const temperature = options.temperature || 0.7;
 
@@ -425,6 +425,11 @@ class KimiClient {
     try {
       // Enforce global minimum gap between Kimi API requests
       await kimiGlobalRateLimiter.wait();
+
+      // nonStream: true — skip streaming entirely for long-output calls that consistently time out
+      if (options.nonStream) {
+        return await this.nonStreamComplete(prompt, maxTokens, temperature, options.systemPrompt);
+      }
 
       for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
         try {
@@ -1907,6 +1912,7 @@ Return ONLY valid JSON:
     const response = await kimi.complete(prompt, {
       maxTokens: 8000,
       temperature: 0.6,
+      nonStream: true,  // long JSON output — skip stream (consistently times out) and use non-stream directly
       systemPrompt: 'You are a world-class UX designer and behavioral psychologist. You design interfaces that tap into deep psychological principles — cognitive biases, emotional triggers, habit loops, social dynamics — all tuned to the specific target audience. Every color, copy, layout choice, and CTA is deliberate and backed by specific psychology research applied to THIS audience. Go deep, not generic.',
     });
 
@@ -2226,6 +2232,7 @@ Return ONLY valid JSON:
     const response = await kimi.complete(prompt, {
       maxTokens: 6000,
       temperature: 0.3,
+      nonStream: true,  // long JSON output — skip stream (consistently times out) and use non-stream directly
       systemPrompt: 'You are a backend architect who builds robust, scalable APIs. Every endpoint you design has real processing logic, proper error handling, and clear documentation. You never create stub endpoints. Return ONLY valid JSON, no markdown.',
     });
 
@@ -2249,7 +2256,7 @@ Features: ${idea.features.join(', ')}
 Return ONLY this JSON (no markdown, no explanation):
 {"apiRoutes":[{"method":"POST","path":"/api/analyze","purpose":"Main processing","inputSchema":"{ input: string }","outputSchema":"{ result: object }","implementation":"Process input and return results"},{"method":"GET","path":"/api/health","purpose":"Health check","inputSchema":"none","outputSchema":"{ status: string }","implementation":"Return service status"}],"dataModels":[{"name":"Item","fields":["id: string","data: string","createdAt: string"],"relationships":"standalone"}],"integrations":[],"authentication":"none","errorHandling":"try-catch with JSON error responses","realTimeFeatures":[]}`;
 
-    const response = await kimi.complete(prompt, { maxTokens: 3000, temperature: 0.2 });
+    const response = await kimi.complete(prompt, { maxTokens: 3000, temperature: 0.2, nonStream: true });
     const parsed = extractJSON(response, 'object');
     if (!parsed || !parsed.apiRoutes) {
       // Absolute minimum fallback - still real architecture, not placeholder content
