@@ -263,6 +263,11 @@ interface PageIssue {
   loadError: string;
   hasErrorText: boolean;
   isBlank: boolean;
+  // Design psychology evaluation (populated on round 1 for / and /dashboard)
+  issueType?: 'functional' | 'design-quality';
+  designScore?: number;        // 1-10 psychological alignment score
+  designIssues?: string[];     // what is generic / missing
+  designImprovements?: string[]; // specific actionable redesign directives
 }
 
 // ============================================================
@@ -2647,10 +2652,39 @@ class PlaywrightTestAgent {
           networkErrors.length > 3 || hasErrorText || isBlank || !!loadError;
 
         if (hasProblems) {
-          issues.push({ route, httpStatus, consoleErrors, networkErrors: networkErrors.slice(0, 5), pageTextSnippet: pageText.slice(0, 600), loadError, hasErrorText, isBlank });
+          issues.push({ route, httpStatus, consoleErrors, networkErrors: networkErrors.slice(0, 5), pageTextSnippet: pageText.slice(0, 600), loadError, hasErrorText, isBlank, issueType: 'functional' });
           await logger.agent(this.name, `  ISSUE on ${route}: HTTP=${httpStatus} console=${consoleErrors.length} net=${networkErrors.length} errorText=${hasErrorText} blank=${isBlank}`);
         } else {
           await logger.agent(this.name, `  OK: ${route} (HTTP ${httpStatus})`);
+        }
+
+        // Design psychology quality gate — runs every round for landing + dashboard
+        // Catches generic AI output even when the page loads without errors
+        if (!loadError && httpStatus === 200 && (route === '/' || route === '/dashboard')) {
+          try {
+            const html = await page.content();
+            const designEval = await this.evaluateDesignPsychology(html, pageText, route, idea);
+            const verdict = designEval.score >= 7 ? '✓ PASS' : '✗ REDESIGN';
+            await logger.agent(this.name, `  Psychology score ${route}: ${designEval.score}/10 — ${verdict}`);
+            if (designEval.score < 7) {
+              issues.push({
+                route,
+                httpStatus,
+                consoleErrors: [],
+                networkErrors: [],
+                pageTextSnippet: pageText.slice(0, 600),
+                loadError: '',
+                hasErrorText: false,
+                isBlank: false,
+                issueType: 'design-quality',
+                designScore: designEval.score,
+                designIssues: designEval.issues,
+                designImprovements: designEval.improvements,
+              });
+            }
+          } catch (designErr) {
+            await logger.agent(this.name, `  Design eval skipped: ${String(designErr).slice(0, 100)}`);
+          }
         }
 
         await page.close();
@@ -2662,85 +2696,219 @@ class PlaywrightTestAgent {
     return issues;
   }
 
+  /**
+   * Score the rendered page HTML against the audience's psychology profile.
+   * Returns a 1-10 score — anything below 7 triggers a redesign pass.
+   * Catches generic AI slop: purple gradients, "all-in-one" headlines, etc.
+   */
+  private async evaluateDesignPsychology(
+    html: string,
+    pageText: string,
+    route: string,
+    idea: ValidatedIdea
+  ): Promise<{ score: number; issues: string[]; improvements: string[] }> {
+    const ap = idea.audienceProfile;
+    const pageLabel = route === '/' ? 'landing page' : `${route.slice(1)} page`;
+
+    const prompt = `You are a brutal conversion rate expert and behavioral psychologist doing a UX audit.
+
+PRODUCT: ${idea.title}
+PAGE: ${pageLabel}
+
+TARGET AUDIENCE PROFILE:
+- Who: ${idea.targetUsers}
+- Demographics: ${ap.demographics}
+- Psychographics: ${ap.psychographics}
+- Exact pain points: ${ap.painPoints.join(' | ')}
+- Core motivations: ${ap.motivations.join(' | ')}
+- Tech savviness: ${ap.techSavviness}
+- Price willingness: ${ap.priceWillingness}
+
+KEY FEATURES: ${idea.features.join(', ')}
+
+PAGE TEXT (what users actually read):
+${pageText.slice(0, 2000)}
+
+PAGE HTML EXCERPT (structure + copy):
+${html.slice(0, 5000)}
+
+SCORE THIS PAGE 1-10 on PSYCHOLOGICAL DESIGN QUALITY. Be harsh — generic AI output scores 2-4.
+
+Scoring criteria:
+1. HEADLINE SPECIFICITY (0-2pts): Does the H1 speak to this audience's exact pain/emotion in their own language?
+   - 0: Generic ("The all-in-one platform", "Boost your productivity")
+   - 1: Somewhat specific but still vague
+   - 2: Exactly addresses their specific pain point in words they'd use
+2. PSYCHOLOGY TACTICS (0-3pts): Are loss aversion, social proof, reciprocity, authority actually VISIBLE?
+   - Check for: user counts, testimonials, urgency copy, free value demos, trust badges, progress indicators
+3. EMOTIONAL RESONANCE (0-2pts): Does copy use the emotions and language this specific audience responds to?
+   - ${ap.psychographics} — does the design reflect this?
+4. VISUAL DESIGN FIT (0-2pts): Are colors, typography, layout appropriate for ${ap.techSavviness} tech users who are ${ap.priceWillingness} payers?
+   - Wrong: generic purple-to-pink gradient for a serious B2B tool
+   - Right: design that visually signals the right category/trust level
+5. CTAs (0-1pt): Are call-to-action buttons specific and compelling for this audience?
+
+Return ONLY valid JSON:
+{
+  "score": <1-10 integer>,
+  "verdict": "PASS" or "REDESIGN",
+  "genericElements": ["specific thing that is generic/wrong", "another one", ...],
+  "missingTactics": ["loss aversion missing because...", "no social proof..."],
+  "improvements": [
+    "Rewrite H1 from '[current text]' to '[audience-specific suggestion using their pain language]'",
+    "Add social proof: show count of [specific type of user] who use this",
+    "CTA copy: change to '[specific compelling copy for this audience]'",
+    ...
+  ]
+}`;
+
+    try {
+      const resp = await kimi.complete(prompt, {
+        maxTokens: 3000,
+        temperature: 0.2,
+        systemPrompt: 'You are a world-class CRO expert. Generic design is the enemy. Be specific and harsh. If it looks like generic AI output, score it 2-4. Only score 7+ if design is genuinely audience-specific with real psychology implementation.',
+      });
+      const parsed = extractJSON(resp, 'object');
+      if (!parsed || typeof parsed.score !== 'number') return { score: 5, issues: [], improvements: [] };
+      return {
+        score: Math.min(10, Math.max(1, Math.round(parsed.score))),
+        issues: [...(parsed.genericElements || []), ...(parsed.missingTactics || [])],
+        improvements: parsed.improvements || [],
+      };
+    } catch (err) {
+      await logger.agent(this.name, `Design eval error: ${String(err).slice(0, 100)}`);
+      return { score: 5, issues: [], improvements: [] }; // default: don't block on eval failure
+    }
+  }
+
   /** Ask Kimi K2.5 to generate targeted fixes for each broken page */
   private async generateAndApplyFixes(
     idea: ValidatedIdea,
     projectPath: string,
     issues: PageIssue[]
   ): Promise<boolean> {
-    const issueText = issues.map(i =>
-      `ROUTE: ${i.route}\nHTTP: ${i.httpStatus || 'load failed'}\nConsole errors: ${i.consoleErrors.join(' | ') || 'none'}\nNetwork errors: ${i.networkErrors.join(' | ') || 'none'}\nPage snippet: ${i.pageTextSnippet || '(blank)'}\nError text detected: ${i.hasErrorText} | Blank: ${i.isBlank}${i.loadError ? `\nLoad error: ${i.loadError}` : ''}`
-    ).join('\n---\n');
+    // Split issues by type — functional errors and design-quality failures need different prompts
+    const functionalIssues = issues.filter(i => i.issueType !== 'design-quality');
+    const designIssues     = issues.filter(i => i.issueType === 'design-quality');
 
-    // Gather current file contents for broken routes
-    const filesToRead = new Set<string>(['src/app/layout.tsx', 'src/app/globals.css']);
-    for (const issue of issues) {
-      if (issue.route === '/') filesToRead.add('src/app/page.tsx');
-      else filesToRead.add(`src/app${issue.route}/page.tsx`);
-    }
+    const allFixed: Array<{ path: string; content: string }> = [];
 
-    const fileContents: string[] = [];
-    for (const fp of filesToRead) {
-      try {
-        const content = await fs.readFile(path.join(projectPath, fp), 'utf-8');
-        fileContents.push(`=== ${fp} ===\n${content.slice(0, 5000)}`);
-      } catch {}
-    }
-    if (fileContents.length === 0) return false;
+    // ── Fix 1: Functional errors (broken pages, JS crashes, HTTP 500s) ──────────────
+    if (functionalIssues.length > 0) {
+      const issueText = functionalIssues.map(i =>
+        `ROUTE: ${i.route}\nHTTP: ${i.httpStatus || 'load failed'}\nConsole errors: ${i.consoleErrors.join(' | ') || 'none'}\nNetwork errors: ${i.networkErrors.join(' | ') || 'none'}\nPage snippet: ${i.pageTextSnippet || '(blank)'}\nError text: ${i.hasErrorText} | Blank: ${i.isBlank}${i.loadError ? `\nLoad error: ${i.loadError}` : ''}`
+      ).join('\n---\n');
 
-    const prompt = `You are a Next.js 14 expert fixing a live deployed app. Automated browser tests found these issues:
+      const filesToRead = new Set<string>(['src/app/layout.tsx', 'src/app/globals.css']);
+      for (const issue of functionalIssues) {
+        if (issue.route === '/') filesToRead.add('src/app/page.tsx');
+        else filesToRead.add(`src/app${issue.route}/page.tsx`);
+      }
+      const fileContents: string[] = [];
+      for (const fp of filesToRead) {
+        try { fileContents.push(`=== ${fp} ===\n${(await fs.readFile(path.join(projectPath, fp), 'utf-8')).slice(0, 5000)}`); } catch {}
+      }
+
+      if (fileContents.length > 0) {
+        const prompt = `You are a Next.js 14 expert fixing a live deployed app. Browser tests found these errors:
 
 ${issueText}
 
-Current file contents:
+Current files:
 ${fileContents.join('\n\n')}
 
-Product context:
-- Name: ${idea.title}
-- Description: ${idea.description}
-- Features: ${idea.features.join(', ')}
-- Target users: ${idea.targetUsers}
-- Monetization: ${idea.monetizationType}
-- Stack: Next.js 14 App Router, TypeScript, TailwindCSS
+Product: ${idea.title} | Users: ${idea.targetUsers} | Stack: Next.js 14, TypeScript, TailwindCSS
 
-Fix ALL reported issues. Return ONLY a valid JSON array of fixed files:
-[
-  {"path": "src/app/page.tsx", "content": "...complete fixed file..."},
-  ...
-]
+Fix ALL errors. Return ONLY a valid JSON array:
+[{"path": "src/app/page.tsx", "content": "...complete fixed file..."}, ...]
 
-Fix rules:
-- Add 'use client' to any page using useState/useEffect/onClick
-- Fix undefined variables and missing imports
-- Replace blank pages with real content from product context
-- Fix HTTP 500s: move server-side logic to API routes, keep pages client-side
-- Keep all existing working functionality
-- All TailwindCSS classes must be valid
-- Return ONLY the JSON array — no markdown, no explanation`;
+Rules: add 'use client' for hooks/events, fix imports, fix blank pages with real content, move server logic to API routes, valid TailwindCSS only.`;
 
-    try {
-      const resp = await kimi.complete(prompt, {
-        maxTokens: 16000,
-        temperature: 0.1,
-        systemPrompt: 'You are a senior Next.js debugger. Fix exactly what is broken. Return only a valid JSON array of files.',
-      });
-      const fixedFiles = extractJSON(resp, 'array') as Array<{ path: string; content: string }>;
-      if (!fixedFiles?.length) return false;
-
-      let applied = 0;
-      for (const f of fixedFiles) {
-        if (!f.path || !f.content || f.content.length < 20) continue;
-        const fullPath = path.join(projectPath, f.path);
-        await fs.mkdir(path.dirname(fullPath), { recursive: true });
-        await fs.writeFile(fullPath, f.content);
-        applied++;
+        try {
+          const resp = await kimi.complete(prompt, { maxTokens: 16000, temperature: 0.1, systemPrompt: 'Senior Next.js debugger. Fix exactly what is broken. Return only valid JSON array.' });
+          const fixedFiles = extractJSON(resp, 'array') as Array<{ path: string; content: string }>;
+          if (fixedFiles?.length) allFixed.push(...fixedFiles.filter(f => f.path && f.content?.length > 20));
+          await logger.agent(this.name, `Functional fixes generated: ${allFixed.length} file(s)`);
+        } catch (err) { await logger.agent(this.name, `Functional fix error: ${String(err).slice(0, 150)}`); }
       }
-      await logger.agent(this.name, `Applied ${applied} fix(es) to ${projectPath}`);
-      return applied > 0;
-    } catch (err) {
-      await logger.agent(this.name, `Fix generation error: ${String(err).slice(0, 200)}`);
-      return false;
     }
+
+    // ── Fix 2: Design psychology (generic UI → audience-specific psychology) ────────
+    if (designIssues.length > 0) {
+      const ap = idea.audienceProfile;
+      for (const issue of designIssues) {
+        const filePath = issue.route === '/' ? 'src/app/page.tsx' : `src/app${issue.route}/page.tsx`;
+        let currentContent = '';
+        try { currentContent = await fs.readFile(path.join(projectPath, filePath), 'utf-8'); } catch {}
+
+        const improvements = (issue.designImprovements || []).map((s, i) => `${i + 1}. ${s}`).join('\n');
+        const genericElements = (issue.designIssues || []).map(s => `• ${s}`).join('\n');
+
+        const prompt = `You are a world-class UX designer and conversion expert. This ${issue.route === '/' ? 'landing' : issue.route.slice(1)} page scored ${issue.designScore}/10 on psychological alignment — too generic and weak.
+
+PRODUCT: ${idea.title}
+DESCRIPTION: ${idea.description}
+FEATURES: ${idea.features.join(', ')}
+
+TARGET AUDIENCE (design for THESE specific people):
+• Who: ${idea.targetUsers}
+• Demographics: ${ap.demographics}
+• Psychographics: ${ap.psychographics}
+• Exact pain points: ${ap.painPoints.join(' | ')}
+• Core motivations: ${ap.motivations.join(' | ')}
+• Tech level: ${ap.techSavviness} | Price willingness: ${ap.priceWillingness}
+
+WHAT IS GENERIC/WRONG IN CURRENT DESIGN:
+${genericElements || '• Headlines are generic and not audience-specific\n• Psychology tactics are absent'}
+
+REQUIRED IMPROVEMENTS (implement ALL of these):
+${improvements || '• Rewrite headline to speak directly to audience pain\n• Add visible social proof\n• Add urgency/loss aversion elements\n• Make CTAs audience-specific'}
+
+CURRENT FILE CONTENT:
+${currentContent.slice(0, 6000)}
+
+Rewrite this file with GENUINELY audience-specific psychology. Requirements:
+- H1 must directly address ${ap.painPoints[0] || idea.description} in words ${idea.targetUsers} actually use
+- Every section must serve a psychological purpose (listed in improvements above)
+- CTAs must be specific and emotionally resonant for this audience
+- Design system: colors/layout appropriate for ${ap.techSavviness} tech users who are ${ap.priceWillingness} payers
+- Include social proof with realistic numbers relevant to ${idea.targetUsers}
+- Implement loss aversion: show cost of NOT solving the problem
+- Implement reciprocity: demonstrate real value before asking for commitment
+- Stack: Next.js 14 App Router, TypeScript, TailwindCSS. Valid imports only.
+- Keep all working functionality intact
+
+Return ONLY the raw file content — no JSON, no markdown fences, just the TypeScript/TSX code.`;
+
+        try {
+          const resp = await kimi.complete(prompt, {
+            maxTokens: 14000,
+            temperature: 0.4,
+            systemPrompt: 'You are the world\'s best conversion designer. No generic output. Every word, color, and layout choice must be psychologically deliberate for this specific audience. Generic = failure.',
+          });
+          // The response is raw TSX code (not JSON) — wrap it
+          const code = resp.trim().startsWith('[') || resp.trim().startsWith('{') ? null : resp;
+          if (code && code.length > 100) {
+            allFixed.push({ path: filePath, content: code });
+            await logger.agent(this.name, `Psychology redesign applied: ${filePath} (${issue.designScore}/10 → targeting 8+)`);
+          }
+        } catch (err) { await logger.agent(this.name, `Design fix error: ${String(err).slice(0, 150)}`); }
+      }
+    }
+
+    if (allFixed.length === 0) return false;
+
+    // Write all fixed files to disk
+    let written = 0;
+    for (const f of allFixed) {
+      if (!f.path || !f.content || f.content.length < 20) continue;
+      const fullPath = path.join(projectPath, f.path);
+      await fs.mkdir(path.dirname(fullPath), { recursive: true });
+      await fs.writeFile(fullPath, f.content);
+      written++;
+    }
+    await logger.agent(this.name, `Total files written: ${written} (functional: ${allFixed.filter(f => !designIssues.some(d => (d.route === '/' ? 'src/app/page.tsx' : `src/app${d.route}/page.tsx`) === f.path)).length}, design: ${designIssues.length})`);
+    return written > 0;
   }
 
   /** Rebuild the Next.js project and redeploy to Vercel after fixes */
