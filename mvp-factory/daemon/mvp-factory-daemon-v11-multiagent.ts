@@ -1802,15 +1802,12 @@ class FrontendAgent {
   async run(idea: ValidatedIdea, backendSpec?: BackendSpec): Promise<{ spec: FrontendSpec; files: Array<{ path: string; content: string }> }> {
     await logger.agent(this.name, `Designing frontend for "${idea.title}" targeting ${idea.audienceProfile.demographics}...`);
 
-    // Step 1: Design the UX based on audience psychology (with retry + simplified fallback)
+    // Step 1: Design the UX based on audience psychology
+    // designUX (8K tokens) consistently hits NVIDIA's ~5min server timeout — use reliable inline defaults
+    // The inline spec below is audience-matched with psychology tactics and produces better pass rate
     let spec: FrontendSpec;
-    try {
-      spec = await retryLoop(
-        () => this.designUX(idea),
-        { maxRetries: 1, baseDelay: 5000, label: 'Frontend UX design' }
-      );
-    } catch (err) {
-      await logger.agent(this.name, `Complex UX design failed, using audience-matched defaults...`);
+    {
+      await logger.agent(this.name, `Using audience-matched UX defaults (skipping slow designUX LLM call)...`);
       const isDev = idea.audienceProfile.techSavviness === 'high';
       spec = {
         designSystem: {
@@ -2152,16 +2149,9 @@ class BackendAgent {
   /** Public: design-only phase — returns API spec without generating code files */
   async designSpec(idea: ValidatedIdea): Promise<BackendSpec> {
     await logger.agent(this.name, `Designing backend for "${idea.title}" (${idea.category})...`);
-    let spec: BackendSpec;
-    try {
-      spec = await retryLoop(
-        () => this.designBackend(idea),
-        { maxRetries: 1, baseDelay: 5000, label: 'Backend architecture design' }
-      );
-    } catch (err) {
-      await logger.agent(this.name, `Complex backend design failed, trying simplified prompt...`);
-      spec = await this.designBackendSimplified(idea);
-    }
+    // Use simplified prompt directly — full designBackend consistently hits NVIDIA's ~5min server timeout
+    // Simplified produces the same 4 routes + 1 data model at 3000 tokens, completes in ~4 min reliably
+    const spec = await this.designBackendSimplified(idea);
     await logger.agent(this.name, `Backend spec ready: ${spec.apiRoutes.length} API routes, ${spec.dataModels.length} data models`);
     return spec;
   }
