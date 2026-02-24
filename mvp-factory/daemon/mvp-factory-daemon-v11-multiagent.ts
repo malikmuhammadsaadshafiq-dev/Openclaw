@@ -588,13 +588,14 @@ No JSON. No markdown fences. No explanation. Just the code.`;
     return content.length >= 30 ? content : null;
   };
 
-  // Single attempt — retry ONLY if response is pure thinking text, never on timeout/error
+  // Single attempt using non-streaming — stream calls consistently hit 5-min NVIDIA timeout for 7K token files.
+  // nonStream has adaptive timeout (7min for 7K tokens) and waits for full response, no mid-stream stalls.
   try {
-    const response = await kimi.complete(prompt, { maxTokens, temperature: 0.2, systemPrompt });
+    const response = await kimi.complete(prompt, { maxTokens, temperature: 0.2, systemPrompt, nonStream: true });
     const code = extractCode(response);
     if (code) return { path: filePath, content: code };
     // Pure thinking text response — try once more with a nudge
-    const response2 = await kimi.complete(prompt + '\n\nRespond with ONLY the file content, no explanations.', { maxTokens, temperature: 0.1, systemPrompt });
+    const response2 = await kimi.complete(prompt + '\n\nRespond with ONLY the file content, no explanations.', { maxTokens, temperature: 0.1, systemPrompt, nonStream: true });
     return extractCode(response2) ? { path: filePath, content: extractCode(response2)! } : null;
   } catch {
     return null;  // Timeout or API error — fail fast, don't retry
