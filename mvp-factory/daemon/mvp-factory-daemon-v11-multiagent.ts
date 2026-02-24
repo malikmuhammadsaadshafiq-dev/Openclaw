@@ -630,8 +630,8 @@ function makeRichStub(filePath: string, idea: { title: string; description: stri
   if (filePath.endsWith('.ts') && !filePath.endsWith('.tsx'))
     return makeFileStub(filePath);
 
-  const title = (idea.title || 'App').replace(/'/g, "\\'");
-  const desc = (idea.description || '').slice(0, 120).replace(/'/g, "\\'");
+  const title = (idea.title || 'App').replace(/'/g, "\\'").replace(/`/g, '\\`').replace(/\$\{/g, '\\${');
+  const desc = (idea.description || '').slice(0, 120).replace(/'/g, "\\'").replace(/`/g, '\\`').replace(/\$\{/g, '\\${');
   const features = (idea.features || []).slice(0, 3);
 
   // layout.tsx — proper root layout with metadata
@@ -681,8 +681,8 @@ export default function Dashboard() {
 
   // Audience psychology — extract from audienceProfile if present
   const targetUsers = (idea as any).targetUsers || 'professionals';
-  const painPoint = ((idea as any).audienceProfile?.painPoints?.[0] || desc).replace(/'/g, "\\'").slice(0, 120);
-  const motivation = ((idea as any).audienceProfile?.motivations?.[0] || features[0] || '').replace(/'/g, "\\'");
+  const painPoint = ((idea as any).audienceProfile?.painPoints?.[0] || desc).replace(/'/g, "\\'").replace(/`/g, '\\`').replace(/\$\{/g, '\\${').slice(0, 120);
+  const motivation = ((idea as any).audienceProfile?.motivations?.[0] || features[0] || '').replace(/'/g, "\\'").replace(/`/g, '\\`').replace(/\$\{/g, '\\${');
   const heroTitle = painPoint.length > 10
     ? `Stop ${painPoint.slice(0, 60).toLowerCase()}`
     : `The smarter way to ${(features[0] || title).toLowerCase()}`;
