@@ -131,8 +131,8 @@ const CONFIG = {
     skipped: '/root/mvp-projects/skipped',
   },
   intervals: {
-    research: 15 * 60 * 1000,    // 15 min — keeps queue full for 12+ builds/day
-    build: 5 * 60 * 1000,        // 5 min check — next build fires as soon as previous finishes
+    research: 15 * 60 * 1000,    // 15 min — keeps queue stocked (4 builds/day, 4h each = high quality)
+    build: 5 * 60 * 1000,        // 5 min check — next build fires as soon as previous finishes (cap enforced)
     healthCheck: 5 * 60 * 1000,  // 5 min
   },
 };
@@ -1881,9 +1881,9 @@ Return ONLY valid JSON:
 }`;
 
     const response = await kimi.complete(prompt, {
-      maxTokens: 4000,
+      maxTokens: 8000,
       temperature: 0.6,
-      systemPrompt: 'You are a senior UX designer who understands behavioral psychology. You design interfaces that genuinely serve users while driving conversions. Every design decision is backed by a psychological principle specific to the target audience.',
+      systemPrompt: 'You are a world-class UX designer and behavioral psychologist. You design interfaces that tap into deep psychological principles — cognitive biases, emotional triggers, habit loops, social dynamics — all tuned to the specific target audience. Every color, copy, layout choice, and CTA is deliberate and backed by specific psychology research applied to THIS audience. Go deep, not generic.',
     });
 
     const parsed = extractJSON(response, 'object');
@@ -2053,7 +2053,7 @@ STYLE: Clean professional like ilovepdf.com${psychContext}${pageContext}${apiRou
       { path: 'src/components/OtherTools.tsx', desc: `Grid of 6 related free tools with SVG icon, name, short description. Links to /tools/[slug]. Clean card grid, responsive 2-3 cols.`, tokens: 5000 },
       { path: 'src/app/globals.css', desc: `TailwindCSS @tailwind directives + :root CSS variables for ${spec.designSystem.primaryColor} brand color. Under 40 lines.`, tokens: 3000 },
       { path: 'src/app/layout.tsx', desc: `Root layout. Metadata for ${idea.title}. Async AdSense script tag (src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-XXXXXXXXXX"). Imports globals.css. Children prop.`, tokens: 5000 },
-      { path: 'src/app/page.tsx', desc: `Main page: ToolHeader at top, AdBanner (slot="1111111111"), then THE WORKING TOOL centered (${idea.features[0] || idea.description}), AdBanner (slot="2222222222") at bottom, OtherTools grid. Tool logic: user inputs → POST to /api/process → show result with download/copy button. Progress indicator during fetch. Drag-drop if file upload relevant. Responsive.`, tokens: 8000 },
+      { path: 'src/app/page.tsx', desc: `Main page: ToolHeader at top, AdBanner (slot="1111111111"), then THE WORKING TOOL centered (${idea.features[0] || idea.description}), AdBanner (slot="2222222222") at bottom, OtherTools grid. Tool logic: user inputs → POST to /api/process → show result with download/copy button. Progress indicator during fetch. Drag-drop if file upload relevant. Psychology: reciprocity (immediate free value), social proof (X users served counter), micro-delight on completion (confetti or success animation). Responsive, accessible.`, tokens: 12000 },
     ];
 
     // Sequential-friendly: staggered starts + semaphore(2) = max 2 concurrent Kimi calls
@@ -2097,10 +2097,10 @@ RULES: No framer-motion. Responsive. For dynamic data fetch() the BACKEND API RO
 
     const fileDefs: Array<{ path: string; desc: string; tokens: number }> = [
       { path: 'src/app/globals.css', desc: `TailwindCSS @tailwind base/components/utilities + :root CSS variables for ${spec.designSystem.primaryColor} brand. Under 40 lines.`, tokens: 2500 },
-      { path: 'src/app/layout.tsx', desc: `Root layout. Server component — NO 'use client' directive at all. Imports globals.css. export const metadata with title="${idea.title}". Responsive Navbar with logo, nav links (Home/Dashboard), Login/Get Started CTA → /auth. Children prop.`, tokens: 5000 },
-      { path: 'src/app/page.tsx', desc: `Landing page for "${idea.title}" targeting ${idea.targetUsers}. Their core problem: ${painPoint}. IMPLEMENT THESE PSYCHOLOGY TACTICS VISIBLY IN THE UI: ${tactics3}. Hero: emotionally resonant headline about their specific fear/problem (NOT a generic headline), powerful subheadline, "Get Started Free" CTA → /auth. 3-4 sections tied to their motivations: ${motivations}. Trust signals and social proof specific to ${idea.targetUsers}. Pricing (Free/Pro/Business tiers with value props matching audience). Bottom emotional CTA. Hardcoded static content only — no fetch().`, tokens: 6000 },
-      { path: 'src/app/auth/page.tsx', desc: `Auth page. Toggle: Login / Sign Up. Email + password form. Client-side validation. On submit: localStorage.setItem("auth_token", "demo_" + Date.now()) then router.push("/dashboard"). Show inline validation errors.`, tokens: 5000 },
-      { path: 'src/app/dashboard/page.tsx', desc: `Dashboard — CORE PRODUCT for ${idea.targetUsers}. PSYCHOLOGY: ${tactics2}. 'use client'. Auth guard: check localStorage "auth_token", redirect to /auth if missing. Sidebar nav + main content. Features: ${idea.features.join(', ')}. 4 stat cards with metrics relevant to ${idea.features[0]}. One functional form per feature (1-2 fields) that POSTs to matching API route; show response result. Pre-populated data table (5 mock rows). Designed for ${idea.audienceProfile?.techSavviness || 'medium'} tech users. Fully responsive.`, tokens: 8000 },
+      { path: 'src/app/layout.tsx', desc: `Root layout. Server component — NO 'use client' directive at all. Imports globals.css. export const metadata with title="${idea.title}". Responsive Navbar with logo, nav links (Home/Dashboard), Login/Get Started CTA → /auth. Children prop.`, tokens: 6000 },
+      { path: 'src/app/page.tsx', desc: `Landing page for "${idea.title}" targeting ${idea.targetUsers}. Their core problem: ${painPoint}. IMPLEMENT THESE PSYCHOLOGY TACTICS VISIBLY IN THE UI: ${tactics3}. Hero: emotionally resonant headline about their specific fear/problem (NOT a generic headline — speak to their exact emotional state), powerful subheadline, "Get Started Free" CTA → /auth. 4-5 rich sections tied to their motivations: ${motivations}. Social proof with testimonials specific to ${idea.targetUsers}. Pricing section (Free/Pro/Business tiers with value props and anchoring psychology). FAQ section addressing real objections. Strong bottom emotional CTA. Hardcoded static content only — no fetch().`, tokens: 12000 },
+      { path: 'src/app/auth/page.tsx', desc: `Auth page. Toggle: Login / Sign Up. Email + password form. Client-side validation. On submit: localStorage.setItem("auth_token", "demo_" + Date.now()) then router.push("/dashboard"). Show inline validation errors. Trust signals near the form (security badge, "No credit card required", etc.).`, tokens: 5000 },
+      { path: 'src/app/dashboard/page.tsx', desc: `Dashboard — CORE PRODUCT for ${idea.targetUsers}. PSYCHOLOGY: ${tactics2}. 'use client'. Auth guard: check localStorage "auth_token", redirect to /auth if missing. Sidebar nav with all feature sections + main content. Features: ${idea.features.join(', ')}. 4-6 stat cards with metrics relevant to ${idea.features[0]} (with trend indicators). One functional interactive section per feature with real form/input that POSTs to matching API route and shows response result. Pre-populated data table (8 mock rows) with sortable columns. Gamification element (streak/progress bar/achievement badge). Designed for ${idea.audienceProfile?.techSavviness || 'medium'} tech users. Fully responsive with mobile sidebar.`, tokens: 14000 },
     ];
 
     // Sequential-friendly: staggered starts + semaphore(2) = max 2 concurrent Kimi calls
@@ -2133,16 +2133,19 @@ RULES: No framer-motion. No hardcoded data — fetch() the BACKEND API ROUTES li
 
     const sysPrompt = `You are an elite frontend developer. Clean, accessible, performant React/TypeScript with TailwindCSS. No framer-motion. Production-quality code. Each psychology tactic listed in PSYCHOLOGY TACTICS must be visibly implemented in the UI (e.g. social proof counters, urgency timers, reciprocity value-first sections, commitment progress bars). Output ONLY raw code — no JSON, no markdown fences.`;
 
-    // Cap extra pages to 2 max to avoid excessive LLM calls
-    const extraPages = spec.pages.filter(p => p.route !== '/').slice(0, 2);
+    // Cap extra pages to 3 max (4-hour budget allows richer multi-page apps)
+    const extraPages = spec.pages.filter(p => p.route !== '/').slice(0, 3);
+    const painPoint = idea.audienceProfile?.painPoints?.[0] || idea.description;
+    const motivations = idea.audienceProfile?.motivations?.slice(0, 2).join(' and ') || idea.features.slice(0, 2).join(', ');
+    const psychTactics3 = spec.psychologyTactics.slice(0, 3).join(' | ');
     const fileDefs: Array<{ path: string; desc: string; tokens: number }> = [
       { path: 'src/app/globals.css', desc: `TailwindCSS @tailwind base/components/utilities + :root CSS variables for ${spec.designSystem.primaryColor} brand color. Under 40 lines.`, tokens: 2500 },
-      { path: 'src/app/layout.tsx', desc: `Root layout. Server component — NO 'use client' directive at all. export const metadata with title and description for ${idea.title}. Imports globals.css. Responsive navbar.`, tokens: 5000 },
-      { path: 'src/app/page.tsx', desc: spec.pages.find(p => p.route === '/')?.purpose || `Main landing page: hero for ${idea.title}, feature overview, CTA. Use ONLY hardcoded static content — do NOT call fetch() or any API from this page.`, tokens: 6000 },
+      { path: 'src/app/layout.tsx', desc: `Root layout. Server component — NO 'use client' directive at all. export const metadata with title and description for ${idea.title}. Imports globals.css. Responsive navbar with logo and navigation links.`, tokens: 6000 },
+      { path: 'src/app/page.tsx', desc: `Landing page for "${idea.title}" targeting ${idea.targetUsers}. Their core pain: ${painPoint}. PSYCHOLOGY TACTICS to implement visibly: ${psychTactics3}. Hero with emotionally resonant headline about their specific pain (NOT generic), strong subheadline, CTA button. Sections addressing their motivations: ${motivations}. Feature highlights, testimonials/social proof specific to ${idea.targetUsers}, trust signals. Hardcoded static content only — no fetch().`, tokens: 10000 },
       ...extraPages.map(p => ({
         path: `src/app${p.route}/page.tsx`,
-        desc: `${p.purpose}. Components: ${p.components.join(', ')}. User flow: ${p.userFlow}. Use hardcoded mock data in useState (pre-loaded). If fetching from an API route, fall back to mock data silently on error. Responsive.`,
-        tokens: 6000,
+        desc: `${p.purpose}. Components: ${p.components.join(', ')}. User flow: ${p.userFlow}. Psychology: embed relevant tactics for ${idea.targetUsers}. Rich implementation with real interactivity. If fetching from an API route, fall back to mock data silently on error. Fully responsive.`,
+        tokens: 10000,
       })),
     ];
 
@@ -2749,10 +2752,10 @@ class PMAgent {
         await logger.agent(this.name, 'RECLASSIFY: api->web (disabled)');
       }
       }
-      // ── Auto-simplify guard: 6+ features → trim to 3 core features to prevent timeout ──
-      if (buildable.features && buildable.features.length >= 6) {
+      // ── Auto-simplify guard: 8+ features → trim to 5 core features (4-hour budget allows more complexity) ──
+      if (buildable.features && buildable.features.length >= 8) {
         const original = buildable.features.length;
-        buildable.features = buildable.features.slice(0, 3);
+        buildable.features = buildable.features.slice(0, 5);
         // Also simplify tech stack to avoid LLM trying to implement complex external deps
         if (buildable.techStack && (buildable.techStack.includes('Tesseract') || buildable.techStack.includes('OpenAI') || buildable.techStack.includes('Vision') || buildable.techStack.includes('Blob'))) {
           buildable.techStack = 'Next.js 14 App Router + TypeScript + TailwindCSS';
@@ -2853,12 +2856,12 @@ class PMAgent {
         ideas: remaining.slice(0, 5).map(i => ({ title: i.title, source: i.sourcePlatform, score: i.validation?.overallScore })),
       })).catch(() => {});
 
-      // Hard 35-minute timeout — prevents a single stuck LLM call from freezing the pipeline
-      // 55 min timeout: Kimi K2.5 thinking mode streams ~14 tokens/sec — 20K tokens = 23min per call
-      // Total: 6min design + 23min code gen (parallel) + 15min repair + 5min deploy = ~49min
-      const BUILD_TIMEOUT_MS = 120 * 60 * 1000;
+      // 4-hour timeout per build — allows deep, complex feature generation
+      // Kimi K2.5 thinking mode: ~14 tokens/sec. 14K token file = ~17min. With 4 parallel files = ~17min.
+      // Budget: 10min design + 34min code gen (sequential) + 20min repair + 10min deploy = ~74min typical
+      const BUILD_TIMEOUT_MS = 240 * 60 * 1000;
       const buildTimeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`Build timeout: "${buildable!.title}" exceeded 120 minutes — will retry next cycle`)), BUILD_TIMEOUT_MS)
+        setTimeout(() => reject(new Error(`Build timeout: "${buildable!.title}" exceeded 240 minutes — will retry next cycle`)), BUILD_TIMEOUT_MS)
       );
 
       const buildExecutionPromise = (async () => {
@@ -4344,6 +4347,11 @@ async function runForever(): Promise<never> {
   let researchRunning = false;
   let buildRunning    = false;
 
+  // Daily build cap — max 4 builds/day (each gets up to 4 hours = best quality)
+  const DAILY_BUILD_LIMIT = 4;
+  let dailyBuildCount = 0;
+  let dailyBuildDate  = new Date().toDateString(); // resets at midnight
+
   const RESEARCH_EVERY = CONFIG.intervals.research; // 15 min — keeps queue full
   const BUILD_EVERY    = CONFIG.intervals.build;    // 5 min check — starts next build ASAP after previous finishes
   const HEALTH_EVERY   = CONFIG.intervals.healthCheck; // 5 min
@@ -4385,6 +4393,7 @@ async function runForever(): Promise<never> {
   pm.runBuildFromQueue()
     .then(async (result) => {
       lastBuild = Date.now();
+      if (result && result.success) { dailyBuildCount++; await logger.log(`Daily builds: ${dailyBuildCount}/${DAILY_BUILD_LIMIT}`); }
       if (result && !result.success && (result.error === 'Empty queue' || result.error === 'No ideas')) {
         await logger.log('Queue empty at startup — build will start once validation approves first idea');
       }
@@ -4421,25 +4430,39 @@ async function runForever(): Promise<never> {
       }
 
       // Build cycle — fire-and-forget, PMAgent's internal isBuilding lock handles concurrency
+      // Daily build cap: max 4 builds/day — more time per build = better quality
+      const todayStr = new Date().toDateString();
+      if (todayStr !== dailyBuildDate) { dailyBuildCount = 0; dailyBuildDate = todayStr; }
       if (!buildRunning && now - lastBuild >= BUILD_EVERY) {
-        buildRunning = true;
-        pm.runBuildFromQueue()
-          .then(async (result) => {
-            lastBuild = Date.now();
-            // If queue was empty, trigger research immediately so the queue refills fast
-            if (result && !result.success && (result.error === 'Empty queue' || result.error === 'No ideas')) {
-              await logger.log('Queue empty — triggering emergency research cycle');
-              if (!researchRunning) {
-                researchRunning = true;
-                pm.runResearchAndValidation()
-                  .then(() => { lastResearch = Date.now(); })
-                  .catch(async (e) => { await logger.log(`Emergency research error: ${e}`, 'ERROR'); lastResearch = Date.now(); })
-                  .finally(() => { researchRunning = false; });
+        if (dailyBuildCount >= DAILY_BUILD_LIMIT) {
+          // Cap reached — log once per check then skip until tomorrow
+          if (now - lastBuild < BUILD_EVERY + 60_000) {
+            await logger.log(`Daily build cap reached (${dailyBuildCount}/${DAILY_BUILD_LIMIT}) — resuming at midnight`);
+          }
+        } else {
+          buildRunning = true;
+          pm.runBuildFromQueue()
+            .then(async (result) => {
+              lastBuild = Date.now();
+              if (result && result.success) {
+                dailyBuildCount++;
+                await logger.log(`Daily builds: ${dailyBuildCount}/${DAILY_BUILD_LIMIT}`);
               }
-            }
-          })
-          .catch(async (e) => { await logger.log(`Build cycle error: ${e}`, 'ERROR'); lastBuild = Date.now(); })
-          .finally(() => { buildRunning = false; });
+              // If queue was empty, trigger research immediately so the queue refills fast
+              if (result && !result.success && (result.error === 'Empty queue' || result.error === 'No ideas')) {
+                await logger.log('Queue empty — triggering emergency research cycle');
+                if (!researchRunning) {
+                  researchRunning = true;
+                  pm.runResearchAndValidation()
+                    .then(() => { lastResearch = Date.now(); })
+                    .catch(async (e) => { await logger.log(`Emergency research error: ${e}`, 'ERROR'); lastResearch = Date.now(); })
+                    .finally(() => { researchRunning = false; });
+                }
+              }
+            })
+            .catch(async (e) => { await logger.log(`Build cycle error: ${e}`, 'ERROR'); lastBuild = Date.now(); })
+            .finally(() => { buildRunning = false; });
+        }
       }
 
       // Health check
