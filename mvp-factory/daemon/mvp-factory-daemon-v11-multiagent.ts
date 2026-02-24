@@ -2453,6 +2453,10 @@ class PlaywrightTestAgent {
       // Run visual + functional tests across all routes
       const issues = await this.runPageTests(currentUrl, idea, screenshotBase, round);
 
+      // Send screenshots to Telegram for human visual review after each round
+      const roundDir = path.join(screenshotBase, `round${round}`);
+      await this.sendScreenshotsToTelegram(roundDir, round, idea, issues);
+
       if (issues.length === 0) {
         await logger.agent(this.name, `Round ${round}: All pages pass — product looks great!`);
         break;
@@ -2615,9 +2619,9 @@ class PlaywrightTestAgent {
           try {
             const html = await page.content();
             const designEval = await this.evaluateDesignPsychology(html, pageText, route, idea);
-            const verdict = designEval.score >= 5 ? '✓ PASS' : '✗ REDESIGN';
+            const verdict = designEval.score >= 6 ? '✓ PASS' : '✗ REDESIGN';
             await logger.agent(this.name, `  Psychology score ${route}: ${designEval.score}/10 — ${verdict}`);
-            if (designEval.score < 5) {
+            if (designEval.score < 6) {
               issues.push({
                 route,
                 httpStatus,
@@ -2808,6 +2812,57 @@ Return ONLY valid JSON:
     } catch (err) {
       await logger.agent(this.name, `Visual analysis error on ${route}: ${String(err).slice(0, 100)}`);
       return { visualScore: 5, visualIssues: [], visualFixes: [] };
+    }
+  }
+
+  /**
+   * Send all PNG screenshots from a QA round to Telegram for human visual review.
+   * Each screenshot is sent as a photo with a caption showing route, round, HTTP status, and design score.
+   */
+  private async sendScreenshotsToTelegram(
+    screenshotDir: string,
+    round: number,
+    idea: ValidatedIdea,
+    issues: PageIssue[]
+  ): Promise<void> {
+    if (!CONFIG.telegram.botToken || !CONFIG.telegram.chatId) return;
+    try {
+      const files = await fs.readdir(screenshotDir).catch(() => [] as string[]);
+      const pngs = files.filter((f: string) => f.endsWith('.png'));
+      for (const png of pngs) {
+        const slug = png.replace('.png', '');
+        const route = slug === 'home' ? '/' : `/${slug.replace(/-/g, '/')}`;
+        const matchingIssue = issues.find(i => {
+          const iSlug = i.route === '/' ? 'home' : i.route.replace(/\//g, '-').replace(/^-/, '');
+          return iSlug === slug;
+        });
+        const status = matchingIssue?.httpStatus || 200;
+        const score = matchingIssue?.designScore;
+        const issueCount = issues.filter(i => i.route === route).length;
+
+        const caption = [
+          `\u{1F5BC} *${idea.title.replace(/[*_`]/g, '')}*`,
+          `Round ${round} | Route: \`${route}\``,
+          `HTTP: ${status} | Issues: ${issueCount}`,
+          score !== undefined ? `Psychology score: ${score}/10` : '',
+        ].filter(Boolean).join('\n');
+
+        const imgBuffer = await fs.readFile(`${screenshotDir}/${png}`);
+        const formData = new FormData();
+        formData.append('chat_id', CONFIG.telegram.chatId);
+        formData.append('caption', caption);
+        formData.append('parse_mode', 'Markdown');
+        formData.append('photo', new Blob([imgBuffer], { type: 'image/png' }), png);
+
+        await fetch(`https://api.telegram.org/bot${CONFIG.telegram.botToken}/sendPhoto`, {
+          method: 'POST',
+          body: formData,
+        }).catch(() => {}); // never throw — Telegram delivery is best-effort
+
+        await new Promise(r => setTimeout(r, 600)); // small gap between sends
+      }
+    } catch (err) {
+      await logger.agent(this.name, `Telegram screenshot send error: ${String(err).slice(0, 100)}`);
     }
   }
 
