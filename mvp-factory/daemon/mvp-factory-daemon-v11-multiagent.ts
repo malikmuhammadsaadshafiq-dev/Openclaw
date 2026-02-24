@@ -2562,6 +2562,30 @@ class PlaywrightTestAgent {
           await fs.mkdir(screenshotDir, { recursive: true });
           await page.screenshot({ path: path.join(screenshotDir, `${slug}.png`), fullPage: true });
           await logger.agent(this.name, `Screenshot: round${round}/${slug}.png (HTTP ${httpStatus})`);
+
+          // Vision AI analysis — only round 1, only key pages, to avoid excess API cost
+          if (round === 1 && (route === '/' || route === '/dashboard') && !loadError) {
+            const screenshotFilePath = path.join(screenshotDir, `${slug}.png`);
+            const visual = await this.analyzeScreenshotVisually(screenshotFilePath, route, idea);
+            await logger.agent(this.name, `  [Vision] ${route}: ${visual.visualScore}/10 | Issues: ${visual.visualIssues.length}`);
+            if (visual.visualScore < 6 && (visual.visualIssues.length > 0 || visual.visualFixes.length > 0)) {
+              // Add as a design-quality issue so generateAndApplyFixes picks it up
+              issues.push({
+                route,
+                httpStatus,
+                consoleErrors: [],
+                networkErrors: [],
+                pageTextSnippet: pageText.slice(0, 600),
+                loadError: '',
+                hasErrorText: false,
+                isBlank: false,
+                issueType: 'design-quality',
+                designScore: visual.visualScore,
+                designIssues: visual.visualIssues,
+                designImprovements: visual.visualFixes,
+              });
+            }
+          }
         } catch (err: any) {
           loadError = String(err).slice(0, 200);
           httpStatus = 0;
@@ -2698,6 +2722,92 @@ Return ONLY valid JSON:
     } catch (err) {
       await logger.agent(this.name, `Design eval error: ${String(err).slice(0, 100)}`);
       return { score: 5, issues: [], improvements: [] }; // default: don't block on eval failure
+    }
+  }
+
+  /**
+   * Send a screenshot PNG to NVIDIA vision model for visual design feedback.
+   * Returns a visual score (1-10) plus specific issues and actionable fixes.
+   * Uses nvidia/llama-3.2-90b-vision-instruct — different model from Kimi K2.5.
+   */
+  private async analyzeScreenshotVisually(
+    screenshotPath: string,
+    route: string,
+    idea: ValidatedIdea
+  ): Promise<{ visualScore: number; visualIssues: string[]; visualFixes: string[] }> {
+    try {
+      const imgBuffer = await fs.readFile(screenshotPath);
+      const base64 = imgBuffer.toString('base64');
+      const ap = idea.audienceProfile;
+      const pageLabel = route === '/' ? 'landing page' : `${route.slice(1)} page`;
+
+      const visionPrompt = `You are a UX design critic reviewing a screenshot of a web app.
+
+PRODUCT: ${idea.title}
+PAGE: ${pageLabel}
+TARGET AUDIENCE: ${idea.targetUsers}
+Tech level: ${ap.techSavviness} | Pain: ${ap.painPoints?.[0] || 'unknown'} | Motivation: ${ap.motivations?.[0] || 'unknown'}
+
+Score the page 1-10 on VISUAL DESIGN QUALITY. Be harsh — generic AI output scores 2-4.
+
+Look at:
+1. Is the hero headline specific to this audience's exact pain, or generic ("all-in-one", "boost productivity")?
+2. Are psychology tactics VISIBLE? (social proof counters, urgency, free value demos, trust badges)
+3. Does the color palette suit ${ap.techSavviness} tech users who are ${ap.priceWillingness} payers?
+4. Are there blank/empty sections or placeholder text?
+5. Does it look professional and complete, or like a skeleton?
+
+Return ONLY valid JSON:
+{
+  "visualScore": <1-10 integer>,
+  "issues": ["specific visible problem 1", "specific visible problem 2"],
+  "fixes": ["Specific actionable fix 1", "Specific actionable fix 2"]
+}`;
+
+      const payload = {
+        model: 'nvidia/llama-3.2-90b-vision-instruct',
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image_url', image_url: { url: `data:image/png;base64,${base64}` } },
+            { type: 'text', text: visionPrompt },
+          ],
+        }],
+        max_tokens: 1200,
+        temperature: 0.2,
+      };
+
+      const resp = await fetch(`${CONFIG.nvidia.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${CONFIG.nvidia.apiKey}`,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!resp.ok) {
+        await logger.agent(this.name, `Vision API ${resp.status} — skipping visual analysis for ${route}`);
+        return { visualScore: 5, visualIssues: [], visualFixes: [] };
+      }
+
+      const data = await resp.json() as any;
+      const content = data?.choices?.[0]?.message?.content || '';
+      const parsed = extractJSON(content, 'object');
+
+      if (!parsed || typeof parsed.visualScore !== 'number') {
+        await logger.agent(this.name, `Vision API returned non-JSON for ${route} — skipping`);
+        return { visualScore: 5, visualIssues: [], visualFixes: [] };
+      }
+
+      return {
+        visualScore: Math.min(10, Math.max(1, Math.round(parsed.visualScore))),
+        visualIssues: Array.isArray(parsed.issues) ? parsed.issues : [],
+        visualFixes: Array.isArray(parsed.fixes) ? parsed.fixes : [],
+      };
+    } catch (err) {
+      await logger.agent(this.name, `Visual analysis error on ${route}: ${String(err).slice(0, 100)}`);
+      return { visualScore: 5, visualIssues: [], visualFixes: [] };
     }
   }
 
