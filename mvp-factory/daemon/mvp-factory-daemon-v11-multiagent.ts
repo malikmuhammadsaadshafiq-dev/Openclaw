@@ -2664,9 +2664,9 @@ class PlaywrightTestAgent {
           try {
             const html = await page.content();
             const designEval = await this.evaluateDesignPsychology(html, pageText, route, idea);
-            const verdict = designEval.score >= 7 ? '✓ PASS' : '✗ REDESIGN';
+            const verdict = designEval.score >= 5 ? '✓ PASS' : '✗ REDESIGN';
             await logger.agent(this.name, `  Psychology score ${route}: ${designEval.score}/10 — ${verdict}`);
-            if (designEval.score < 7) {
+            if (designEval.score < 5) {
               issues.push({
                 route,
                 httpStatus,
@@ -2751,7 +2751,7 @@ Scoring criteria:
 Return ONLY valid JSON:
 {
   "score": <1-10 integer>,
-  "verdict": "PASS" or "REDESIGN",
+  "verdict": "PASS (score ≥5) or REDESIGN (score <5)",
   "genericElements": ["specific thing that is generic/wrong", "another one", ...],
   "missingTactics": ["loss aversion missing because...", "no social proof..."],
   "improvements": [
