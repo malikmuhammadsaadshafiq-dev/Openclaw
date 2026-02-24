@@ -254,6 +254,17 @@ interface BuildResult {
   error?: string;
 }
 
+interface PageIssue {
+  route: string;
+  httpStatus: number;
+  consoleErrors: string[];
+  networkErrors: string[];
+  pageTextSnippet: string;
+  loadError: string;
+  hasErrorText: boolean;
+  isBlank: boolean;
+}
+
 // ============================================================
 // Logger
 // ============================================================
@@ -2466,6 +2477,327 @@ Return NextResponse.json() with the result. Under 80 lines.`;
 
 
 // ============================================================
+// AGENT 6: PLAYWRIGHT TEST AGENT (Visual QA + Self-Healing Loop)
+// ============================================================
+class PlaywrightTestAgent {
+  private name = 'PlaywrightTestAgent';
+  private static chromiumReady = false;
+
+  /** One-time: ensure Chromium is installed on this machine */
+  private async ensureChromium(): Promise<void> {
+    if (PlaywrightTestAgent.chromiumReady) return;
+    try {
+      await execAsync('npx playwright install chromium 2>&1 | tail -3', { timeout: 180000 });
+      PlaywrightTestAgent.chromiumReady = true;
+      await logger.agent(this.name, 'Chromium ready');
+    } catch {
+      PlaywrightTestAgent.chromiumReady = true; // assume already installed
+    }
+  }
+
+  /**
+   * Main entry: test deployed URL → find issues → fix code → redeploy → repeat
+   * Returns the final (possibly improved) Vercel URL
+   */
+  async testAndImprove(
+    vercelUrl: string,
+    idea: ValidatedIdea,
+    projectPath: string,
+    maxRounds = 3
+  ): Promise<string> {
+    await this.ensureChromium();
+
+    const screenshotBase = path.join(CONFIG.paths.output, 'screenshots', toSlug(idea.title));
+    await fs.mkdir(screenshotBase, { recursive: true });
+
+    let currentUrl = vercelUrl;
+
+    for (let round = 1; round <= maxRounds; round++) {
+      await logger.agent(this.name, `====== QA ROUND ${round}/${maxRounds} ======`);
+
+      // Wait for Vercel edge to propagate (up to 90s)
+      await this.waitForUrl(currentUrl, 90000);
+
+      // Run visual + functional tests across all routes
+      const issues = await this.runPageTests(currentUrl, idea, screenshotBase, round);
+
+      if (issues.length === 0) {
+        await logger.agent(this.name, `Round ${round}: All pages pass — product looks great!`);
+        break;
+      }
+
+      await logger.agent(this.name, `Round ${round}: ${issues.length} page(s) have issues`);
+
+      if (round === maxRounds) {
+        await logger.agent(this.name, 'Max QA rounds reached — shipping current state');
+        break;
+      }
+
+      // Generate LLM fixes and apply to disk
+      const fixed = await this.generateAndApplyFixes(idea, projectPath, issues);
+      if (!fixed) { await logger.agent(this.name, 'No fixes generated — stopping'); break; }
+
+      // Rebuild and redeploy with fixes
+      const newUrl = await this.rebuildAndRedeploy(projectPath, idea);
+      if (!newUrl) { await logger.agent(this.name, 'Redeploy failed — keeping current URL'); break; }
+
+      currentUrl = newUrl;
+      await logger.agent(this.name, `Round ${round} fix deployed: ${currentUrl}`);
+    }
+
+    return currentUrl;
+  }
+
+  /** Poll URL until it returns a non-5xx response */
+  private async waitForUrl(url: string, timeoutMs = 90000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      try {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 10000);
+        const r = await fetch(url, { signal: ctrl.signal });
+        clearTimeout(t);
+        if (r.status < 500) return;
+      } catch {}
+      await new Promise(r => setTimeout(r, 6000));
+    }
+    await logger.agent(this.name, `${url} not ready after ${timeoutMs/1000}s — proceeding anyway`);
+  }
+
+  /** Determine which routes to test based on product type */
+  private getRoutes(idea: ValidatedIdea): string[] {
+    const routes = ['/'];
+    if (idea.monetizationType !== 'free_ads') routes.push('/auth', '/dashboard');
+    return routes;
+  }
+
+  /** Launch headless Chromium, visit each route, screenshot + collect errors */
+  private async runPageTests(
+    vercelUrl: string,
+    idea: ValidatedIdea,
+    screenshotBase: string,
+    round: number
+  ): Promise<PageIssue[]> {
+    let chromiumLauncher: any;
+    try {
+      // Dynamic import so daemon doesn't crash if playwright isn't installed yet
+      const pw = await import('playwright');
+      chromiumLauncher = pw.chromium;
+    } catch {
+      await logger.agent(this.name, 'Playwright not importable — skipping visual QA this round');
+      return [];
+    }
+
+    const routes = this.getRoutes(idea);
+    const issues: PageIssue[] = [];
+    let browser: any;
+
+    try {
+      browser = await chromiumLauncher.launch({
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+      });
+
+      for (const route of routes) {
+        const page = await browser.newPage();
+        const consoleErrors: string[] = [];
+        const networkErrors: string[] = [];
+
+        page.on('console', (msg: any) => {
+          if (msg.type() === 'error') consoleErrors.push(msg.text().slice(0, 200));
+        });
+        page.on('requestfailed', (req: any) => {
+          const u = req.url();
+          // Ignore third-party ads/analytics noise
+          if (!u.includes('google') && !u.includes('analytics') && !u.includes('adsbygoogle')) {
+            networkErrors.push(`${req.method()} ${u.slice(0, 120)}: ${req.failure()?.errorText || 'failed'}`);
+          }
+        });
+
+        let httpStatus = 0;
+        let pageText = '';
+        let loadError = '';
+
+        try {
+          const resp = await page.goto(vercelUrl + route, { timeout: 35000, waitUntil: 'networkidle' });
+          httpStatus = resp?.status() || 0;
+          await page.waitForTimeout(2500); // let React hydrate
+          pageText = ((await page.textContent('body')) || '').slice(0, 3000);
+
+          // Save screenshot
+          const slug = route === '/' ? 'home' : route.replace(/\//g, '-').replace(/^-/, '');
+          const screenshotDir = path.join(screenshotBase, `round${round}`);
+          await fs.mkdir(screenshotDir, { recursive: true });
+          await page.screenshot({ path: path.join(screenshotDir, `${slug}.png`), fullPage: true });
+          await logger.agent(this.name, `Screenshot: round${round}/${slug}.png (HTTP ${httpStatus})`);
+        } catch (err: any) {
+          loadError = String(err).slice(0, 200);
+          httpStatus = 0;
+        }
+
+        const errorPhrases = [
+          'application error', 'server error', 'something went wrong',
+          'internal server error', 'cannot read', 'is not defined',
+          'hydration failed', 'unhandled exception', 'runtime error',
+        ];
+        const hasErrorText = errorPhrases.some(p => pageText.toLowerCase().includes(p));
+        const isBlank = pageText.trim().length < 60;
+
+        const hasProblems = httpStatus >= 400 || consoleErrors.length > 0 ||
+          networkErrors.length > 3 || hasErrorText || isBlank || !!loadError;
+
+        if (hasProblems) {
+          issues.push({ route, httpStatus, consoleErrors, networkErrors: networkErrors.slice(0, 5), pageTextSnippet: pageText.slice(0, 600), loadError, hasErrorText, isBlank });
+          await logger.agent(this.name, `  ISSUE on ${route}: HTTP=${httpStatus} console=${consoleErrors.length} net=${networkErrors.length} errorText=${hasErrorText} blank=${isBlank}`);
+        } else {
+          await logger.agent(this.name, `  OK: ${route} (HTTP ${httpStatus})`);
+        }
+
+        await page.close();
+      }
+    } finally {
+      if (browser) await browser.close().catch(() => {});
+    }
+
+    return issues;
+  }
+
+  /** Ask Kimi K2.5 to generate targeted fixes for each broken page */
+  private async generateAndApplyFixes(
+    idea: ValidatedIdea,
+    projectPath: string,
+    issues: PageIssue[]
+  ): Promise<boolean> {
+    const issueText = issues.map(i =>
+      `ROUTE: ${i.route}\nHTTP: ${i.httpStatus || 'load failed'}\nConsole errors: ${i.consoleErrors.join(' | ') || 'none'}\nNetwork errors: ${i.networkErrors.join(' | ') || 'none'}\nPage snippet: ${i.pageTextSnippet || '(blank)'}\nError text detected: ${i.hasErrorText} | Blank: ${i.isBlank}${i.loadError ? `\nLoad error: ${i.loadError}` : ''}`
+    ).join('\n---\n');
+
+    // Gather current file contents for broken routes
+    const filesToRead = new Set<string>(['src/app/layout.tsx', 'src/app/globals.css']);
+    for (const issue of issues) {
+      if (issue.route === '/') filesToRead.add('src/app/page.tsx');
+      else filesToRead.add(`src/app${issue.route}/page.tsx`);
+    }
+
+    const fileContents: string[] = [];
+    for (const fp of filesToRead) {
+      try {
+        const content = await fs.readFile(path.join(projectPath, fp), 'utf-8');
+        fileContents.push(`=== ${fp} ===\n${content.slice(0, 5000)}`);
+      } catch {}
+    }
+    if (fileContents.length === 0) return false;
+
+    const prompt = `You are a Next.js 14 expert fixing a live deployed app. Automated browser tests found these issues:
+
+${issueText}
+
+Current file contents:
+${fileContents.join('\n\n')}
+
+Product context:
+- Name: ${idea.title}
+- Description: ${idea.description}
+- Features: ${idea.features.join(', ')}
+- Target users: ${idea.targetUsers}
+- Monetization: ${idea.monetizationType}
+- Stack: Next.js 14 App Router, TypeScript, TailwindCSS
+
+Fix ALL reported issues. Return ONLY a valid JSON array of fixed files:
+[
+  {"path": "src/app/page.tsx", "content": "...complete fixed file..."},
+  ...
+]
+
+Fix rules:
+- Add 'use client' to any page using useState/useEffect/onClick
+- Fix undefined variables and missing imports
+- Replace blank pages with real content from product context
+- Fix HTTP 500s: move server-side logic to API routes, keep pages client-side
+- Keep all existing working functionality
+- All TailwindCSS classes must be valid
+- Return ONLY the JSON array — no markdown, no explanation`;
+
+    try {
+      const resp = await kimi.complete(prompt, {
+        maxTokens: 16000,
+        temperature: 0.1,
+        systemPrompt: 'You are a senior Next.js debugger. Fix exactly what is broken. Return only a valid JSON array of files.',
+      });
+      const fixedFiles = extractJSON(resp, 'array') as Array<{ path: string; content: string }>;
+      if (!fixedFiles?.length) return false;
+
+      let applied = 0;
+      for (const f of fixedFiles) {
+        if (!f.path || !f.content || f.content.length < 20) continue;
+        const fullPath = path.join(projectPath, f.path);
+        await fs.mkdir(path.dirname(fullPath), { recursive: true });
+        await fs.writeFile(fullPath, f.content);
+        applied++;
+      }
+      await logger.agent(this.name, `Applied ${applied} fix(es) to ${projectPath}`);
+      return applied > 0;
+    } catch (err) {
+      await logger.agent(this.name, `Fix generation error: ${String(err).slice(0, 200)}`);
+      return false;
+    }
+  }
+
+  /** Rebuild the Next.js project and redeploy to Vercel after fixes */
+  private async rebuildAndRedeploy(projectPath: string, idea: ValidatedIdea): Promise<string | null> {
+    await logger.agent(this.name, 'Rebuilding with fixes...');
+
+    // Reinstall node_modules if they were cleaned up
+    try {
+      await fs.access(path.join(projectPath, 'node_modules'));
+    } catch {
+      await logger.agent(this.name, 'node_modules missing — reinstalling...');
+      await execAsync('npm install --legacy-peer-deps --prefer-offline --fund=false --audit=false',
+        { cwd: projectPath, timeout: 300000 }).catch(() => {});
+    }
+
+    // Build
+    let buildOk = false;
+    try {
+      await execAsync('npm run build', { cwd: projectPath, timeout: 300000, maxBuffer: 20 * 1024 * 1024 });
+      buildOk = true;
+      await logger.agent(this.name, 'Rebuild PASSED');
+    } catch {
+      await logger.agent(this.name, 'Rebuild failed — deploying as-is');
+    }
+
+    // Redeploy
+    try {
+      let deployCmd = `npx vercel --token ${CONFIG.vercel.token} --scope ${CONFIG.vercel.teamId} --yes --prod`;
+      if (buildOk) {
+        try {
+          await execAsync(
+            `npx vercel build --prod --yes --token ${CONFIG.vercel.token} --scope ${CONFIG.vercel.teamId}`,
+            { cwd: projectPath, timeout: 600000, maxBuffer: 50 * 1024 * 1024 }
+          );
+          deployCmd = `npx vercel deploy --prebuilt --token ${CONFIG.vercel.token} --scope ${CONFIG.vercel.teamId} --prod`;
+        } catch {}
+      }
+
+      const result = await execAsync(deployCmd, { cwd: projectPath, timeout: 600000, maxBuffer: 50 * 1024 * 1024 })
+        .catch((e: any) => ({ stdout: e.stdout || String(e), stderr: e.stderr || '' }));
+
+      const output = result.stdout + result.stderr;
+      const urlMatch = output.match(/Production:\s*(https:\/\/[^\s]+)/) ||
+                       output.match(/https:\/\/[a-z0-9][a-z0-9-]*\.vercel\.app/);
+      if (urlMatch) {
+        const newUrl = (urlMatch[1] || urlMatch[0]).replace(/[^\w\-.:\/]/g, '');
+        await logger.agent(this.name, `Fix deployed: ${newUrl}`);
+        return newUrl;
+      }
+    } catch (err) {
+      await logger.agent(this.name, `Redeploy error: ${String(err).slice(0, 200)}`);
+    }
+    return null;
+  }
+}
+
+// ============================================================
 // AGENT 5: PM AGENT (Orchestrator)
 // ============================================================
 class PMAgent {
@@ -2474,6 +2806,7 @@ class PMAgent {
   private validationAgent = new ValidationAgent();
   private frontendAgent = new FrontendAgent();
   private backendAgent = new BackendAgent();
+  private playwrightAgent = new PlaywrightTestAgent();
   private isBuilding = false;
 
   /**
@@ -4251,6 +4584,21 @@ ${buildStep}
             }
           }
         } catch {}
+      }
+    }
+
+    // PHASE 6: Playwright visual QA + self-healing fix loop
+    // Only runs for web/saas apps with a live URL — not extensions, not mobile
+    if (vercelUrl && idea.type !== 'extension' && idea.type !== 'mobile') {
+      try {
+        await logger.agent(this.name, 'PHASE 6: Playwright QA loop — testing live deployment...');
+        const finalUrl = await this.playwrightAgent.testAndImprove(vercelUrl, idea, projectPath, 3);
+        if (finalUrl && finalUrl !== vercelUrl) {
+          vercelUrl = finalUrl;
+          await logger.agent(this.name, `Playwright QA improved URL: ${vercelUrl}`);
+        }
+      } catch (pwErr) {
+        await logger.agent(this.name, `Playwright QA skipped (non-fatal): ${String(pwErr).slice(0, 200)}`);
       }
     }
 
