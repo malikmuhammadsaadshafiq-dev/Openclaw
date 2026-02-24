@@ -3349,6 +3349,19 @@ class PMAgent {
         await logger.agent(this.name, `AUTO-SIMPLIFY: "${buildable.title}" had ${original} features → trimmed to 5 (4-hour budget)`);
       }
 
+      // ── Tech stack normalizer — strip external deps that cause backend design timeout ──
+      // Runs for ALL ideas regardless of feature count. Resets to safe deployable stack.
+      const unsupportedDeps = [
+        'Mapbox', 'PostGIS', 'Twilio', 'FastAPI', 'Tesseract', 'Ollama',
+        'Daily.co', 'Electron', 'Tauri', 'QuickBooks', 'WebRTC', 'Socket.io', 'Pusher',
+        'Prisma', 'PostgreSQL', 'MongoDB', 'Redis', 'Supabase', 'PlanetScale', 'Firebase'
+      ];
+      if (buildable.techStack && unsupportedDeps.some(dep => buildable.techStack!.includes(dep))) {
+        const originalStack = buildable.techStack;
+        buildable.techStack = 'Next.js 14 App Router + TypeScript + TailwindCSS + Lucide-react';
+        await logger.agent(this.name, `STACK-NORMALIZE: "${buildable.title}" → safe stack (was: ${originalStack?.slice(0, 70)})`);
+      }
+
       await logger.agent(this.name, `SELECTED: "${buildable.title}" (score: ${buildable.validation.overallScore}/10) | ${remaining.length} remaining in queue after this`);
       await logger.agent(this.name, `Idea details: type=${buildable.type} | monetization=${buildable.monetizationType || 'free_ads'} | audience=${buildable.audienceProfile?.demographics?.slice(0, 80)} | stack=${buildable.techStack?.slice(0, 60)}`);
 
