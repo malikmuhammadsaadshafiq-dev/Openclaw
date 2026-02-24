@@ -2856,12 +2856,12 @@ class PMAgent {
         ideas: remaining.slice(0, 5).map(i => ({ title: i.title, source: i.sourcePlatform, score: i.validation?.overallScore })),
       })).catch(() => {});
 
-      // 4-hour timeout per build — allows deep, complex feature generation
-      // Kimi K2.5 thinking mode: ~14 tokens/sec. 14K token file = ~17min. With 4 parallel files = ~17min.
-      // Budget: 10min design + 34min code gen (sequential) + 20min repair + 10min deploy = ~74min typical
-      const BUILD_TIMEOUT_MS = 240 * 60 * 1000;
+      // 5.5-hour timeout per build — maximum depth for best quality output
+      // Kimi K2.5 thinking mode: ~14 tokens/sec. 14K token file = ~17min. Sequential files = ~68min total.
+      // Budget: 10min design + 68min code gen + 30min repair + 10min deploy = ~118min typical, 330min max
+      const BUILD_TIMEOUT_MS = 330 * 60 * 1000;
       const buildTimeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`Build timeout: "${buildable!.title}" exceeded 240 minutes — will retry next cycle`)), BUILD_TIMEOUT_MS)
+        setTimeout(() => reject(new Error(`Build timeout: "${buildable!.title}" exceeded 330 minutes — will retry next cycle`)), BUILD_TIMEOUT_MS)
       );
 
       const buildExecutionPromise = (async () => {
