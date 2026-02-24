@@ -1861,12 +1861,6 @@ FEATURES TO BUILD: ${idea.features.join(', ')}
 DESIGN THE COMPLETE UX:
 
 1. DESIGN SYSTEM - Choose colors, fonts, and style that RESONATE with this specific audience:
-   - Tech-savvy devs? Use dark theme, monospace accents, terminal aesthetic
-   - Business users? Clean, corporate, trust-building blues/greens
-   - Creators? Bold, playful, expressive with bright accents
-   - Health/wellness? Calm, natural, organic tones
-   - Finance? Professional, data-dense, confidence-inspiring
-   MATCH THE AUDIENCE, don't use generic gradients
 
 2. UX PATTERNS - What patterns keep this specific audience engaged?
    - Progressive disclosure for complex features
@@ -1980,65 +1974,10 @@ Return ONLY the JSON array, no markdown.`;
     return files;
   }
 
-  private async generateMobileFiles(idea: ValidatedIdea, spec: FrontendSpec): Promise<Array<{ path: string; content: string }>> {
-    const prompt = `Generate a COMPLETE, PRODUCTION-QUALITY React Native + Expo mobile app for this product.
-
-PRODUCT: ${idea.title}
-DESCRIPTION: ${idea.description}
-FEATURES: ${idea.features.join(', ')}
-DESIGN: primary=${spec.designSystem.primaryColor}, font=${spec.designSystem.fontFamily}, style=${spec.designSystem.style}
-
-Generate these files as a JSON array:
-[
-  {"path":"app.json","content":"..."},
-  {"path":"App.tsx","content":"..."},
-  {"path":"src/screens/HomeScreen.tsx","content":"..."},
-  {"path":"src/screens/DetailScreen.tsx","content":"..."},
-  {"path":"src/components/Header.tsx","content":"..."},
-  {"path":"src/navigation/AppNavigator.tsx","content":"..."},
-  {"path":"src/styles/theme.ts","content":"..."},
-  {"path":"package.json","content":"..."}
-]
-
-REQUIREMENTS:
-1. app.json: Expo config with proper name, slug, icon, splash, permissions
-2. App.tsx: Root component with NavigationContainer, status bar, safe area
-3. HomeScreen.tsx: Main screen with FlatList/ScrollView, real feature implementation, pull-to-refresh
-4. DetailScreen.tsx: Detail/action screen with the core user interaction for this product
-5. Header.tsx: Reusable header component with back button, title, right action
-6. AppNavigator.tsx: Stack/Tab navigator using @react-navigation/native, typed routes
-7. theme.ts: Colors (use ${spec.designSystem.primaryColor} as primary), spacing, typography constants
-8. package.json: All deps: expo ~51, react-native, @react-navigation/native, @react-navigation/stack, expo-status-bar, react-native-safe-area-context
-
-USE:
-- TypeScript throughout with proper interfaces
-- StyleSheet.create for all styles, no inline styles
-- Functional components with hooks (useState, useEffect, useCallback)
-- AsyncStorage for local persistence
-- Expo APIs where needed (expo-notifications, expo-camera, expo-location if relevant)
-
-Return ONLY the JSON array, no markdown.`;
-
-    const response = await kimi.complete(prompt, { maxTokens: 32768, temperature: 0.2 });
-    let files = extractJSON(response, 'array') as Array<{ path: string; content: string }>;
-    if (!files || !files.length) {
-      // Fallback: minimal 3-file skeleton
-      const fallbackPrompt = 'Generate a minimal React Native/Expo app for: ' + idea.title + '. Return ONLY a JSON array with 3 files: App.tsx, src/screens/HomeScreen.tsx, package.json. Keep code concise. No markdown.';
-      const fallbackResponse = await kimi.complete(fallbackPrompt, { maxTokens: 16384, temperature: 0.3 });
-      files = extractJSON(fallbackResponse, 'array') as Array<{ path: string; content: string }>;
-    }
-    if (!files || !files.length) throw new Error('Mobile file generation returned empty');
-    return files;
-  }
-
   private async generateFrontendFiles(idea: ValidatedIdea, spec: FrontendSpec, backendSpec?: BackendSpec): Promise<Array<{ path: string; content: string }>> {
     // Chrome extension: different file structure
     if (idea.type === 'extension') {
       return this.generateExtensionFiles(idea, spec);
-    }
-    // Mobile app: React Native + Expo structure
-    if (idea.type === 'mobile') {
-      return this.generateMobileFiles(idea, spec);
     }
     // Free-with-ads utility tool: ilovepdf-style single-page tool
     if (idea.monetizationType === 'free_ads') {
@@ -2244,32 +2183,6 @@ Design a backend that is:
 2. PROPERLY STRUCTURED - clear separation of concerns
 3. PRODUCTION-READY - proper error handling, validation, security
 4. WELL-INTEGRATED - uses real APIs where the category demands it
-
-${idea.category === 'ai-assisted' ? `
-AI INTEGRATION REQUIREMENTS:
-- Use NVIDIA Kimi K2.5 API (https://integrate.api.nvidia.com/v1/chat/completions)
-- Model: moonshotai/kimi-k2.5
-- Auth: Bearer token from process.env.NVIDIA_API_KEY
-- Include meaningful system prompts tailored to this specific product
-- Include graceful fallback processing when API key is not available
-- The AI must do something SPECIFIC and USEFUL, not generic analysis
-` : ''}
-
-${idea.category === 'utility' || idea.category === 'data-tool' ? `
-DATA PROCESSING REQUIREMENTS:
-- Implement REAL algorithms (not just echo input)
-- Process, transform, validate, or analyze data meaningfully
-- Return structured results with metrics/insights
-- Handle edge cases and malformed input gracefully
-` : ''}
-
-${idea.category === 'automation' ? `
-AUTOMATION REQUIREMENTS:
-- Implement real workflow logic (not just timers)
-- Process events and trigger actions
-- Handle scheduling and state management
-- Provide execution logs and status tracking
-` : ''}
 
 Design EXACTLY 4 API routes (not more, not fewer). Each route must be essential.
 
@@ -2749,18 +2662,11 @@ ${html.slice(0, 5000)}
 SCORE THIS PAGE 1-10 on PSYCHOLOGICAL DESIGN QUALITY. Be harsh — generic AI output scores 2-4.
 
 Scoring criteria:
-1. HEADLINE SPECIFICITY (0-2pts): Does the H1 speak to this audience's exact pain/emotion in their own language?
-   - 0: Generic ("The all-in-one platform", "Boost your productivity")
-   - 1: Somewhat specific but still vague
-   - 2: Exactly addresses their specific pain point in words they'd use
-2. PSYCHOLOGY TACTICS (0-3pts): Are loss aversion, social proof, reciprocity, authority actually VISIBLE?
-   - Check for: user counts, testimonials, urgency copy, free value demos, trust badges, progress indicators
-3. EMOTIONAL RESONANCE (0-2pts): Does copy use the emotions and language this specific audience responds to?
-   - ${ap.psychographics} — does the design reflect this?
-4. VISUAL DESIGN FIT (0-2pts): Are colors, typography, layout appropriate for ${ap.techSavviness} tech users who are ${ap.priceWillingness} payers?
-   - Wrong: generic purple-to-pink gradient for a serious B2B tool
-   - Right: design that visually signals the right category/trust level
-5. CTAs (0-1pt): Are call-to-action buttons specific and compelling for this audience?
+1. HEADLINE SPECIFICITY (0-2pts): H1 must address this audience's exact pain in their own language. Generic = 0, specific = 2.
+2. PSYCHOLOGY TACTICS (0-3pts): Loss aversion, social proof, reciprocity, authority must be visibly present. Missing all = 0.
+3. EMOTIONAL RESONANCE (0-2pts): Copy must use the emotions/language of ${ap.psychographics}. Generic tone = 0.
+4. VISUAL DESIGN FIT (0-2pts): Colors/typography must suit ${ap.techSavviness} users at ${ap.priceWillingness} price willingness. Wrong aesthetic = 0.
+5. CTAs (0-1pt): Call-to-action buttons must be specific and compelling for this audience, not generic.
 
 Return ONLY valid JSON:
 {
