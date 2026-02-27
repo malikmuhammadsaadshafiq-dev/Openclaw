@@ -432,43 +432,60 @@ class KimiClient {
 
   private async nonStreamComplete(prompt: string, maxTokens: number, temperature: number, systemPrompt?: string): Promise<string> {
     const timeout = 300000 + Math.ceil(maxTokens / 10000) * 120000;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeout);
-
     const messages: Array<{ role: string; content: string }> = [];
     if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
     messages.push({ role: 'user', content: prompt });
 
-    const response = await fetch(`${CONFIG.nvidia.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${CONFIG.nvidia.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: CONFIG.nvidia.model,
-        messages,
-        max_tokens: maxTokens,
-        temperature,
-        enable_thinking: false,  // Disable thinking tokens for non-stream fallback too
-      }),
-      signal: controller.signal,
-    });
+    // Retry up to 3 times for network-level errors (TypeError: fetch failed)
+    const maxNetworkRetries = 3;
+    for (let netAttempt = 1; netAttempt <= maxNetworkRetries; netAttempt++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeout);
 
-    clearTimeout(timer);
+      try {
+        const response = await fetch(`${CONFIG.nvidia.baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${CONFIG.nvidia.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: CONFIG.nvidia.model,
+            messages,
+            max_tokens: maxTokens,
+            temperature,
+            enable_thinking: false,  // Disable thinking tokens for non-stream fallback too
+          }),
+          signal: controller.signal,
+        });
 
-    if (!response.ok) {
-      const errBody = await response.text().catch(() => '');
-      throw new Error(`Kimi API ${response.status}: ${response.statusText} - ${errBody.slice(0, 200)}`);
+        clearTimeout(timer);
+
+        if (!response.ok) {
+          const errBody = await response.text().catch(() => '');
+          throw new Error(`Kimi API ${response.status}: ${response.statusText} - ${errBody.slice(0, 200)}`);
+        }
+
+        const data = await response.json();
+        const msg = data?.choices?.[0]?.message;
+        const result = msg?.content || msg?.reasoning_content || '';
+        if (!result || typeof result !== 'string' || result.trim().length === 0) {
+          throw new Error(`Empty response (finish_reason: ${data?.choices?.[0]?.finish_reason || 'unknown'})`);
+        }
+        return result;
+      } catch (err: any) {
+        clearTimeout(timer);
+        const isNetworkError = err?.message?.includes('fetch failed') || err?.code === 'ECONNRESET' || err?.code === 'ETIMEDOUT';
+        if (isNetworkError && netAttempt < maxNetworkRetries) {
+          const delay = 5000 * netAttempt + Math.random() * 3000;
+          console.log(`[KimiClient] Network error (attempt ${netAttempt}/${maxNetworkRetries}): ${err?.message}, retrying in ${Math.round(delay / 1000)}s...`);
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
+        throw err;
+      }
     }
-
-    const data = await response.json();
-    const msg = data?.choices?.[0]?.message;
-    const result = msg?.content || msg?.reasoning_content || '';
-    if (!result || typeof result !== 'string' || result.trim().length === 0) {
-      throw new Error(`Empty response (finish_reason: ${data?.choices?.[0]?.finish_reason || 'unknown'})`);
-    }
-    return result;
+    throw new Error('nonStreamComplete exhausted all retries');
   }
 
   async complete(prompt: string, options: { maxTokens?: number; temperature?: number; systemPrompt?: string; nonStream?: boolean } = {}): Promise<string> {
