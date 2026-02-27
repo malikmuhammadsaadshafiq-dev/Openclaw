@@ -1516,22 +1516,23 @@ class ResearchAgent {
     for (const platformPosts of byPlatform.values()) {
       platformPosts.sort((a, b) => b.upvotes - a.upvotes);
     }
-    // Hard quotas per platform — Reddit capped at 20 so others get fair representation
-    const PLATFORM_QUOTAS: Record<string, number> = { reddit: 20, hackernews: 15, devto: 12, github: 10 };
+    // Hard quotas per platform — reduced to fit 18 total posts (was 35, caused timeouts)
+    const PLATFORM_QUOTAS: Record<string, number> = { reddit: 6, hackernews: 5, devto: 4, github: 3 };
     const topPosts: RawIdea[] = [];
     for (const [platform, quota] of Object.entries(PLATFORM_QUOTAS)) {
       topPosts.push(...(byPlatform.get(platform) || []).slice(0, quota));
     }
-    // Pad with any remaining posts (other platforms) up to 60 total
+    // Pad with any remaining posts (other platforms) up to 30 total
     const included = new Set(topPosts.map(p => p.sourcePost));
     const extras = posts.filter(p => !included.has(p.sourcePost)).sort((a, b) => b.upvotes - a.upvotes);
     topPosts.push(...extras);
-    const balancedPosts = topPosts.slice(0, 35);
+    // REDUCED from 35 to 18 posts — 35 posts was causing Kimi K2.5 API timeouts (prompt too large)
+    const balancedPosts = topPosts.slice(0, 18);
     // Log platform breakdown for the sample sent to LLM
     const sampleBreakdown = ['reddit', 'hackernews', 'devto', 'github']
       .map(pl => `${pl}: ${balancedPosts.filter(p => p.sourcePlatform === pl).length}`)
       .join(', ');
-    await logger.agent(this.name, `LLM sample (35 posts): ${sampleBreakdown}`);
+    await logger.agent(this.name, `LLM sample (${balancedPosts.length} posts): ${sampleBreakdown}`);
 
     const postSummaries = balancedPosts
       .map(p => `[${p.sourcePlatform}${p.tags?.[0] ? '/r/'+p.tags[0] : ''}] [${p.upvotes}↑] ${p.title}\n${p.description.slice(0, 120)}\nSource: ${p.sourcePost}`)
@@ -1544,7 +1545,7 @@ CRITICAL: These are REAL posts from many different communities. Your ideas must 
 REAL POSTS:
 ${postSummaries}
 
-Extract 8 product ideas that solve REAL problems visible in these posts. Each idea must:
+Extract 6 product ideas that solve REAL problems visible in these posts. Each idea must:
 1. Address a SPECIFIC pain point from the actual posts above
 2. Be buildable as a software product (web app, Chrome extension, SaaS, API, or browser tool) in 12-24 hours
 3. Have REAL functionality (not just a UI shell)
@@ -1552,7 +1553,7 @@ Extract 8 product ideas that solve REAL problems visible in these posts. Each id
 
 SOURCE DIVERSITY — draw from ALL platforms (reddit, hackernews, devto, github), not just Reddit.
 
-AUDIENCE DIVERSITY — cover a range: 2-3 consumer products, 2 business tools, 1-2 creative tools, 1-2 dev tools.
+AUDIENCE DIVERSITY — cover a range: 2 consumer products, 2 business tools, 1 creative tool, 1 dev tool.
 Prioritize non-developer pain points — they are underserved.
 
 BAD examples (too generic): "AI writing assistant", "task manager", "portfolio builder", "code snippet tool"
@@ -1573,8 +1574,9 @@ Return ONLY valid JSON array:
 }]`;
 
     try {
+      // nonStream: true + reduced tokens to avoid Kimi K2.5 streaming timeout (was 6000 tokens, 35 posts)
       const response = await retryLoop(
-        () => kimi.complete(prompt, { maxTokens: 6000, temperature: 0.7 }),
+        () => kimi.complete(prompt, { maxTokens: 4000, temperature: 0.7, nonStream: true }),
         { maxRetries: 2, baseDelay: 5000, label: 'AI idea extraction' }
       );
 
