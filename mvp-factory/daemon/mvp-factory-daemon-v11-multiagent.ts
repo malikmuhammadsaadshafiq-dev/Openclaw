@@ -17,9 +17,69 @@ import * as path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import * as dns from 'dns';
+import * as https from 'https';
 
 // Force IPv4 for DNS resolution globally (NVIDIA API doesn't support IPv6)
 dns.setDefaultResultOrder('ipv4first');
+
+// Custom HTTPS agent that forces IPv4 (family: 4) for all connections
+// This is necessary because Node.js fetch doesn't fully respect dns.setDefaultResultOrder
+const ipv4Agent = new https.Agent({
+  family: 4,  // Force IPv4
+  keepAlive: true,
+  timeout: 300000,  // 5 minute timeout
+});
+
+// Wrapper for fetch that uses IPv4-only HTTPS agent
+async function fetchIPv4(url: string, options: RequestInit = {}): Promise<Response> {
+  // For NVIDIA API calls, use the https module directly with IPv4 enforcement
+  if (url.includes('integrate.api.nvidia.com')) {
+    return new Promise((resolve, reject) => {
+      const urlObj = new URL(url);
+      const postData = options.body as string || '';
+
+      const req = https.request({
+        hostname: urlObj.hostname,
+        port: 443,
+        path: urlObj.pathname + urlObj.search,
+        method: options.method || 'GET',
+        family: 4,  // Force IPv4
+        timeout: 300000,  // 5 minute timeout
+        headers: {
+          ...Object.fromEntries(
+            Object.entries(options.headers || {}).map(([k, v]) => [k, String(v)])
+          ),
+          'Content-Length': Buffer.byteLength(postData),
+        },
+      }, (res) => {
+        let data = '';
+        res.on('data', chunk => { data += chunk; });
+        res.on('end', () => {
+          resolve({
+            ok: res.statusCode !== undefined && res.statusCode >= 200 && res.statusCode < 300,
+            status: res.statusCode || 0,
+            statusText: res.statusMessage || '',
+            text: async () => data,
+            json: async () => JSON.parse(data),
+            headers: new Headers(res.headers as Record<string, string>),
+          } as Response);
+        });
+      });
+
+      req.on('error', reject);
+      req.on('timeout', () => {
+        req.destroy();
+        reject(new Error('Request timed out'));
+      });
+
+      if (postData) req.write(postData);
+      req.end();
+    });
+  }
+
+  // For all other URLs, use normal fetch
+  return fetch(url, options);
+}
 
 const execAsync = promisify(exec);
 
@@ -435,7 +495,7 @@ class KimiClient {
   }
 
   private async nonStreamComplete(prompt: string, maxTokens: number, temperature: number, systemPrompt?: string): Promise<string> {
-    const timeout = 300000 + Math.ceil(maxTokens / 10000) * 120000;
+    // Timeout is handled by fetchIPv4 (5 minutes built-in)
     const messages: Array<{ role: string; content: string }> = [];
     if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
     messages.push({ role: 'user', content: prompt });
@@ -444,11 +504,9 @@ class KimiClient {
     // Increased from 3 to 5 retries with longer delays to handle persistent network issues
     const maxNetworkRetries = 5;
     for (let netAttempt = 1; netAttempt <= maxNetworkRetries; netAttempt++) {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeout);
-
       try {
-        const response = await fetch(`${CONFIG.nvidia.baseUrl}/chat/completions`, {
+        // Use fetchIPv4 to force IPv4 connection (NVIDIA API doesn't support IPv6)
+        const response = await fetchIPv4(`${CONFIG.nvidia.baseUrl}/chat/completions`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${CONFIG.nvidia.apiKey}`,
@@ -461,10 +519,7 @@ class KimiClient {
             temperature,
             enable_thinking: false,  // Disable thinking tokens for non-stream fallback too
           }),
-          signal: controller.signal,
         });
-
-        clearTimeout(timer);
 
         if (!response.ok) {
           const errBody = await response.text().catch(() => '');
@@ -479,8 +534,7 @@ class KimiClient {
         }
         return result;
       } catch (err: any) {
-        clearTimeout(timer);
-        const isNetworkError = err?.message?.includes('fetch failed') || err?.code === 'ECONNRESET' || err?.code === 'ETIMEDOUT';
+        const isNetworkError = err?.message?.includes('fetch failed') || err?.message?.includes('timed out') || err?.code === 'ECONNRESET' || err?.code === 'ETIMEDOUT';
         if (isNetworkError && netAttempt < maxNetworkRetries) {
           // Longer delays: 10s, 20s, 30s, 40s between retries
           const delay = 10000 * netAttempt + Math.random() * 5000;
