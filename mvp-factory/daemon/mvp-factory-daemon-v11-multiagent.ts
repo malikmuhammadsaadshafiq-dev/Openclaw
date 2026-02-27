@@ -5241,31 +5241,23 @@ async function runForever(): Promise<never> {
     await fs.mkdir(dir, { recursive: true });
   }
 
-  // Single PMAgent instance — lives for the entire process lifetime so
-  // context (existingProducts, isBuilding flag, etc.) is preserved across cycles.
+  // Single PMAgent instance — lives for the entire process lifetime
   const pm = new PMAgent();
   let consecutiveErrors = 0;
 
-  // Timestamps tracking when each cycle last ran
+  // Timestamps for health checks and log rotation
   let lastResearch = 0;
   let lastBuild    = 0;
   let lastHealth   = 0;
   let lastRotation = 0;
 
-  // Flags so we never run the same cycle twice concurrently
-  let researchRunning = false;
-  let buildRunning    = false;
-
-  // Daily build cap — max 4 builds/day (each gets up to 4 hours = best quality)
-  const DAILY_BUILD_LIMIT = 4;
+  // Daily build cap — max 10 builds/day
+  const DAILY_BUILD_LIMIT = 10;
   let dailyBuildCount = 0;
-  let dailyBuildDate  = new Date().toDateString(); // resets at midnight
+  let dailyBuildDate  = new Date().toDateString();
 
-  const RESEARCH_EVERY = CONFIG.intervals.research; // 15 min — keeps queue full
-  const BUILD_EVERY    = CONFIG.intervals.build;    // 5 min check — starts next build ASAP after previous finishes
   const HEALTH_EVERY   = CONFIG.intervals.healthCheck; // 5 min
   const ROTATE_EVERY   = 60 * 60 * 1000;   // 1 hour
-  const TICK           = 15 * 1000;         // loop tick: 15 s (faster response)
 
   // Signal handlers — clean shutdown only on explicit signal
   process.on('SIGINT',  async () => { await logger.log('Shutting down (SIGINT)...');  process.exit(0); });
@@ -5276,105 +5268,58 @@ async function runForever(): Promise<never> {
     await logger.log(`Unhandled rejection (contained): ${reason}`, 'ERROR');
   });
 
-  // --- Initial cycles — fire BOTH concurrently so neither blocks the other ---
-  // Research+Validation runs in background; Build starts immediately from any
-  // already-queued ideas while validation is still scoring new ones.
-  await logger.log('Starting Research+Validation and Build cycles concurrently...');
+  // ─── SEQUENTIAL PIPELINE ───────────────────────────────────────────────────
+  // Research → Validate → Build → Deploy → repeat
+  // No concurrent cycles — each step completes before the next starts.
+  // This eliminates semaphore collisions and makes the flow predictable.
+  await logger.log('Starting SEQUENTIAL pipeline: Research → Validate → Build → repeat');
+  await notifyTelegram('MVP Factory v11 (Sequential Mode) started!');
 
-  // Skip initial research if queue is already well-stocked
-  const initQueueSize = await fs.readdir(CONFIG.paths.validated).then(f => f.filter(x => x.endsWith('.json')).length).catch(() => 0);
-  if (initQueueSize >= 40) {
-    lastResearch = Date.now();
-    await logger.log(`Init research skipped — queue already has ${initQueueSize} ideas (≥40 threshold)`);
-  } else {
-    researchRunning = true;
-    pm.runResearchAndValidation()
-      .then(() => { lastResearch = Date.now(); })
-      .catch(async (e) => { await logger.log(`Init research error: ${e}`, 'ERROR'); lastResearch = Date.now(); })
-      .finally(() => { researchRunning = false; });
-  }
-
-  // 30-second startup delay before first build — prevents hammering NVIDIA API
-  // if pm2 does rapid restarts (e.g. during deployment or recovery)
-  buildRunning = true;
-  await logger.log('Build will start in 30s (startup delay to avoid 429 burst)...');
-  await new Promise(r => setTimeout(r, 30_000));
-  pm.runBuildFromQueue()
-    .then(async (result) => {
-      lastBuild = Date.now();
-      if (result && result.success) { dailyBuildCount++; await logger.log(`Daily builds: ${dailyBuildCount}/${DAILY_BUILD_LIMIT}`); }
-      if (result && !result.success && (result.error === 'Empty queue' || result.error === 'No ideas')) {
-        await logger.log('Queue empty at startup — build will start once validation approves first idea');
-      }
-    })
-    .catch(async (e) => { await logger.log(`Init build error: ${e}`, 'ERROR'); lastBuild = Date.now(); })
-    .finally(() => { buildRunning = false; });
-
-  await logger.log(`Daemon loop running — Research every ${RESEARCH_EVERY/60000}m, Build every ${BUILD_EVERY/60000}m`);
-  await notifyTelegram('MVP Factory v11 (Multi-Agent) started!');
-
-  // ─── Resilient main loop ────────────────────────────────────────────────────
-  // Runs forever. Each tick checks whether any cycle is due and fires it as a
-  // concurrent Promise (so research never blocks build and vice-versa).
-  // On any error inside the tick the loop backs off exponentially and retries —
-  // the PMAgent instance and all timing state are preserved across errors.
+  // ─── Main loop — SEQUENTIAL execution ─────────────────────────────────────
   while (true) {
     try {
-      const now = Date.now();
+      // ── STEP 1: Check queue status ──
+      const queueSize = await fs.readdir(CONFIG.paths.validated).then(f => f.filter(x => x.endsWith('.json')).length).catch(() => 0);
+      await logger.log(`========== CYCLE START | Queue: ${queueSize} ideas ==========`);
 
-      // Research cycle — fire-and-forget so it doesn't block the build cycle
-      // Skip if queue is well-stocked (≥40 ideas) to avoid wasting GPU slots on timeouts
-      if (!researchRunning && now - lastResearch >= RESEARCH_EVERY) {
-        const queueSize = await fs.readdir(CONFIG.paths.validated).then(f => f.filter(x => x.endsWith('.json')).length).catch(() => 0);
-        if (queueSize >= 40) {
-          lastResearch = Date.now(); // postpone without running — check again in 15 min
-          await logger.log(`Research skipped — queue has ${queueSize} ideas (≥40 threshold)`);
-        } else {
-          researchRunning = true;
-          pm.runResearchAndValidation()
-            .then(() => { lastResearch = Date.now(); })
-            .catch(async (e) => { await logger.log(`Research cycle error: ${e}`, 'ERROR'); lastResearch = Date.now(); })
-            .finally(() => { researchRunning = false; });
+      // ── STEP 2: Research + Validate (if queue needs ideas) ──
+      if (queueSize < 5) {
+        await logger.log(`Queue low (${queueSize} < 5) — running Research + Validation...`);
+        try {
+          await pm.runResearchAndValidation();
+          lastResearch = Date.now();
+          await logger.log('Research + Validation complete');
+        } catch (e) {
+          await logger.log(`Research error: ${e}`, 'ERROR');
         }
+      } else {
+        await logger.log(`Queue healthy (${queueSize} ideas) — skipping research`);
       }
 
-      // Build cycle — fire-and-forget, PMAgent's internal isBuilding lock handles concurrency
-      // Daily build cap: max 4 builds/day — more time per build = better quality
+      // ── STEP 3: Build from queue ──
       const todayStr = new Date().toDateString();
       if (todayStr !== dailyBuildDate) { dailyBuildCount = 0; dailyBuildDate = todayStr; }
-      if (!buildRunning && now - lastBuild >= BUILD_EVERY) {
-        if (dailyBuildCount >= DAILY_BUILD_LIMIT) {
-          // Cap reached — log once per check then skip until tomorrow
-          if (now - lastBuild < BUILD_EVERY + 60_000) {
-            await logger.log(`Daily build cap reached (${dailyBuildCount}/${DAILY_BUILD_LIMIT}) — resuming at midnight`);
+
+      if (dailyBuildCount >= DAILY_BUILD_LIMIT) {
+        await logger.log(`Daily build cap reached (${dailyBuildCount}/${DAILY_BUILD_LIMIT}) — waiting for tomorrow`);
+      } else {
+        await logger.log('Starting Build cycle...');
+        try {
+          const result = await pm.runBuildFromQueue();
+          lastBuild = Date.now();
+          if (result && result.success) {
+            dailyBuildCount++;
+            await logger.log(`BUILD SUCCESS! Daily: ${dailyBuildCount}/${DAILY_BUILD_LIMIT}`);
+          } else if (result && (result.error === 'Empty queue' || result.error === 'No ideas')) {
+            await logger.log('Queue empty — will research in next cycle');
           }
-        } else {
-          buildRunning = true;
-          pm.runBuildFromQueue()
-            .then(async (result) => {
-              lastBuild = Date.now();
-              if (result && result.success) {
-                dailyBuildCount++;
-                await logger.log(`Daily builds: ${dailyBuildCount}/${DAILY_BUILD_LIMIT}`);
-              }
-              // If queue was empty, trigger research immediately so the queue refills fast
-              if (result && !result.success && (result.error === 'Empty queue' || result.error === 'No ideas')) {
-                await logger.log('Queue empty — triggering emergency research cycle');
-                if (!researchRunning) {
-                  researchRunning = true;
-                  pm.runResearchAndValidation()
-                    .then(() => { lastResearch = Date.now(); })
-                    .catch(async (e) => { await logger.log(`Emergency research error: ${e}`, 'ERROR'); lastResearch = Date.now(); })
-                    .finally(() => { researchRunning = false; });
-                }
-              }
-            })
-            .catch(async (e) => { await logger.log(`Build cycle error: ${e}`, 'ERROR'); lastBuild = Date.now(); })
-            .finally(() => { buildRunning = false; });
+        } catch (e) {
+          await logger.log(`Build error: ${e}`, 'ERROR');
         }
       }
 
-      // Health check
+      // ── STEP 4: Health check + pause ──
+      const now = Date.now();
       if (now - lastHealth >= HEALTH_EVERY) {
         lastHealth = now;
         try {
@@ -5387,8 +5332,7 @@ async function runForever(): Promise<never> {
             validatedQueue: queueFiles.length,
             totalBuilt: builtFiles.length,
             consecutiveErrors,
-            researchRunning,
-            buildRunning,
+            dailyBuildCount,
           }, null, 2));
         } catch {}
       }
@@ -5406,11 +5350,11 @@ async function runForever(): Promise<never> {
         } catch {}
       }
 
-      // Tick succeeded — reset error counter
+      // Cycle succeeded — reset error counter
       consecutiveErrors = 0;
 
-      // Sleep until next tick
-      await new Promise<void>(r => setTimeout(r, TICK));
+      await logger.log('========== CYCLE COMPLETE | Next cycle in 60s ==========');
+      await new Promise<void>(r => setTimeout(r, 60_000));
 
     } catch (err) {
       consecutiveErrors++;
