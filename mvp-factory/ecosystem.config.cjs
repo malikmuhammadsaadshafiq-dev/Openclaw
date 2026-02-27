@@ -3,9 +3,13 @@ module.exports = {
     {
       name: 'mvp-daemon',
       script: '/usr/bin/node',
-      args: '/root/Openclaw-repo/mvp-factory/node_modules/.bin/tsx daemon/mvp-factory-daemon-v11-multiagent.ts',
+      args: '--dns-result-order=ipv4first /root/Openclaw-repo/mvp-factory/node_modules/.bin/tsx daemon/mvp-factory-daemon-v11-multiagent.ts',
       cwd: '/root/Openclaw-repo/mvp-factory',
       interpreter: 'none',
+      // Force IPv4 for DNS resolution (NVIDIA API doesn't support IPv6)
+      env: {
+        NODE_OPTIONS: '--dns-result-order=ipv4first',
+      },
       // Kill the ENTIRE process tree (tsx parent + child node worker) on restart
       treekill: true,
       kill_timeout: 10000,
