@@ -822,24 +822,6 @@ body{
           <div class="stat-sub">cloud platforms</div>
         </div>
         <div class="card stat-card ani d4">
-          <div class="stat-icon">&#128241;</div>
-          <div class="stat-value" id="vMobile">--</div>
-          <div class="stat-label">Mobile Apps</div>
-          <div class="stat-sub" id="subMobile">Expo projects</div>
-        </div>
-        <div class="card stat-card ani d5">
-          <div class="stat-icon">&#128268;</div>
-          <div class="stat-value" id="vExtension">--</div>
-          <div class="stat-label">Extensions</div>
-          <div class="stat-sub">browser plugins</div>
-        </div>
-        <div class="card stat-card ani d5">
-          <div class="stat-icon">&#128279;</div>
-          <div class="stat-value" id="vApi">--</div>
-          <div class="stat-label">API Services</div>
-          <div class="stat-sub">REST endpoints</div>
-        </div>
-        <div class="card stat-card ani d5">
           <div class="stat-icon">&#9889;</div>
           <div class="stat-value" id="vLive">--</div>
           <div class="stat-label">Live on Vercel</div>
@@ -1669,7 +1651,6 @@ function applySSEEvent(type,data){
       case"stats":
         if(data){
           setVal("vTotal",data.totalBuilt||0);setVal("vWeb",data.webCount||0);setVal("vSaas",data.saasCount||0);
-          setVal("vMobile",data.mobileCount||0);setVal("vExtension",data.extensionCount||0);setVal("vApi",data.apiCount||0);
           setVal("vLive",data.liveCount||0);
           setVal("vFreeAds",data.freeAdsCount||0);setVal("vFreemium",data.freemiumCount||0);
           setVal("vSaasM",data.saasMonetizeCount||0);setVal("vOneTime",data.oneTimeCount||0);
