@@ -1657,7 +1657,16 @@ Return ONLY valid JSON array:
         { maxRetries: 2, baseDelay: 5000, label: 'AI idea extraction' }
       );
 
+      // Log LLM response for debugging
+      await logger.agent(this.name, `LLM response length: ${response?.length || 0} chars`);
+      if (!response || response.trim().length < 10) {
+        await logger.agent(this.name, `[WARN] LLM returned empty/short response: "${response?.slice(0, 200) || '(null)'}"`);
+      }
+
       const parsed = extractJSON(response, 'array');
+      if (!parsed) {
+        await logger.agent(this.name, `[WARN] JSON extraction failed. Raw response start: ${response?.slice(0, 300) || '(empty)'}`);
+      }
       if (parsed && Array.isArray(parsed) && parsed.length > 0) {
         // Map back to RawIdea format — use LLM-assigned sourcePlatform/sourcePost if valid,
         // otherwise find the best-matching post by keyword overlap (never fall back to positional)
