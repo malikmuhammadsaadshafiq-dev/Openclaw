@@ -5269,56 +5269,70 @@ async function runForever(): Promise<never> {
   });
 
   // ─── SEQUENTIAL PIPELINE ───────────────────────────────────────────────────
-  // Research → Validate → Build → Deploy → repeat
+  // Research → Validate → PAUSE 10min → Build → Deploy → repeat
   // No concurrent cycles — each step completes before the next starts.
-  // This eliminates semaphore collisions and makes the flow predictable.
-  await logger.log('Starting SEQUENTIAL pipeline: Research → Validate → Build → repeat');
+  // The 10-minute pause lets the LLM rest between research and build.
+  await logger.log('Starting SEQUENTIAL pipeline: Research → Validate → Pause → Build → Deploy');
   await notifyTelegram('MVP Factory v11 (Sequential Mode) started!');
 
   // ─── Main loop — SEQUENTIAL execution ─────────────────────────────────────
   while (true) {
     try {
-      // ── STEP 1: Check queue status ──
+      // ══════════════════════════════════════════════════════════════════════
+      // STEP 1: Research + Validate
+      // ══════════════════════════════════════════════════════════════════════
       const queueSize = await fs.readdir(CONFIG.paths.validated).then(f => f.filter(x => x.endsWith('.json')).length).catch(() => 0);
-      await logger.log(`========== CYCLE START | Queue: ${queueSize} ideas ==========`);
+      await logger.log(`\n========== CYCLE START | Queue: ${queueSize} ideas ==========`);
 
-      // ── STEP 2: Research + Validate (if queue needs ideas) ──
-      if (queueSize < 5) {
-        await logger.log(`Queue low (${queueSize} < 5) — running Research + Validation...`);
+      if (queueSize < 10) {
+        await logger.log(`[STEP 1] Queue needs ideas (${queueSize} < 10) — starting Research + Validation...`);
         try {
           await pm.runResearchAndValidation();
           lastResearch = Date.now();
-          await logger.log('Research + Validation complete');
+          await logger.log('[STEP 1] Research + Validation COMPLETE');
+
+          // ── PAUSE 10 minutes after adding ideas to queue ──
+          // This gives the LLM API a break before Build starts
+          await logger.log('[PAUSE] Resting 10 minutes before Build phase...');
+          await new Promise(r => setTimeout(r, 10 * 60 * 1000)); // 10 minutes
+
         } catch (e) {
-          await logger.log(`Research error: ${e}`, 'ERROR');
+          await logger.log(`[STEP 1] Research error: ${e}`, 'ERROR');
         }
       } else {
-        await logger.log(`Queue healthy (${queueSize} ideas) — skipping research`);
+        await logger.log(`[STEP 1] Queue healthy (${queueSize} ideas) — skipping research`);
       }
 
-      // ── STEP 3: Build from queue ──
+      // ══════════════════════════════════════════════════════════════════════
+      // STEP 2: Build + Deploy
+      // ══════════════════════════════════════════════════════════════════════
       const todayStr = new Date().toDateString();
       if (todayStr !== dailyBuildDate) { dailyBuildCount = 0; dailyBuildDate = todayStr; }
 
       if (dailyBuildCount >= DAILY_BUILD_LIMIT) {
-        await logger.log(`Daily build cap reached (${dailyBuildCount}/${DAILY_BUILD_LIMIT}) — waiting for tomorrow`);
+        await logger.log(`[STEP 2] Daily build cap reached (${dailyBuildCount}/${DAILY_BUILD_LIMIT}) — waiting for tomorrow`);
       } else {
-        await logger.log('Starting Build cycle...');
+        await logger.log('[STEP 2] Starting Build + Deploy...');
         try {
           const result = await pm.runBuildFromQueue();
           lastBuild = Date.now();
           if (result && result.success) {
             dailyBuildCount++;
-            await logger.log(`BUILD SUCCESS! Daily: ${dailyBuildCount}/${DAILY_BUILD_LIMIT}`);
+            await logger.log(`[STEP 2] BUILD + DEPLOY SUCCESS! ${result.vercelUrl || 'No URL'}`);
+            await logger.log(`[STEP 2] Daily builds: ${dailyBuildCount}/${DAILY_BUILD_LIMIT}`);
           } else if (result && (result.error === 'Empty queue' || result.error === 'No ideas')) {
-            await logger.log('Queue empty — will research in next cycle');
+            await logger.log('[STEP 2] Queue empty — will research in next cycle');
+          } else {
+            await logger.log(`[STEP 2] Build failed: ${result?.error || 'unknown'}`);
           }
         } catch (e) {
-          await logger.log(`Build error: ${e}`, 'ERROR');
+          await logger.log(`[STEP 2] Build error: ${e}`, 'ERROR');
         }
       }
 
-      // ── STEP 4: Health check + pause ──
+      // ══════════════════════════════════════════════════════════════════════
+      // STEP 3: Health check + short pause before next cycle
+      // ══════════════════════════════════════════════════════════════════════
       const now = Date.now();
       if (now - lastHealth >= HEALTH_EVERY) {
         lastHealth = now;
@@ -5353,8 +5367,8 @@ async function runForever(): Promise<never> {
       // Cycle succeeded — reset error counter
       consecutiveErrors = 0;
 
-      await logger.log('========== CYCLE COMPLETE | Next cycle in 60s ==========');
-      await new Promise<void>(r => setTimeout(r, 60_000));
+      await logger.log('========== CYCLE COMPLETE | Starting next cycle in 30s ==========\n');
+      await new Promise<void>(r => setTimeout(r, 30_000)); // Short pause before next cycle
 
     } catch (err) {
       consecutiveErrors++;
