@@ -3769,23 +3769,31 @@ class PMAgent {
             files: [],
           };
         } else {
-          // FRONTEND-ONLY MODE: Skip backend generation entirely
-          // Frontend uses mock data with useState - no API routes needed
-          // This saves API calls and prevents build errors from backend code
-          await logger.agent(this.name, `PHASE 3: Frontend-only mode — generating interactive demo with mock data (skipping backend)...`);
-          frontendResult = await this.frontendAgent.run(buildable!);
-          backendResult = {
-            spec: { apiRoutes: [], dataModels: [], integrations: [], authentication: 'none', errorHandling: 'none', realTimeFeatures: [] },
-            files: [],
-          };
+          // FULL BUILD MODE: Generate both frontend AND backend
+          // Backend has real API routes, frontend calls them
+          // No Vercel deploy - users clone repo and deploy themselves
+          await logger.agent(this.name, `PHASE 3: Full build mode — generating Frontend + Backend...`);
+
+          // Step 3a: Backend design first (frontend needs API route paths)
+          await logger.agent(this.name, `PHASE 3a: BackendAgent designing API architecture...`);
+          backendResult = await this.backendAgent.run(buildable!);
+          await logger.agent(this.name, `PHASE 3a: Backend spec ready (${backendResult.spec.apiRoutes.length} routes)`);
+
+          // Step 3b: Frontend with knowledge of backend routes
+          await logger.agent(this.name, `PHASE 3b: FrontendAgent generating UI with real API calls...`);
+          frontendResult = await this.frontendAgent.run(buildable!, backendResult.spec);
+          await logger.agent(this.name, `PHASE 3b: Frontend ready (${frontendResult.files.length} files)`);
+
+          // Step 3c: Generate backend files
+          await logger.agent(this.name, `PHASE 3c: Generating ${backendResult.spec.apiRoutes.length} backend API routes...`);
         }
 
-        await logger.agent(this.name, `PHASE 4: Processing ${frontendResult.files.length} frontend files (frontend-only mode)...`);
+        await logger.agent(this.name, `PHASE 4: Merging ${frontendResult.files.length} frontend + ${backendResult.files.length} backend files...`);
         const mergedFiles = await this.mergeAndFinalize(buildable!, frontendResult, backendResult);
 
-        // Skip integration repair in frontend-only mode (no backend to wire)
-        const repairedFiles = mergedFiles;
-        await logger.agent(this.name, 'PHASE 4b: Skipping integration repair (frontend-only mode, no backend)');
+        // Integration repair - wire frontend to backend
+        await logger.agent(this.name, 'PHASE 4b: Integration repair — wiring frontend to backend APIs...');
+        const repairedFiles = await this.integrateAndRepair(mergedFiles, buildable!, backendResult.spec);
 
         const quality = this.assessQuality(repairedFiles, buildable!);
         await logger.agent(this.name, `Quality gate: ${quality.score}/20 | Issues: ${quality.issues.length ? quality.issues.join('; ') : 'none'}`);
@@ -3843,11 +3851,13 @@ class PMAgent {
       fileMap.set(f.path, f.content);
     }
 
-    // FRONTEND-ONLY MODE: Skip backend API routes for Vercel deployment
-    // Frontend now uses mock data with useState - no backend needed
-    // Backend files are logged but NOT added to deployment to avoid build errors
+    // FULL BUILD MODE: Include backend API routes
+    // Backend files are added to the project for full functionality
+    for (const f of backendResult.files) {
+      fileMap.set(f.path, f.content);
+    }
     if (backendResult.files.length > 0) {
-      await logger.agent('PMAgent', `Skipping ${backendResult.files.length} backend files (frontend-only mode with mock data)`);
+      await logger.agent('PMAgent', `Added ${backendResult.files.length} backend API route files`);
     }
 
     // Sanitize layout.tsx: strip "use client" if it also exports metadata
@@ -4491,7 +4501,7 @@ ${score >= 8 ? '[![Top Pick](https://img.shields.io/badge/🏆-TOP%20PICK-fcd34d
 
 **Built for:** ${idea.targetUsers}
 
-${idea.type !== 'mobile' ? `[🚀 **Live Demo**](https://github.com/${CONFIG.github.username}/${repoName}) • ` : ''}[📦 **GitHub**](https://github.com/${CONFIG.github.username}/${repoName}) • [🐛 **Report Bug**](https://github.com/${CONFIG.github.username}/${repoName}/issues) • [💡 **Request Feature**](https://github.com/${CONFIG.github.username}/${repoName}/issues)
+[📦 **Clone Repo**](https://github.com/${CONFIG.github.username}/${repoName}) • [🚀 **Deploy Your Own**](#-deploy-to-production) • [🐛 **Report Bug**](https://github.com/${CONFIG.github.username}/${repoName}/issues) • [💡 **Request Feature**](https://github.com/${CONFIG.github.username}/${repoName}/issues)
 
 </div>
 
@@ -4724,9 +4734,75 @@ npm start
 
 #### Environment Variables (create \`.env.local\`)
 \`\`\`env
-# Add your keys here
+# Required for AI features (get free key at https://build.nvidia.com)
+NVIDIA_API_KEY=nvapi-xxxxx
+
+# App config
 NEXT_PUBLIC_APP_NAME=${idea.title}
-\`\`\``}
+
+# Optional: Database (see "Add a real database" section below)
+# DATABASE_URL=postgresql://user:pass@host:5432/db
+
+# Optional: Auth (if using NextAuth)
+# NEXTAUTH_SECRET=your-random-secret
+# NEXTAUTH_URL=http://localhost:3000
+\`\`\`
+
+---
+
+## 🚀 Deploy to Production
+
+### Option 1: Vercel (Recommended — Free)
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/${CONFIG.github.username}/${repoName})
+
+**Manual deployment:**
+\`\`\`bash
+# Install Vercel CLI
+npm i -g vercel
+
+# Deploy (follow prompts)
+vercel
+
+# Deploy to production
+vercel --prod
+\`\`\`
+
+> **Environment Variables:** Add your \`NVIDIA_API_KEY\` and other secrets in Vercel Dashboard → Project → Settings → Environment Variables.
+
+### Option 2: Railway (Free tier available)
+
+[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/template)
+
+\`\`\`bash
+# Install Railway CLI
+npm i -g @railway/cli
+
+# Login and deploy
+railway login
+railway init
+railway up
+\`\`\`
+
+### Option 3: Render (Free tier available)
+
+1. Create a new **Web Service** on [render.com](https://render.com)
+2. Connect your GitHub repo
+3. Set build command: \`npm install && npm run build\`
+4. Set start command: \`npm start\`
+5. Add environment variables in the dashboard
+
+### Option 4: Self-hosted (Docker)
+
+\`\`\`bash
+# Build Docker image
+docker build -t ${repoName} .
+
+# Run container
+docker run -p 3000:3000 -e NVIDIA_API_KEY=your_key ${repoName}
+\`\`\`
+
+> **Dockerfile** is included in this repo for easy containerization.`}
 
 ## 📊 Market Opportunity
 
@@ -4835,6 +4911,50 @@ ${buildStep}
       ].join('\n');
       try {
         await fs.writeFile(path.join(projectPath, 'next.config.js'), permissiveConfig);
+      } catch {}
+
+      // Generate Dockerfile for self-hosted deployment
+      const dockerfile = [
+        '# Stage 1: Build',
+        'FROM node:20-alpine AS builder',
+        'WORKDIR /app',
+        'COPY package*.json ./',
+        'RUN npm ci',
+        'COPY . .',
+        'RUN npm run build',
+        '',
+        '# Stage 2: Production',
+        'FROM node:20-alpine AS runner',
+        'WORKDIR /app',
+        'ENV NODE_ENV=production',
+        'RUN addgroup --system --gid 1001 nodejs',
+        'RUN adduser --system --uid 1001 nextjs',
+        '',
+        'COPY --from=builder /app/public ./public',
+        'COPY --from=builder /app/.next/standalone ./',
+        'COPY --from=builder /app/.next/static ./.next/static',
+        '',
+        'USER nextjs',
+        'EXPOSE 3000',
+        'ENV PORT=3000',
+        'CMD ["node", "server.js"]',
+      ].join('\n');
+      try {
+        await fs.writeFile(path.join(projectPath, 'Dockerfile'), dockerfile);
+      } catch {}
+
+      // Generate .dockerignore
+      const dockerignore = [
+        'node_modules',
+        '.next',
+        '.git',
+        '*.md',
+        '.env*',
+        'Dockerfile',
+        '.dockerignore',
+      ].join('\n');
+      try {
+        await fs.writeFile(path.join(projectPath, '.dockerignore'), dockerignore);
       } catch {}
 
       // Ensure layout.tsx exists (required by Next.js App Router)
@@ -5051,117 +5171,13 @@ ${buildStep}
       }
     }
 
-    // Deploy to Vercel (all types except mobile — extensions deploy as static preview sites)
-    let vercelUrl = '';
-    if (CONFIG.vercel.token && idea.type !== 'mobile') {
-      // Auto-prune old Vercel projects to stay under 200 hobby limit (keep newest 20)
-      try {
-        const pruneResult = await pruneVercelProjects(CONFIG.vercel.token, CONFIG.vercel.teamId, 20);
-        if (pruneResult.deleted > 0) {
-          await logger.agent(this.name, `Vercel pruned ${pruneResult.deleted} old projects (${pruneResult.remaining} remaining)`);
-        }
-      } catch (pruneErr) {
-        await logger.agent(this.name, `Vercel prune warning: ${pruneErr}`);
-      }
-
-      try {
-        const envFlag = process.env.NVIDIA_API_KEY ? ` -e NVIDIA_API_KEY="${process.env.NVIDIA_API_KEY}"` : '';
-        // Default: standard deploy (triggers remote build on Vercel)
-        let deployCmd = `npx vercel --token ${CONFIG.vercel.token} --scope ${CONFIG.vercel.teamId} --yes --prod${envFlag}`;
-
-        // For web/saas/api types where local build passed: use vercel build + deploy --prebuilt
-        // This deploys the locally-verified build artifacts instead of triggering a fresh remote
-        // rebuild on Vercel — eliminates remote SWC syntax errors from AI-truncated files.
-        if (buildPassed && idea.type !== 'extension' && idea.type !== 'mobile') {
-          try {
-            await execAsync(
-              `npx vercel build --prod --yes --token ${CONFIG.vercel.token} --scope ${CONFIG.vercel.teamId}`,
-              { cwd: projectPath, timeout: 600000, maxBuffer: 50 * 1024 * 1024 }
-            );
-            deployCmd = `npx vercel deploy --prebuilt --token ${CONFIG.vercel.token} --scope ${CONFIG.vercel.teamId} --prod`;
-            await logger.agent(this.name, 'Pre-built output ready — using vercel deploy --prebuilt (no remote rebuild)');
-          } catch (vBuildErr) {
-            await logger.agent(this.name, `vercel build failed, falling back to standard deploy: ${String(vBuildErr).slice(0, 200)}`);
-          }
-        }
-
-        let vercelStdout = '';
-        let vercelStderr = '';
-        try {
-          const { stdout, stderr } = await execAsync(deployCmd, { cwd: projectPath, timeout: 600000, maxBuffer: 50 * 1024 * 1024 });
-          vercelStdout = stdout || '';
-          vercelStderr = stderr || '';
-        } catch (execErr: any) {
-          // execAsync throws on non-zero exit, but Vercel often exits non-zero even on successful deploy
-          // Extract stdout/stderr from the error object so we can still recover the URL
-          vercelStdout = execErr.stdout || '';
-          vercelStderr = execErr.stderr || '';
-          // Fallback: in some environments execErr.stdout/.stderr are empty but the full CLI output
-          // is embedded in the error message string — use that for URL extraction
-          if (!vercelStdout && !vercelStderr) {
-            vercelStdout = String(execErr);
-          }
-          // Always also include String(execErr) to ensure we capture Production URL emitted
-          // before the remote build failure (Vercel CLI writes Production: URL then waits for build)
-          vercelStdout = vercelStdout || String(execErr);
-          vercelStderr = vercelStderr + '\n' + String(execErr);
-          if (!vercelStdout && !vercelStderr) {
-            await logger.agent(this.name, `Vercel error: ${String(execErr).slice(0, 300)}`);
-          }
-        }
-        const output = vercelStdout + vercelStderr;
-        // Match both the pre-build "Production:" URL and any .vercel.app URL in the output
-        const urlMatch = output.match(/Production:\s*(https:\/\/[^\s]+)/) ||
-                         output.match(/https:\/\/[a-z0-9][a-z0-9-]*\.vercel\.app/);
-        if (urlMatch) {
-          vercelUrl = (urlMatch[1] || urlMatch[0]).replace(/[^\w\-.:\/]/g, '');
-          await logger.agent(this.name, `Vercel: ${vercelUrl}`);
-        } else if (output) {
-          await logger.agent(this.name, `Vercel deploy ran but no URL found in output`);
-        }
-      } catch (err) {
-        await logger.agent(this.name, `Vercel error: ${err}`);
-      }
-
-      // REST API fallback: if CLI didn't yield a URL, query Vercel API by project name
-      if (!vercelUrl) {
-        try {
-          const projectName = projectSlug.slice(0, 80);
-          const apiResp = await fetch(
-            `https://api.vercel.com/v9/projects/${encodeURIComponent(projectName)}?teamId=${encodeURIComponent(CONFIG.vercel.teamId)}`,
-            { headers: { Authorization: `Bearer ${CONFIG.vercel.token}` } }
-          );
-          if (apiResp.ok) {
-            const proj = await apiResp.json() as any;
-            const prodUrl = proj?.targets?.production?.url || proj?.alias?.[0];
-            if (prodUrl) {
-              vercelUrl = prodUrl.startsWith('http') ? prodUrl : `https://${prodUrl}`;
-            } else if (proj?.name) {
-              // Standard Vercel URL pattern when production alias not yet set
-              vercelUrl = `https://${proj.name}.vercel.app`;
-            }
-            if (vercelUrl) {
-              await logger.agent(this.name, `Vercel URL (API fallback): ${vercelUrl}`);
-            }
-          }
-        } catch {}
-      }
-    }
-
-    // PHASE 6: Playwright visual QA + self-healing fix loop
-    // Only runs for web/saas apps with a live URL — not extensions, not mobile
-    if (vercelUrl && idea.type !== 'extension' && idea.type !== 'mobile') {
-      try {
-        await logger.agent(this.name, 'PHASE 6: Playwright QA loop — testing live deployment...');
-        const finalUrl = await this.playwrightAgent.testAndImprove(vercelUrl, idea, projectPath, 3);
-        if (finalUrl && finalUrl !== vercelUrl) {
-          vercelUrl = finalUrl;
-          await logger.agent(this.name, `Playwright QA improved URL: ${vercelUrl}`);
-        }
-      } catch (pwErr) {
-        await logger.agent(this.name, `Playwright QA skipped (non-fatal): ${String(pwErr).slice(0, 200)}`);
-      }
-    }
+    // ══════════════════════════════════════════════════════════════════════════════
+    // VERCEL DEPLOYMENT DISABLED — GitHub-only mode
+    // Projects are pushed to GitHub with comprehensive README containing deploy instructions.
+    // Users can clone the repo and deploy to Vercel/Railway/Render themselves.
+    // ══════════════════════════════════════════════════════════════════════════════
+    const vercelUrl = ''; // No live deployment — README has deploy instructions
+    await logger.agent(this.name, 'PHASE 6: Vercel deploy SKIPPED (GitHub-only mode) — users deploy from README instructions');
 
     // Mark as built
     await fs.mkdir(CONFIG.paths.built, { recursive: true });
@@ -5186,11 +5202,11 @@ ${buildStep}
     } catch {}
 
     // Notify
-    const successMsg = `MVP BUILT: *${idea.title}*\nScore: ${idea.validation.overallScore}/10 | Quality: ${qualityScore}/20\n${githubUrl ? `GitHub: ${githubUrl}` : ''}${vercelUrl ? `\nLive: ${vercelUrl}` : ''}`;
+    const successMsg = `MVP BUILT: *${idea.title}*\nScore: ${idea.validation.overallScore}/10 | Quality: ${qualityScore}/20\n${githubUrl ? `GitHub: ${githubUrl}` : ''}\n📦 Clone & deploy via README instructions`;
     await notifyTelegram(successMsg);
     await logger.agent(this.name, successMsg.replace(/\*/g, ''));
 
-    return { success: true, projectPath, githubUrl, vercelUrl, qualityScore };
+    return { success: true, projectPath, githubUrl, vercelUrl: '', qualityScore };
   }
 
   private async saveValidatedIdeas(ideas: ValidatedIdea[]): Promise<void> {
