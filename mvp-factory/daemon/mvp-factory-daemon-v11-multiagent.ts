@@ -212,6 +212,61 @@ interface FrontendSpec {
   accessibilityLevel: 'basic' | 'AA' | 'AAA';
 }
 
+// ============================================================
+// Psychology-Driven Design Types (2-stage pipeline)
+// ============================================================
+interface DesignPsychology {
+  emotionalState: string;
+  primaryFear: string;
+  primaryDesire: string;
+  trustLevel: 'low' | 'medium' | 'high';
+  colors: {
+    primary: string;
+    secondary: string;
+    accent: string;
+    background: string;
+    reasoning: string;
+  };
+  aesthetic: 'minimal' | 'bold' | 'soft' | 'professional' | 'playful' | 'dark-tech';
+}
+
+interface TypographyAndTactics {
+  typography: {
+    fontFamily: string;
+    headingWeight: string;
+    bodyWeight: string;
+    borderRadius: string;
+    spacing: 'compact' | 'normal' | 'generous';
+  };
+  tactics: Array<{
+    name: string;
+    implementation: string;
+  }>;
+}
+
+// ============================================================
+// Fallback Design Palettes (variety when LLM fails)
+// ============================================================
+const FALLBACK_PALETTES = [
+  { primary: '#059669', secondary: '#F59E0B', accent: '#DC2626', background: '#FAFAFA', aesthetic: 'professional' as const, font: 'Outfit' },
+  { primary: '#7C3AED', secondary: '#EC4899', accent: '#F59E0B', background: '#0F0F0F', aesthetic: 'bold' as const, font: 'Space Grotesk' },
+  { primary: '#0891B2', secondary: '#84CC16', accent: '#F97316', background: '#F0FDFA', aesthetic: 'soft' as const, font: 'Nunito' },
+  { primary: '#DC2626', secondary: '#1D4ED8', accent: '#FBBF24', background: '#FFFFFF', aesthetic: 'bold' as const, font: 'DM Sans' },
+  { primary: '#4F46E5', secondary: '#10B981', accent: '#F472B6', background: '#F8FAFC', aesthetic: 'minimal' as const, font: 'Lexend' },
+  { primary: '#0F172A', secondary: '#38BDF8', accent: '#22D3EE', background: '#020617', aesthetic: 'dark-tech' as const, font: 'Sora' },
+  { primary: '#16A34A', secondary: '#8B5CF6', accent: '#EF4444', background: '#ECFDF5', aesthetic: 'soft' as const, font: 'Quicksand' },
+  { primary: '#EA580C', secondary: '#0EA5E9', accent: '#A855F7', background: '#FFF7ED', aesthetic: 'playful' as const, font: 'Poppins' },
+];
+
+function getFallbackPalette(ideaId: string): typeof FALLBACK_PALETTES[0] {
+  let hash = 0;
+  for (let i = 0; i < ideaId.length; i++) {
+    hash = ((hash << 5) - hash) + ideaId.charCodeAt(i);
+    hash = hash & hash;
+  }
+  return FALLBACK_PALETTES[Math.abs(hash) % FALLBACK_PALETTES.length];
+}
+
 interface BackendSpec {
   apiRoutes: Array<{
     method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
@@ -1803,38 +1858,28 @@ class FrontendAgent {
   async run(idea: ValidatedIdea, backendSpec?: BackendSpec): Promise<{ spec: FrontendSpec; files: Array<{ path: string; content: string }> }> {
     await logger.agent(this.name, `Designing frontend for "${idea.title}" targeting ${idea.audienceProfile.demographics}...`);
 
-    // Step 1: Design the UX based on audience psychology
-    // designUX (8K tokens) consistently hits NVIDIA's ~5min server timeout — use reliable inline defaults
-    // The inline spec below is audience-matched with psychology tactics and produces better pass rate
+    // Step 1: Design the UX using 2-stage psychology pipeline
     let spec: FrontendSpec;
     {
-      await logger.agent(this.name, `Using audience-matched UX defaults (skipping slow designUX LLM call)...`);
-      const isDev = idea.audienceProfile.techSavviness === 'high';
-      spec = {
-        designSystem: {
-          primaryColor: isDev ? '#6366F1' : '#3B82F6',
-          secondaryColor: isDev ? '#EC4899' : '#10B981',
-          fontFamily: isDev ? 'JetBrains Mono' : 'Inter',
-          borderRadius: isDev ? '6px' : '12px',
-          darkMode: isDev,
-          style: isDev ? 'tech' : 'minimal',
-        },
-        uxPatterns: ['Progressive disclosure', 'Immediate value demo', 'Minimal onboarding'],
-        conversionElements: ['Free trial CTA', 'Feature comparison', 'Social proof'],
-        pages: [
-          { route: '/', purpose: 'Landing + demo', components: ['Hero', 'Demo', 'Features', 'CTA'], userFlow: 'Land -> See value -> Try demo -> Sign up' },
-          { route: '/dashboard', purpose: 'Main workspace', components: ['Sidebar', 'MainContent', 'ActionBar'], userFlow: 'Navigate -> Use features -> See results' },
-        ],
-        psychologyTactics: [
-          `Loss aversion: show cost of NOT solving "${idea.audienceProfile?.painPoints?.[0] || idea.description}"`,
-          `Reciprocity: give immediate free value — let users try ${idea.features[0]} before signup`,
-          `Social proof: show how many ${idea.targetUsers} already use this to achieve ${idea.audienceProfile?.motivations?.[0] || 'their goals'}`,
-          `Authority: display credentials, certifications, or expert endorsements relevant to ${idea.targetUsers}`,
-        ],
-        accessibilityLevel: 'AA',
-      };
+      await logger.agent(this.name, `Running 2-stage psychology design pipeline...`);
+
+      // Stage 1: Analyze psychology + pick colors (~2K tokens, ~15s)
+      const psychology = await this.analyzeAudiencePsychology(idea);
+
+      // Rate limit delay between stages
+      await new Promise(r => setTimeout(r, 3000));
+
+      // Stage 2: Pick typography + tactics (~2K tokens, ~15s)
+      const typography = psychology
+        ? await this.designTypographyAndTactics(idea, psychology)
+        : null;
+
+      // Build final spec (merges LLM results with fallbacks)
+      spec = this.buildFrontendSpec(idea, psychology, typography);
+
+      const source = psychology ? 'LLM-generated' : 'fallback palette';
+      await logger.agent(this.name, `Design: ${source}, primary=${spec.designSystem.primaryColor}, font=${spec.designSystem.fontFamily}, style=${spec.designSystem.style}`);
     }
-    await logger.agent(this.name, `UX design: ${spec.designSystem.style} style, ${spec.pages.length} pages, ${spec.psychologyTactics.length} psychology tactics`);
 
     // Step 2: Generate all frontend files (with retry)
     const files = await retryLoop(
@@ -1844,6 +1889,164 @@ class FrontendAgent {
     await logger.agent(this.name, `Generated ${files.length} frontend files`);
 
     return { spec, files };
+  }
+
+  // ============================================================
+  // Stage 1: Analyze Audience Psychology + Select Colors
+  // ============================================================
+  private async analyzeAudiencePsychology(idea: ValidatedIdea): Promise<DesignPsychology | null> {
+    const prompt = `Analyze audience psychology and select colors for a ${idea.type} product targeting ${idea.targetUsers}.
+
+PAIN: ${idea.audienceProfile?.painPoints?.[0] || idea.description}
+DESIRE: ${idea.audienceProfile?.motivations?.[0] || 'solve their problem'}
+TECH LEVEL: ${idea.audienceProfile?.techSavviness || 'medium'}
+PRICE TOLERANCE: ${idea.audienceProfile?.priceWillingness || 'medium'}
+
+Return ONLY JSON:
+{
+  "emotionalState": "anxious|frustrated|curious|hopeful|skeptical|overwhelmed",
+  "primaryFear": "specific fear for THIS audience",
+  "primaryDesire": "specific desire for THIS audience",
+  "trustLevel": "low|medium|high",
+  "colors": {
+    "primary": "#hex - main brand color",
+    "secondary": "#hex - supporting color",
+    "accent": "#hex - CTAs and highlights",
+    "background": "#hex - page background (light or dark)",
+    "reasoning": "1 sentence why these colors for THIS audience"
+  },
+  "aesthetic": "minimal|bold|soft|professional|playful|dark-tech"
+}
+
+RULES:
+- NO blue (#3B82F6) or indigo (#6366F1) unless psychology demands it
+- Match colors to emotional state (anxious=calming greens/blues, frustrated=energizing oranges, skeptical=trustworthy blues/greens)
+- Background should be light (#F... or #FFF...) unless audience prefers dark mode (tech/dev users)`;
+
+    try {
+      const response = await kimi.complete(prompt, {
+        maxTokens: 2000,
+        temperature: 0.7,
+        systemPrompt: 'You are a color psychology expert. Return ONLY valid JSON. Be specific to this audience, not generic.',
+      });
+      const parsed = extractJSON(response, 'object') as DesignPsychology | null;
+      if (parsed?.colors?.primary && parsed?.aesthetic) {
+        await logger.agent(this.name, `Psychology: ${parsed.emotionalState} audience, ${parsed.aesthetic} aesthetic, primary=${parsed.colors.primary}`);
+        return parsed;
+      }
+      return null;
+    } catch (err) {
+      await logger.agent(this.name, `Psychology analysis failed: ${String(err).slice(0, 100)}`);
+      return null;
+    }
+  }
+
+  // ============================================================
+  // Stage 2: Design Typography + Psychology Tactics
+  // ============================================================
+  private async designTypographyAndTactics(idea: ValidatedIdea, psychology: DesignPsychology): Promise<TypographyAndTactics | null> {
+    const prompt = `Design typography and psychology tactics for "${idea.title}" targeting ${idea.targetUsers}.
+
+PSYCHOLOGY PROFILE:
+- Emotional state: ${psychology.emotionalState}
+- Fear: ${psychology.primaryFear}
+- Desire: ${psychology.primaryDesire}
+- Trust level: ${psychology.trustLevel}
+- Aesthetic: ${psychology.aesthetic}
+
+Return ONLY JSON:
+{
+  "typography": {
+    "fontFamily": "Google Font name (NOT Inter, NOT JetBrains Mono - pick something fresh)",
+    "headingWeight": "600|700|800",
+    "bodyWeight": "400|500",
+    "borderRadius": "4px|8px|12px|16px|20px",
+    "spacing": "compact|normal|generous"
+  },
+  "tactics": [
+    {"name": "loss aversion", "implementation": "exact text/element to show"},
+    {"name": "social proof", "implementation": "exact counter text"},
+    {"name": "reciprocity", "implementation": "exact free value offer"},
+    {"name": "authority", "implementation": "exact trust signal"}
+  ]
+}
+
+TYPOGRAPHY RULES:
+- anxious/overwhelmed → rounded fonts (Nunito, Quicksand, Varela Round), generous spacing, 16px+ radius
+- professional/skeptical → clean fonts (Outfit, DM Sans, Plus Jakarta Sans), normal spacing, 8px radius
+- playful/curious → friendly fonts (Poppins, Lexend, Rubik), medium spacing, 12px radius
+- tech/analytical → modern fonts (Space Grotesk, Sora, Manrope), compact spacing, 4-6px radius
+
+TACTICS must be SPECIFIC to ${idea.targetUsers} - include real numbers, specific fears, exact value props.`;
+
+    try {
+      const response = await kimi.complete(prompt, {
+        maxTokens: 2000,
+        temperature: 0.7,
+        systemPrompt: 'You are a UX typography expert. Return ONLY valid JSON. Tactics must be specific, not generic placeholders.',
+      });
+      const parsed = extractJSON(response, 'object') as TypographyAndTactics | null;
+      if (parsed?.typography?.fontFamily && parsed?.tactics?.length) {
+        await logger.agent(this.name, `Typography: ${parsed.typography.fontFamily}, ${parsed.typography.spacing} spacing, ${parsed.tactics.length} tactics`);
+        return parsed;
+      }
+      return null;
+    } catch (err) {
+      await logger.agent(this.name, `Typography design failed: ${String(err).slice(0, 100)}`);
+      return null;
+    }
+  }
+
+  // ============================================================
+  // Build FrontendSpec from LLM results or fallbacks
+  // ============================================================
+  private buildFrontendSpec(
+    idea: ValidatedIdea,
+    psychology: DesignPsychology | null,
+    typography: TypographyAndTactics | null
+  ): FrontendSpec {
+    // Use LLM results or fallback palette
+    const fallback = getFallbackPalette(idea.id);
+    const colors = psychology?.colors || {
+      primary: fallback.primary,
+      secondary: fallback.secondary,
+      accent: fallback.accent,
+      background: fallback.background,
+      reasoning: 'Fallback palette based on idea hash',
+    };
+    const aesthetic = psychology?.aesthetic || fallback.aesthetic;
+    const font = typography?.typography?.fontFamily || fallback.font;
+    const radius = typography?.typography?.borderRadius || '12px';
+    const isDarkBg = colors.background.startsWith('#0') || colors.background.startsWith('#1') || colors.background.startsWith('#2');
+
+    // Build psychology tactics from LLM or generate sensible defaults
+    const tactics = typography?.tactics?.length
+      ? typography.tactics.map(t => `${t.name}: ${t.implementation}`)
+      : [
+          `Loss aversion: show cost of NOT solving "${idea.audienceProfile?.painPoints?.[0] || idea.description}"`,
+          `Reciprocity: give immediate free value — let users try ${idea.features[0]} before signup`,
+          `Social proof: show how many ${idea.targetUsers} already use this`,
+          `Authority: display credentials relevant to ${idea.targetUsers}`,
+        ];
+
+    return {
+      designSystem: {
+        primaryColor: colors.primary,
+        secondaryColor: colors.secondary,
+        fontFamily: font,
+        borderRadius: radius,
+        darkMode: isDarkBg,
+        style: aesthetic === 'dark-tech' ? 'tech' : aesthetic === 'soft' ? 'minimal' : aesthetic as any,
+      },
+      uxPatterns: ['Progressive disclosure', 'Immediate value demo', 'Minimal onboarding'],
+      conversionElements: ['Free trial CTA', 'Feature comparison', 'Social proof'],
+      pages: [
+        { route: '/', purpose: 'Landing + demo', components: ['Hero', 'Demo', 'Features', 'CTA'], userFlow: 'Land -> See value -> Try demo -> Sign up' },
+        { route: '/dashboard', purpose: 'Main workspace', components: ['Sidebar', 'MainContent', 'ActionBar'], userFlow: 'Navigate -> Use features -> See results' },
+      ],
+      psychologyTactics: tactics,
+      accessibilityLevel: 'AA',
+    };
   }
 
   private async designUX(idea: ValidatedIdea): Promise<FrontendSpec> {
@@ -1996,12 +2199,8 @@ Return ONLY the JSON array, no markdown.`;
   }
 
   // ilovepdf-style: free utility tool with Google AdSense, no login required
+  // FRONTEND-ONLY MODE: Tool logic works using client-side JavaScript, no backend API
   private async generateFreeAdsFrontend(idea: ValidatedIdea, spec: FrontendSpec, backendSpec?: BackendSpec): Promise<Array<{ path: string; content: string }>> {
-    // Per-file parallel generation: each call = 1 file, 5-8K tokens
-    // Defeats Kimi K2.5 thinking-mode exhaustion (was: 22K → 1 file; now: 6 × 6K → 6 files)
-    const apiRoutesContext = backendSpec?.apiRoutes?.length
-      ? `\nBACKEND API ROUTES — use ONLY these exact paths when calling fetch():\n${backendSpec.apiRoutes.map(r => `  ${r.method} ${r.path} | purpose: ${r.purpose} | input: ${r.inputSchema} | output: ${r.outputSchema}`).join('\n')}`
-      : '';
     const psychContext = spec.psychologyTactics?.length
       ? `\nPSYCHOLOGY TACTICS — embed EVERY one of these into the UI:\n${spec.psychologyTactics.map((t, i) => `  ${i + 1}. ${t}`).join('\n')}`
       : '';
@@ -2013,20 +2212,51 @@ DESCRIPTION: ${idea.description}
 TARGET USERS: ${idea.targetUsers}
 FEATURES: ${idea.features.join(', ')}
 PRIMARY COLOR: ${spec.designSystem.primaryColor}
+SECONDARY COLOR: ${spec.designSystem.secondaryColor}
+FONT: ${spec.designSystem.fontFamily}
 MONETIZATION: Free with Google AdSense (publisher: ca-pub-XXXXXXXXXX). No login required.
 STACK: Next.js 14 App Router, TypeScript, TailwindCSS
 ADSENSE PATTERN: <ins className="adsbygoogle" data-ad-client="ca-pub-XXXXXXXXXX" data-ad-slot="1234567890" data-ad-format="auto" data-full-width-responsive="true" />
-STYLE: Clean professional like ilovepdf.com${psychContext}${pageContext}${apiRoutesContext}`;
+STYLE: Clean professional like ilovepdf.com
 
-    const sysPrompt = `You are a senior frontend engineer building free utility tools. Professional trustworthy design like ilovepdf.com. Tool logic actually works. Each psychology tactic listed in PSYCHOLOGY TACTICS must be visibly implemented in the UI (e.g. social proof, urgency, reciprocity). Output ONLY raw code — no JSON, no markdown fences.`;
+CRITICAL RULES:
+- NO fetch() calls, NO API routes - all tool logic runs CLIENT-SIDE in the browser
+- Tool must ACTUALLY WORK using JavaScript (e.g., text processing, format conversion, calculations)
+- Use FileReader API for file uploads, process in browser, generate downloadable output
+- Use setTimeout to show processing animation even for instant operations
+- Buttons must show loading states and success feedback${psychContext}${pageContext}`;
+
+    const sysPrompt = `You are a senior frontend engineer building free utility tools that WORK IN THE BROWSER. Professional trustworthy design like ilovepdf.com. Tool logic runs client-side using JavaScript - NO backend API calls. Use FileReader for file processing, Blob for downloads. Output ONLY raw code — no JSON, no markdown fences.`;
 
     const fileDefs: Array<{ path: string; desc: string; tokens: number }> = [
       { path: 'src/components/AdBanner.tsx', desc: `'use client' AdSense component. Props: slot (string), format (string, default 'auto'). Renders <ins className="adsbygoogle" style={{display:'block'}} data-ad-client="ca-pub-XXXXXXXXXX" data-ad-slot={slot} data-ad-format={format} data-full-width-responsive="true" />. 25 lines total.`, tokens: 4000 },
-      { path: 'src/components/ToolHeader.tsx', desc: `Tool header with ${idea.title} name, short description "${idea.description.slice(0, 80)}", breadcrumb nav. Clean minimal design with primary color ${spec.designSystem.primaryColor}.`, tokens: 4000 },
-      { path: 'src/components/OtherTools.tsx', desc: `Grid of 6 related free tools with SVG icon, name, short description. Links to /tools/[slug]. Clean card grid, responsive 2-3 cols.`, tokens: 5000 },
-      { path: 'src/app/globals.css', desc: `TailwindCSS @tailwind directives + :root CSS variables for ${spec.designSystem.primaryColor} brand color. Under 40 lines.`, tokens: 3000 },
+      { path: 'src/components/ToolHeader.tsx', desc: `Tool header with ${idea.title} name, short description "${idea.description.slice(0, 80)}", breadcrumb nav. Clean minimal design with primary color ${spec.designSystem.primaryColor}. Use font ${spec.designSystem.fontFamily}.`, tokens: 4000 },
+      { path: 'src/components/OtherTools.tsx', desc: `Grid of 6 related free tools with SVG icon, name, short description. Links to /tools/[slug]. Clean card grid using ${spec.designSystem.primaryColor} accents, responsive 2-3 cols.`, tokens: 5000 },
+      { path: 'src/app/globals.css', desc: `TailwindCSS @tailwind directives + :root CSS variables for ${spec.designSystem.primaryColor} primary and ${spec.designSystem.secondaryColor} secondary. Import Google Font "${spec.designSystem.fontFamily}". Under 50 lines.`, tokens: 3000 },
       { path: 'src/app/layout.tsx', desc: `Root layout. Metadata for ${idea.title}. Async AdSense script tag (src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-XXXXXXXXXX"). Imports globals.css. Children prop.`, tokens: 5000 },
-      { path: 'src/app/page.tsx', desc: `Main page: ToolHeader at top, AdBanner (slot="1111111111"), then THE WORKING TOOL centered (${idea.features[0] || idea.description}), AdBanner (slot="2222222222") at bottom, OtherTools grid. Tool logic: user inputs → POST to /api/process → show result with download/copy button. Progress indicator during fetch. Drag-drop if file upload relevant. Psychology: reciprocity (immediate free value), social proof (X users served counter), micro-delight on completion (confetti or success animation). Responsive, accessible. REQUIRED: Actually render these as HTML — social proof counter ("X,XXX files processed"), urgency element ("Free while in beta"), and a visible "How it works" 3-step section.`, tokens: 12000 },
+      { path: 'src/app/page.tsx', desc: `Main page: ToolHeader at top, AdBanner (slot="1111111111"), then THE WORKING TOOL centered.
+
+TOOL MUST ACTUALLY WORK - CLIENT-SIDE IMPLEMENTATION:
+- Feature: ${idea.features[0] || idea.description}
+- Use useState for input/output state
+- Process data IN THE BROWSER using JavaScript (no API calls)
+- For file tools: use FileReader to read files, process with JS, create Blob for download
+- For text tools: process strings directly in JS
+- Show loading spinner during processing (use setTimeout 1-2s for visual feedback)
+- Success animation on completion (green checkmark, confetti, etc.)
+- Download/copy button for results
+
+UI REQUIREMENTS:
+- Drag-drop zone if file upload relevant (react-dropzone style but pure CSS)
+- Progress indicator during processing
+- Result display area with copy/download buttons
+- AdBanner (slot="2222222222") at bottom, OtherTools grid
+
+PSYCHOLOGY - render as actual HTML:
+- Social proof counter ("X,XXX files processed" - useState that increments on each use)
+- Urgency element ("Free while in beta")
+- "How it works" 3-step section
+- Use ${spec.designSystem.primaryColor} for primary CTAs`, tokens: 14000 },
     ];
 
     // Sequential-friendly: staggered starts + semaphore(2) = max 2 concurrent Kimi calls
@@ -2041,11 +2271,8 @@ STYLE: Clean professional like ilovepdf.com${psychContext}${pageContext}${apiRou
   }
 
   // SaaS: per-file parallel generation (1 LLM call per file, raw content)
-  // Defeats Kimi K2.5 thinking-mode exhaustion (was: 2×20K → 1 file each; now: 6×7K → 6 files)
+  // FRONTEND-ONLY MODE: No backend APIs - all data is mock/interactive using React state
   private async generateSaasFrontend(idea: ValidatedIdea, spec: FrontendSpec, backendSpec?: BackendSpec): Promise<Array<{ path: string; content: string }>> {
-    const apiRoutesContext = backendSpec?.apiRoutes?.length
-      ? `\nBACKEND API ROUTES — use ONLY these exact paths when calling fetch():\n${backendSpec.apiRoutes.map(r => `  ${r.method} ${r.path} | purpose: ${r.purpose} | input: ${r.inputSchema} | output: ${r.outputSchema}`).join('\n')}`
-      : '';
     const psychContext = spec.psychologyTactics?.length
       ? `\nPSYCHOLOGY TACTICS — embed EVERY one of these into the UI:\n${spec.psychologyTactics.map((t, i) => `  ${i + 1}. ${t}`).join('\n')}`
       : '';
@@ -2057,11 +2284,22 @@ DESCRIPTION: ${idea.description}
 FEATURES: ${idea.features.join(', ')}
 TARGET USERS: ${idea.targetUsers}
 PRIMARY COLOR: ${spec.designSystem.primaryColor}
+SECONDARY COLOR: ${spec.designSystem.secondaryColor}
+FONT: ${spec.designSystem.fontFamily}
 STYLE: ${spec.designSystem.style}
 STACK: Next.js 14 App Router, TypeScript, TailwindCSS, Lucide-react icons
-RULES: No framer-motion. Responsive. For dynamic data fetch() the BACKEND API ROUTES listed below. Mobile hamburger nav.${psychContext}${pageContext}${apiRoutesContext}`;
 
-    const sysPrompt = `You are a senior SaaS frontend engineer. TypeScript, TailwindCSS, Next.js 14 App Router. Production quality. Each psychology tactic listed in PSYCHOLOGY TACTICS must be visibly implemented in the UI (e.g. social proof counters, urgency banners, trust badges, progress indicators). Output ONLY raw code — no JSON, no markdown fences.`;
+CRITICAL RULES:
+- NO fetch() calls, NO API routes, NO backend - this is a FRONTEND-ONLY demo
+- ALL data must be MOCK DATA using useState hooks
+- Buttons must be INTERACTIVE: clicking generates more mock data, shows success states, updates UI
+- Use setTimeout to simulate loading states (500-1500ms delays)
+- Forms should "work" by updating local state and showing success feedback
+- Data tables should have working sort/filter using local state
+- Make it feel like a REAL working product - just with simulated data
+- Mobile hamburger nav, responsive design${psychContext}${pageContext}`;
+
+    const sysPrompt = `You are a senior SaaS frontend engineer building INTERACTIVE DEMOS. TypeScript, TailwindCSS, Next.js 14 App Router. All features work using React state and mock data - NO backend needed. Every button click should do something visible. Use useState for all data, setTimeout for loading simulation. Make it feel like a real product. Output ONLY raw code — no JSON, no markdown fences.`;
 
     const painPoint = idea.audienceProfile?.painPoints?.[0] || idea.description;
     const motivations = idea.audienceProfile?.motivations?.slice(0, 2).join(' and ') || idea.features.slice(0, 2).join(', ');
@@ -2069,11 +2307,33 @@ RULES: No framer-motion. Responsive. For dynamic data fetch() the BACKEND API RO
     const tactics2 = spec.psychologyTactics.slice(0, 2).join(' | ');
 
     const fileDefs: Array<{ path: string; desc: string; tokens: number }> = [
-      { path: 'src/app/globals.css', desc: `TailwindCSS @tailwind base/components/utilities + :root CSS variables for ${spec.designSystem.primaryColor} brand. Under 40 lines.`, tokens: 2500 },
-      { path: 'src/app/layout.tsx', desc: `Root layout. Server component — NO 'use client' directive at all. Imports globals.css. export const metadata with title="${idea.title}". Responsive Navbar with logo, nav links (Home/Dashboard), Login/Get Started CTA → /auth. Children prop.`, tokens: 6000 },
-      { path: 'src/app/page.tsx', desc: `Landing page for "${idea.title}" targeting ${idea.targetUsers}. Their core problem: ${painPoint}. IMPLEMENT THESE PSYCHOLOGY TACTICS VISIBLY IN THE UI: ${tactics3}. Hero: emotionally resonant headline about their specific fear/problem (NOT a generic headline — speak to their exact emotional state), powerful subheadline, "Get Started Free" CTA → /auth. 4-5 rich sections tied to their motivations: ${motivations}. Social proof with testimonials specific to ${idea.targetUsers}. Pricing section (Free/Pro/Business tiers with value props and anchoring psychology). FAQ section addressing real objections. Strong bottom emotional CTA. Hardcoded static content only — no fetch().`, tokens: 12000 },
-      { path: 'src/app/auth/page.tsx', desc: `Auth page. Toggle: Login / Sign Up. Email + password form. Client-side validation. On submit: localStorage.setItem("auth_token", "demo_" + Date.now()) then router.push("/dashboard"). Show inline validation errors. Trust signals near the form (security badge, "No credit card required", etc.).`, tokens: 5000 },
-      { path: 'src/app/dashboard/page.tsx', desc: `Dashboard — CORE PRODUCT for ${idea.targetUsers}. PSYCHOLOGY: ${tactics2}. 'use client'. Auth guard: check localStorage "auth_token", redirect to /auth if missing. Sidebar nav with all feature sections + main content. Features: ${idea.features.join(', ')}. 4-6 stat cards with metrics relevant to ${idea.features[0]} (with trend indicators). One functional interactive section per feature with real form/input that POSTs to matching API route and shows response result. Pre-populated data table (8 mock rows) with sortable columns. Gamification element (streak/progress bar/achievement badge). Designed for ${idea.audienceProfile?.techSavviness || 'medium'} tech users. Fully responsive with mobile sidebar. MANDATORY PSYCHOLOGY ELEMENTS — must appear as actual rendered JSX in this component: 1. Social proof counter: "X,XXX+ users" badge/stat card 2. Loss aversion callout: warning box showing the cost of NOT having this tool 3. Habit loop: progress bar, streak indicator, or completion percentage tracker 4. Reciprocity: visible "Free tier includes:" or "You've unlocked:" section All four must be visible in the main content area of the dashboard.`, tokens: 14000 },
+      { path: 'src/app/globals.css', desc: `TailwindCSS @tailwind base/components/utilities + :root CSS variables for ${spec.designSystem.primaryColor} primary and ${spec.designSystem.secondaryColor} secondary. Import Google Font "${spec.designSystem.fontFamily}". Under 50 lines.`, tokens: 2500 },
+      { path: 'src/app/layout.tsx', desc: `Root layout. Server component — NO 'use client' directive at all. Imports globals.css. export const metadata with title="${idea.title}". Responsive Navbar with logo, nav links (Home/Dashboard), Login/Get Started CTA → /auth. Use ${spec.designSystem.primaryColor} for brand accents. Children prop.`, tokens: 6000 },
+      { path: 'src/app/page.tsx', desc: `Landing page for "${idea.title}" targeting ${idea.targetUsers}. Their core problem: ${painPoint}. IMPLEMENT THESE PSYCHOLOGY TACTICS VISIBLY IN THE UI: ${tactics3}. Hero: emotionally resonant headline about their specific fear/problem (NOT a generic headline — speak to their exact emotional state), powerful subheadline, "Get Started Free" CTA → /auth. 4-5 rich sections tied to their motivations: ${motivations}. Social proof with testimonials specific to ${idea.targetUsers}. Pricing section (Free/Pro/Business tiers with value props and anchoring psychology). FAQ section addressing real objections. Strong bottom emotional CTA. Use ${spec.designSystem.primaryColor} for primary CTAs, ${spec.designSystem.secondaryColor} for accents.`, tokens: 12000 },
+      { path: 'src/app/auth/page.tsx', desc: `Auth page. Toggle: Login / Sign Up. Email + password form. Client-side validation. On submit: simulate 1s loading, then localStorage.setItem("auth_token", "demo_" + Date.now()), show success toast, then router.push("/dashboard"). Show inline validation errors. Trust signals near the form (security badge, "No credit card required", etc.). Use ${spec.designSystem.primaryColor} for submit button.`, tokens: 5000 },
+      { path: 'src/app/dashboard/page.tsx', desc: `Dashboard — INTERACTIVE DEMO for ${idea.targetUsers}. PSYCHOLOGY: ${tactics2}. 'use client'. Auth guard: check localStorage "auth_token", redirect to /auth if missing.
+
+MOCK DATA REQUIREMENTS (ALL using useState):
+- Initialize with 8-12 realistic mock data items relevant to ${idea.features[0]}
+- Each feature (${idea.features.join(', ')}) must have an interactive section
+- Buttons MUST work: clicking "Add", "Create", "Generate" etc. should add new mock items to state
+- Forms MUST work: submitting adds data to the table/list with a success animation
+- Use setTimeout(1000-1500ms) to simulate processing, show loading spinners
+- Data table with 8 pre-populated rows, working sort (click headers), working search/filter
+- Stat cards that update when data changes (e.g., "Total: X" increases when you add items)
+
+UI REQUIREMENTS:
+- Sidebar nav with all feature sections + main content area
+- 4-6 stat cards with trend indicators (↑12% this week style)
+- Gamification: streak counter, progress bar, or achievement badges that update on actions
+- Mobile responsive with collapsible sidebar
+- Use ${spec.designSystem.primaryColor} for primary actions, ${spec.designSystem.secondaryColor} for secondary
+
+MANDATORY PSYCHOLOGY ELEMENTS (must be actual rendered JSX):
+1. Social proof counter: "X,XXX+ users" badge that slowly increments
+2. Loss aversion: warning showing cost of NOT using this tool
+3. Habit loop: progress bar that fills as user takes actions
+4. Reciprocity: "Free tier includes:" section showing value they're getting`, tokens: 16000 },
     ];
 
     // Sequential-friendly: staggered starts + semaphore(2) = max 2 concurrent Kimi calls
@@ -2088,11 +2348,8 @@ RULES: No framer-motion. Responsive. For dynamic data fetch() the BACKEND API RO
   }
 
   // Standard web app: per-file parallel generation (1 LLM call per file, raw content)
-  // Defeats Kimi K2.5 thinking-mode exhaustion (was: 1×20K → 1 file; now: N×7K → N files)
+  // FRONTEND-ONLY MODE: No backend APIs - all data is mock/interactive using React state
   private async generateWebAppFrontend(idea: ValidatedIdea, spec: FrontendSpec, backendSpec?: BackendSpec): Promise<Array<{ path: string; content: string }>> {
-    const apiRoutesContext = backendSpec?.apiRoutes?.length
-      ? `\nBACKEND API ROUTES — use ONLY these exact paths when calling fetch():\n${backendSpec.apiRoutes.map(r => `  ${r.method} ${r.path} | purpose: ${r.purpose} | input: ${r.inputSchema} | output: ${r.outputSchema}`).join('\n')}`
-      : '';
     const psychContext = spec.psychologyTactics?.length
       ? `\nPSYCHOLOGY TACTICS — embed EVERY one of these into the UI:\n${spec.psychologyTactics.map((t, i) => `  ${i + 1}. ${t}`).join('\n')}`
       : '';
@@ -2102,23 +2359,40 @@ TARGET USERS: ${idea.targetUsers}
 FEATURES: ${idea.features.join(', ')}
 DESIGN: primary=${spec.designSystem.primaryColor}, secondary=${spec.designSystem.secondaryColor}, font=${spec.designSystem.fontFamily}, style=${spec.designSystem.style}, dark-mode=${spec.designSystem.darkMode}
 STACK: Next.js 14 App Router, TypeScript, TailwindCSS, Lucide-react
-RULES: No framer-motion. No hardcoded data — fetch() the BACKEND API ROUTES listed below. Forms POST to real routes. Lists via useEffect+fetch. Loading+error states. Mobile-first. Freemium upgrade CTAs.${psychContext}${apiRoutesContext}`;
 
-    const sysPrompt = `You are an elite frontend developer. Clean, accessible, performant React/TypeScript with TailwindCSS. No framer-motion. Production-quality code. Each psychology tactic listed in PSYCHOLOGY TACTICS must be visibly implemented in the UI (e.g. social proof counters, urgency timers, reciprocity value-first sections, commitment progress bars). Output ONLY raw code — no JSON, no markdown fences.`;
+CRITICAL RULES:
+- NO fetch() calls, NO API routes, NO backend - this is a FRONTEND-ONLY demo
+- ALL data must be MOCK DATA using useState hooks
+- Buttons must be INTERACTIVE: clicking generates more mock data, shows success states
+- Use setTimeout to simulate loading states (500-1500ms delays)
+- Forms should "work" by updating local state and showing success feedback
+- Make it feel like a REAL working product - just with simulated data
+- Mobile-first responsive design${psychContext}`;
 
-    // Cap extra pages to 3 max (4-hour budget allows richer multi-page apps)
+    const sysPrompt = `You are an elite frontend developer building INTERACTIVE DEMOS. Clean, accessible React/TypeScript with TailwindCSS. No framer-motion. All features work using React state and mock data - NO backend needed. Every button click should do something visible. Use useState for all data, setTimeout for loading simulation. Output ONLY raw code — no JSON, no markdown fences.`;
+
+    // Cap extra pages to 3 max
     const extraPages = spec.pages.filter(p => p.route !== '/').slice(0, 3);
     const painPoint = idea.audienceProfile?.painPoints?.[0] || idea.description;
     const motivations = idea.audienceProfile?.motivations?.slice(0, 2).join(' and ') || idea.features.slice(0, 2).join(', ');
     const psychTactics3 = spec.psychologyTactics.slice(0, 3).join(' | ');
     const fileDefs: Array<{ path: string; desc: string; tokens: number }> = [
-      { path: 'src/app/globals.css', desc: `TailwindCSS @tailwind base/components/utilities + :root CSS variables for ${spec.designSystem.primaryColor} brand color. Under 40 lines.`, tokens: 2500 },
-      { path: 'src/app/layout.tsx', desc: `Root layout. Server component — NO 'use client' directive at all. export const metadata with title and description for ${idea.title}. Imports globals.css. Responsive navbar with logo and navigation links.`, tokens: 6000 },
-      { path: 'src/app/page.tsx', desc: `Landing page for "${idea.title}" targeting ${idea.targetUsers}. Their core pain: ${painPoint}. PSYCHOLOGY TACTICS to implement visibly: ${psychTactics3}. Hero with emotionally resonant headline about their specific pain (NOT generic), strong subheadline, CTA button. Sections addressing their motivations: ${motivations}. Feature highlights, testimonials/social proof specific to ${idea.targetUsers}, trust signals. Hardcoded static content only — no fetch(). MANDATORY ELEMENTS — non-negotiable, must be actual rendered JSX: 1. H1 must reference the audience's specific pain (NOT generic "all-in-one" or "boost productivity") 2. Social proof number: "X,XXX+ [targetUsers] already use this" near the hero 3. Loss aversion callout box: "Without this you risk: [specific consequence]" 4. CTA button text must be action-specific for this audience (NOT "Get Started" or "Sign Up")`, tokens: 10000 },
+      { path: 'src/app/globals.css', desc: `TailwindCSS @tailwind base/components/utilities + :root CSS variables for ${spec.designSystem.primaryColor} primary and ${spec.designSystem.secondaryColor} secondary. Import Google Font "${spec.designSystem.fontFamily}". Under 50 lines.`, tokens: 2500 },
+      { path: 'src/app/layout.tsx', desc: `Root layout. Server component — NO 'use client' directive at all. export const metadata with title and description for ${idea.title}. Imports globals.css. Responsive navbar with logo, navigation links, and CTA button using ${spec.designSystem.primaryColor}.`, tokens: 6000 },
+      { path: 'src/app/page.tsx', desc: `Landing page for "${idea.title}" targeting ${idea.targetUsers}. Their core pain: ${painPoint}. PSYCHOLOGY TACTICS to implement visibly: ${psychTactics3}. Hero with emotionally resonant headline about their specific pain (NOT generic), strong subheadline, CTA button. Sections addressing their motivations: ${motivations}. Feature highlights, testimonials/social proof specific to ${idea.targetUsers}, trust signals. Use ${spec.designSystem.primaryColor} for CTAs, ${spec.designSystem.secondaryColor} for accents. MANDATORY ELEMENTS — non-negotiable, must be actual rendered JSX: 1. H1 must reference the audience's specific pain (NOT generic "all-in-one" or "boost productivity") 2. Social proof number: "X,XXX+ [targetUsers] already use this" near the hero 3. Loss aversion callout box: "Without this you risk: [specific consequence]" 4. CTA button text must be action-specific for this audience (NOT "Get Started" or "Sign Up")`, tokens: 10000 },
       ...extraPages.map(p => ({
         path: `src/app${p.route}/page.tsx`,
-        desc: `${p.purpose}. Components: ${p.components.join(', ')}. User flow: ${p.userFlow}. Psychology: embed relevant tactics for ${idea.targetUsers}. Rich implementation with real interactivity. If fetching from an API route, fall back to mock data silently on error. Fully responsive.`,
-        tokens: 10000,
+        desc: `${p.purpose}. 'use client' component with INTERACTIVE MOCK DATA. Components: ${p.components.join(', ')}. User flow: ${p.userFlow}.
+REQUIREMENTS:
+- Initialize useState with 6-10 realistic mock data items
+- All buttons MUST work: clicking adds/removes/updates items in state
+- Forms MUST work: submitting shows loading state, then adds to data with success animation
+- Use setTimeout(800-1200ms) to simulate processing
+- Data displays should have working sort/filter via local state
+- Psychology tactics for ${idea.targetUsers} embedded in UI
+- Use ${spec.designSystem.primaryColor} for primary actions
+- Fully responsive, polished UI`,
+        tokens: 12000,
       })),
     ];
 
@@ -3474,23 +3748,23 @@ class PMAgent {
             files: [],
           };
         } else {
-          // Design backend first — get API routes so frontend generates with real paths
-          await logger.agent(this.name, `PHASE 3a: BackendAgent designing API architecture for "${buildable!.title}"...`);
-          const queueBackendSpec = await this.backendAgent.designSpec(buildable!);
-          await logger.agent(this.name, `PHASE 3b: Frontend code gen first, then backend (${queueBackendSpec.apiRoutes.length} routes) — sequential to avoid GPU saturation...`);
-          const qFrontendResult = await this.frontendAgent.run(buildable!, queueBackendSpec);
-          await logger.agent(this.name, `PHASE 3c: Backend code gen (${queueBackendSpec.apiRoutes.length} routes)...`);
-          const qBackendFiles = await this.backendAgent.generateFiles(buildable!, queueBackendSpec);
-          frontendResult = qFrontendResult;
-          backendResult = { spec: queueBackendSpec, files: qBackendFiles };
+          // FRONTEND-ONLY MODE: Skip backend generation entirely
+          // Frontend uses mock data with useState - no API routes needed
+          // This saves API calls and prevents build errors from backend code
+          await logger.agent(this.name, `PHASE 3: Frontend-only mode — generating interactive demo with mock data (skipping backend)...`);
+          frontendResult = await this.frontendAgent.run(buildable!);
+          backendResult = {
+            spec: { apiRoutes: [], dataModels: [], integrations: [], authentication: 'none', errorHandling: 'none', realTimeFeatures: [] },
+            files: [],
+          };
         }
 
-        await logger.agent(this.name, `PHASE 4: Merging ${frontendResult.files.length} frontend + ${backendResult.files.length} backend files...`);
+        await logger.agent(this.name, `PHASE 4: Processing ${frontendResult.files.length} frontend files (frontend-only mode)...`);
         const mergedFiles = await this.mergeAndFinalize(buildable!, frontendResult, backendResult);
 
-        // Verify frontend→backend wiring (safety net — frontend already has routes in context)
-        await logger.agent(this.name, 'PHASE 4b: Integration repair — verifying frontend→backend wiring...');
-        const repairedFiles = await this.repairFrontendBackendIntegration(buildable!, mergedFiles, backendResult.spec);
+        // Skip integration repair in frontend-only mode (no backend to wire)
+        const repairedFiles = mergedFiles;
+        await logger.agent(this.name, 'PHASE 4b: Skipping integration repair (frontend-only mode, no backend)');
 
         const quality = this.assessQuality(repairedFiles, buildable!);
         await logger.agent(this.name, `Quality gate: ${quality.score}/20 | Issues: ${quality.issues.length ? quality.issues.join('; ') : 'none'}`);
@@ -3548,9 +3822,11 @@ class PMAgent {
       fileMap.set(f.path, f.content);
     }
 
-    // Add backend files (won't overwrite frontend since paths differ)
-    for (const f of backendResult.files) {
-      fileMap.set(f.path, f.content);
+    // FRONTEND-ONLY MODE: Skip backend API routes for Vercel deployment
+    // Frontend now uses mock data with useState - no backend needed
+    // Backend files are logged but NOT added to deployment to avoid build errors
+    if (backendResult.files.length > 0) {
+      await logger.agent('PMAgent', `Skipping ${backendResult.files.length} backend files (frontend-only mode with mock data)`);
     }
 
     // Sanitize layout.tsx: strip "use client" if it also exports metadata

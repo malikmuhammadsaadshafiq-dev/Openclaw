@@ -27,7 +27,8 @@
       "Bash(git push:*)",
       "Bash(dir:*)",
       "WebSearch",
-      "Bash(gh repo delete:*)"
+      "Bash(gh repo delete:*)",
+      "Bash(python build_readme.py:*)"
     ]
   }
 }
