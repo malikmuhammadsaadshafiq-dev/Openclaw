@@ -436,8 +436,9 @@ class KimiClient {
     if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
     messages.push({ role: 'user', content: prompt });
 
-    // Retry up to 3 times for network-level errors (TypeError: fetch failed)
-    const maxNetworkRetries = 3;
+    // Retry up to 5 times for network-level errors (TypeError: fetch failed)
+    // Increased from 3 to 5 retries with longer delays to handle persistent network issues
+    const maxNetworkRetries = 5;
     for (let netAttempt = 1; netAttempt <= maxNetworkRetries; netAttempt++) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeout);
@@ -477,7 +478,8 @@ class KimiClient {
         clearTimeout(timer);
         const isNetworkError = err?.message?.includes('fetch failed') || err?.code === 'ECONNRESET' || err?.code === 'ETIMEDOUT';
         if (isNetworkError && netAttempt < maxNetworkRetries) {
-          const delay = 5000 * netAttempt + Math.random() * 3000;
+          // Longer delays: 10s, 20s, 30s, 40s between retries
+          const delay = 10000 * netAttempt + Math.random() * 5000;
           console.log(`[KimiClient] Network error (attempt ${netAttempt}/${maxNetworkRetries}): ${err?.message}, retrying in ${Math.round(delay / 1000)}s...`);
           await new Promise(r => setTimeout(r, delay));
           continue;
@@ -558,10 +560,10 @@ class ApiSemaphore {
     else { this.slots++; }
   }
 }
-const kimiSemaphore = new ApiSemaphore(2); // 2 concurrent calls max — prevents GPU saturation & rate-limit cascades
+const kimiSemaphore = new ApiSemaphore(1); // 1 concurrent call — reduced from 2 to fix network errors
 
 // Global minimum gap between Kimi API requests to avoid GPU exhaustion
-const kimiGlobalRateLimiter = new RateLimiter(5000); // ≥5s between consecutive calls — reduces 429 rate-limit hits
+const kimiGlobalRateLimiter = new RateLimiter(8000); // ≥8s between consecutive calls (was 5s, increased to reduce fetch errors)
 
 // ============================================================
 // Utility Functions
