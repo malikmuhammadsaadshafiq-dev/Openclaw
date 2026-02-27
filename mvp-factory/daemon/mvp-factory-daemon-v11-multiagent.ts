@@ -16,6 +16,10 @@ import * as fsSync from 'fs';
 import * as path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import * as dns from 'dns';
+
+// Force IPv4 for DNS resolution globally (NVIDIA API doesn't support IPv6)
+dns.setDefaultResultOrder('ipv4first');
 
 const execAsync = promisify(exec);
 
