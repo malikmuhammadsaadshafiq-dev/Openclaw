@@ -1643,8 +1643,8 @@ class ResearchAgent {
     const included = new Set(topPosts.map(p => p.sourcePost));
     const extras = posts.filter(p => !included.has(p.sourcePost)).sort((a, b) => b.upvotes - a.upvotes);
     topPosts.push(...extras);
-    // REDUCED from 35 to 18 posts — 35 posts was causing Kimi K2.5 API timeouts (prompt too large)
-    const balancedPosts = topPosts.slice(0, 18);
+    // REDUCED from 18 to 10 posts — 18 posts still causing timeouts on slow NVIDIA API days
+    const balancedPosts = topPosts.slice(0, 10);
     // Log platform breakdown for the sample sent to LLM
     const sampleBreakdown = ['reddit', 'hackernews', 'devto', 'github']
       .map(pl => `${pl}: ${balancedPosts.filter(p => p.sourcePlatform === pl).length}`)
@@ -5541,9 +5541,21 @@ async function runForever(): Promise<never> {
 
       if (queueSize < 10) {
         await logger.log(`[STEP 1] Queue needs ideas (${queueSize} < 10) — starting Research + Validation...`);
+
+        // ── TIMEOUT WRAPPER: Skip to build if research takes too long ──
+        // If NVIDIA API is slow, don't block forever. 8-minute timeout for entire research phase.
+        const RESEARCH_TIMEOUT_MS = 8 * 60 * 1000; // 8 minutes max for research
+        let researchSucceeded = false;
+
         try {
-          await pm.runResearchAndValidation();
+          const researchPromise = pm.runResearchAndValidation();
+          const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('RESEARCH_TIMEOUT: 8 minutes exceeded')), RESEARCH_TIMEOUT_MS)
+          );
+
+          await Promise.race([researchPromise, timeoutPromise]);
           lastResearch = Date.now();
+          researchSucceeded = true;
           await logger.log('[STEP 1] Research + Validation COMPLETE');
 
           // ── PAUSE 10 minutes after adding ideas to queue ──
@@ -5552,7 +5564,23 @@ async function runForever(): Promise<never> {
           await new Promise(r => setTimeout(r, 10 * 60 * 1000)); // 10 minutes
 
         } catch (e) {
-          await logger.log(`[STEP 1] Research error: ${e}`, 'ERROR');
+          const errMsg = String(e);
+          if (errMsg.includes('RESEARCH_TIMEOUT')) {
+            await logger.log(`[STEP 1] Research TIMEOUT after 8 minutes — checking if we can skip to build...`, 'WARN');
+          } else {
+            await logger.log(`[STEP 1] Research error: ${e}`, 'ERROR');
+          }
+
+          // ── FALLBACK: If queue has ideas, skip to build instead of blocking ──
+          const currentQueueSize = await fs.readdir(CONFIG.paths.validated).then(f => f.filter(x => x.endsWith('.json')).length).catch(() => 0);
+          if (currentQueueSize > 0) {
+            await logger.log(`[STEP 1] Queue has ${currentQueueSize} ideas — SKIPPING research, proceeding to Build phase`);
+            // No 10-minute pause — build immediately with existing ideas
+          } else {
+            await logger.log(`[STEP 1] Queue empty — will retry research next cycle`);
+            // Short 2-minute pause before next cycle (avoid hammering the API)
+            await new Promise(r => setTimeout(r, 2 * 60 * 1000));
+          }
         }
       } else {
         await logger.log(`[STEP 1] Queue healthy (${queueSize} ideas) — skipping research`);
