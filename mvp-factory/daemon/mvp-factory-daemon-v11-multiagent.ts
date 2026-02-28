@@ -942,10 +942,12 @@ Return ONLY the JSON array. Each "content" is the complete raw file (properly JS
 }
 
 function toSlug(title: string): string {
+  if (!title) return 'untitled';  // Guard against undefined/null
   return title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
 
 function extractKeywords(title: string): Set<string> {
+  if (!title) return new Set();  // Guard against undefined/null
   const stopWords = new Set([
     'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
     'of', 'with', 'by', 'is', 'it', 'my', 'your', 'our', 'app', 'tool',
@@ -1782,6 +1784,13 @@ class ValidationAgent {
     for (let idx = 0; idx < rawIdeas.length; idx++) {
       const rawIdea = rawIdeas[idx];
       const progress = `[${idx + 1}/${rawIdeas.length}]`;
+
+      // Skip ideas with missing required fields
+      if (!rawIdea || !rawIdea.title) {
+        errors++;
+        await logger.agent(this.name, `${progress} SKIP: Missing title or invalid idea`);
+        continue;
+      }
 
       // Skip duplicates against existing products
       const dupCheck = isDuplicate(rawIdea, existingProducts);
@@ -3900,7 +3909,7 @@ class PMAgent {
 
         // Integration repair - wire frontend to backend
         await logger.agent(this.name, 'PHASE 4b: Integration repair — wiring frontend to backend APIs...');
-        const repairedFiles = await this.integrateAndRepair(mergedFiles, buildable!, backendResult.spec);
+        const repairedFiles = await this.repairFrontendBackendIntegration(buildable!, mergedFiles, backendResult.spec);
 
         const quality = this.assessQuality(repairedFiles, buildable!);
         await logger.agent(this.name, `Quality gate: ${quality.score}/20 | Issues: ${quality.issues.length ? quality.issues.join('; ') : 'none'}`);
