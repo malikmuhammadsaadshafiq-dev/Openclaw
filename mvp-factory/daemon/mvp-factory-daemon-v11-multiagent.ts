@@ -3855,12 +3855,12 @@ class PMAgent {
         ideas: remaining.slice(0, 5).map(i => ({ title: i.title, source: i.sourcePlatform, score: i.validation?.overallScore })),
       })).catch(() => {});
 
-      // 5.5-hour timeout per build — maximum depth for best quality output
-      // Kimi K2.5 thinking mode: ~14 tokens/sec. 14K token file = ~17min. Sequential files = ~68min total.
-      // Budget: 10min design + 68min code gen + 30min repair + 10min deploy = ~118min typical, 330min max
-      const BUILD_TIMEOUT_MS = 330 * 60 * 1000;
+      // 25-minute timeout per build — fail fast when NVIDIA API is slow
+      // Typical successful build: 10min backend + 10min frontend + 5min deploy = ~25min
+      // If it takes longer, API is overloaded — skip this idea, try next one
+      const BUILD_TIMEOUT_MS = 25 * 60 * 1000;
       const buildTimeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`Build timeout: "${buildable!.title}" exceeded 330 minutes — will retry next cycle`)), BUILD_TIMEOUT_MS)
+        setTimeout(() => reject(new Error(`Build timeout: "${buildable!.title}" exceeded 25 minutes — will retry next cycle`)), BUILD_TIMEOUT_MS)
       );
 
       const buildExecutionPromise = (async () => {
