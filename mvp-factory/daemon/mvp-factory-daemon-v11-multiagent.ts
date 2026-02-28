@@ -640,6 +640,12 @@ function extractJSON(text: string, type: 'object' | 'array' = 'object'): any | n
     try { return JSON.parse(cleaned); } catch {}
   }
 
+  // Step 2b: Handle TRUNCATED code blocks (```json ... without closing ```)
+  const truncatedCodeBlock = cleaned.match(/```(?:json)?\s*([\s\S]*)/);
+  if (truncatedCodeBlock && !codeBlockMatch) {
+    cleaned = truncatedCodeBlock[1].trim();
+  }
+
   // Step 3: Find JSON array or object pattern in the text
   // Use global flag to find ALL matches (LLM often has thinking before JSON)
   const pattern = type === 'array' ? /\[[\s\S]*?\](?=\s*$|\s*```|\s*\n\n)/g : /\{[\s\S]*?\}(?=\s*$|\s*```|\s*\n\n)/g;
@@ -650,6 +656,13 @@ function extractJSON(text: string, type: 'object' | 'array' = 'object'): any | n
     const greedyPattern = type === 'array' ? /\[[\s\S]*\]/ : /\{[\s\S]*\}/;
     const greedyMatch = text.match(greedyPattern);
     matches = greedyMatch ? [greedyMatch[0]] : null;
+  }
+
+  // Step 3b: If still no matches, try to find start of array/object (truncated response)
+  if (!matches || matches.length === 0) {
+    const startPattern = type === 'array' ? /\[[\s\S]*/ : /\{[\s\S]*/;
+    const startMatch = text.match(startPattern);
+    if (startMatch) matches = [startMatch[0]];
   }
 
   if (!matches || matches.length === 0) return null;
@@ -664,15 +677,30 @@ function extractJSON(text: string, type: 'object' | 'array' = 'object'): any | n
       if (type === 'object' && typeof parsed === 'object') return parsed;
     } catch {}
 
-    // Try to fix common JSON issues
+    // Try to fix common JSON issues and truncated responses
     let json = match;
     json = json.replace(/,\s*([\]}])/g, '$1');  // trailing commas
     json = json.replace(/(\{|,)\s*([a-zA-Z_]\w*)\s*:/g, '$1"$2":');  // unquoted keys
     json = json.replace(/'/g, '"');  // single quotes
 
+    // FIX TRUNCATED STRINGS: Remove incomplete key-value pairs at the end
+    // Pattern: "key": "incomplete value without closing quote
+    json = json.replace(/,\s*"[^"]*":\s*"[^"]*$/g, '');  // Remove truncated string value
+    json = json.replace(/,\s*"[^"]*":\s*$/g, '');  // Remove key without value
+    json = json.replace(/,\s*"[^"]*$/g, '');  // Remove truncated key
+    json = json.replace(/,\s*\{[^}]*$/g, '');  // Remove incomplete nested object
+
     // Fix unbalanced quotes
     const quoteCount = (json.match(/(?<!\\)"/g) || []).length;
-    if (quoteCount % 2 !== 0) json = json.slice(0, json.lastIndexOf('"')) + '"';
+    if (quoteCount % 2 !== 0) {
+      // Find the last complete string and truncate there
+      const lastCompleteString = json.lastIndexOf('",');
+      if (lastCompleteString > 0) {
+        json = json.slice(0, lastCompleteString + 1);
+      } else {
+        json = json.slice(0, json.lastIndexOf('"')) + '"';
+      }
+    }
 
     // Fix unbalanced braces/brackets
     const openBraces = (json.match(/\{/g) || []).length;
@@ -687,6 +715,24 @@ function extractJSON(text: string, type: 'object' | 'array' = 'object'): any | n
       if (type === 'array' && Array.isArray(parsed) && parsed.length > 0) return parsed;
       if (type === 'object' && typeof parsed === 'object') return parsed;
     } catch {}
+
+    // LAST RESORT: Try to extract complete objects from a truncated array
+    if (type === 'array') {
+      const completeObjects: any[] = [];
+      // Match complete {...} objects within the array
+      const objectMatches = json.match(/\{[^{}]*\}/g);
+      if (objectMatches) {
+        for (const objStr of objectMatches) {
+          try {
+            const obj = JSON.parse(objStr);
+            if (obj && typeof obj === 'object' && obj.title) {
+              completeObjects.push(obj);
+            }
+          } catch {}
+        }
+      }
+      if (completeObjects.length > 0) return completeObjects;
+    }
   }
 
   return null;
@@ -1664,7 +1710,7 @@ CRITICAL: These are REAL posts from many different communities. Your ideas must 
 REAL POSTS:
 ${postSummaries}
 
-Extract 6 product ideas that solve REAL problems visible in these posts. Each idea must:
+Extract 4 product ideas that solve REAL problems visible in these posts. Each idea must:
 1. Address a SPECIFIC pain point from the actual posts above
 2. Be buildable as a software product (web app, Chrome extension, SaaS, API, or browser tool) in 12-24 hours
 3. Have REAL functionality (not just a UI shell)
@@ -1672,8 +1718,10 @@ Extract 6 product ideas that solve REAL problems visible in these posts. Each id
 
 SOURCE DIVERSITY — draw from ALL platforms (reddit, hackernews, devto, github), not just Reddit.
 
-AUDIENCE DIVERSITY — cover a range: 2 consumer products, 2 business tools, 1 creative tool, 1 dev tool.
+AUDIENCE DIVERSITY — cover a range: 2 consumer products, 1 business tool, 1 dev/creative tool.
 Prioritize non-developer pain points — they are underserved.
+
+KEEP IT CONCISE — short descriptions (max 80 chars). We need complete JSON, not truncated.
 
 BAD examples (too generic): "AI writing assistant", "task manager", "portfolio builder", "code snippet tool"
 GOOD examples: "meal prep optimizer for diabetics", "landlord-tenant dispute tracker", "Etsy seller profit calculator", "band rehearsal scheduler", "IEP goal tracker for special ed teachers"
@@ -1708,7 +1756,14 @@ Return ONLY valid JSON array:
       const parsed = extractJSON(response, 'array');
       if (!parsed) {
         await logger.agent(this.name, `[WARN] JSON extraction failed. Raw response start: ${response?.slice(0, 300) || '(empty)'}`);
+        // Return empty - AI analysis failed
+        await logger.agent(this.name, 'AI analysis failed — returning empty to avoid polluting queue');
+        return [];
       }
+
+      // Log successful extraction (including partial recovery)
+      await logger.agent(this.name, `Parsed ${parsed.length} ideas from LLM response`);
+
       if (parsed && Array.isArray(parsed) && parsed.length > 0) {
         // Map back to RawIdea format — use LLM-assigned sourcePlatform/sourcePost if valid,
         // otherwise find the best-matching post by keyword overlap (never fall back to positional)
@@ -1741,10 +1796,9 @@ Return ONLY valid JSON array:
       }
     } catch (err) {
       await logger.agent(this.name, `Post analysis failed: ${err}`);
+      return [];
     }
 
-    // AI analysis failed — do NOT return raw posts (their titles are Reddit headlines, not product ideas)
-    await logger.agent(this.name, 'AI analysis failed — returning empty to avoid raw post titles polluting the queue', 'WARN');
     return [];
   }
 
