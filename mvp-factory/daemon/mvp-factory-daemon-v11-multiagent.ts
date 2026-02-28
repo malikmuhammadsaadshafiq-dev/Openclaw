@@ -628,28 +628,68 @@ const kimiGlobalRateLimiter = new RateLimiter(8000); // ≥8s between consecutiv
 // ============================================================
 function extractJSON(text: string, type: 'object' | 'array' = 'object'): any | null {
   if (!text || typeof text !== 'string') return null;
+
+  // Step 1: Try direct parse first
   try { return JSON.parse(text); } catch {}
 
-  const pattern = type === 'array' ? /\[[\s\S]*\]/ : /\{[\s\S]*\}/;
-  const match = text.match(pattern);
-  if (!match) return null;
+  // Step 2: Strip markdown code blocks (```json ... ``` or ``` ... ```)
+  let cleaned = text;
+  const codeBlockMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (codeBlockMatch) {
+    cleaned = codeBlockMatch[1].trim();
+    try { return JSON.parse(cleaned); } catch {}
+  }
 
-  try { return JSON.parse(match[0]); } catch {}
+  // Step 3: Find JSON array or object pattern in the text
+  // Use global flag to find ALL matches (LLM often has thinking before JSON)
+  const pattern = type === 'array' ? /\[[\s\S]*?\](?=\s*$|\s*```|\s*\n\n)/g : /\{[\s\S]*?\}(?=\s*$|\s*```|\s*\n\n)/g;
+  let matches = text.match(pattern);
 
-  let json = match[0];
-  json = json.replace(/,\s*([\]}])/g, '$1');
-  json = json.replace(/(\{|,)\s*([a-zA-Z_]\w*)\s*:/g, '$1"$2":');
-  json = json.replace(/'/g, '"');
-  const quoteCount = (json.match(/(?<!\\)"/g) || []).length;
-  if (quoteCount % 2 !== 0) json = json.slice(0, json.lastIndexOf('"')) + '"';
-  const openBraces = (json.match(/\{/g) || []).length;
-  const closeBraces = (json.match(/\}/g) || []).length;
-  const openBrackets = (json.match(/\[/g) || []).length;
-  const closeBrackets = (json.match(/\]/g) || []).length;
-  json += '}'.repeat(Math.max(0, openBraces - closeBraces));
-  json += ']'.repeat(Math.max(0, openBrackets - closeBrackets));
+  // Fallback: greedy match if no matches found
+  if (!matches || matches.length === 0) {
+    const greedyPattern = type === 'array' ? /\[[\s\S]*\]/ : /\{[\s\S]*\}/;
+    const greedyMatch = text.match(greedyPattern);
+    matches = greedyMatch ? [greedyMatch[0]] : null;
+  }
 
-  try { return JSON.parse(json); } catch { return null; }
+  if (!matches || matches.length === 0) return null;
+
+  // Try each match from last to first (JSON usually at the end after thinking)
+  for (let i = matches.length - 1; i >= 0; i--) {
+    const match = matches[i];
+    try {
+      const parsed = JSON.parse(match);
+      // For arrays, ensure we got an array with content
+      if (type === 'array' && Array.isArray(parsed) && parsed.length > 0) return parsed;
+      if (type === 'object' && typeof parsed === 'object') return parsed;
+    } catch {}
+
+    // Try to fix common JSON issues
+    let json = match;
+    json = json.replace(/,\s*([\]}])/g, '$1');  // trailing commas
+    json = json.replace(/(\{|,)\s*([a-zA-Z_]\w*)\s*:/g, '$1"$2":');  // unquoted keys
+    json = json.replace(/'/g, '"');  // single quotes
+
+    // Fix unbalanced quotes
+    const quoteCount = (json.match(/(?<!\\)"/g) || []).length;
+    if (quoteCount % 2 !== 0) json = json.slice(0, json.lastIndexOf('"')) + '"';
+
+    // Fix unbalanced braces/brackets
+    const openBraces = (json.match(/\{/g) || []).length;
+    const closeBraces = (json.match(/\}/g) || []).length;
+    const openBrackets = (json.match(/\[/g) || []).length;
+    const closeBrackets = (json.match(/\]/g) || []).length;
+    json += '}'.repeat(Math.max(0, openBraces - closeBraces));
+    json += ']'.repeat(Math.max(0, openBrackets - closeBrackets));
+
+    try {
+      const parsed = JSON.parse(json);
+      if (type === 'array' && Array.isArray(parsed) && parsed.length > 0) return parsed;
+      if (type === 'object' && typeof parsed === 'object') return parsed;
+    } catch {}
+  }
+
+  return null;
 }
 
 // ============================================================
