@@ -2,8 +2,113 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const { execSync } = require("child_process");
+const crypto = require("crypto");
 
-const PORT = 3000;
+// ═══════════════════════════════════════════════════════════════════════════
+// SECURITY CONFIGURATION
+// ═══════════════════════════════════════════════════════════════════════════
+const PORT = process.env.DASHBOARD_PORT || 3000;
+
+// Basic Auth credentials (change these!)
+const AUTH_USERNAME = process.env.DASHBOARD_USER || "admin";
+const AUTH_PASSWORD = process.env.DASHBOARD_PASS || "mvp-factory-2026";
+
+// Rate limiting
+const RATE_LIMIT_WINDOW = 60 * 1000; // 1 minute
+const RATE_LIMIT_MAX = 100; // max requests per window
+const rateLimitMap = new Map();
+
+// IP whitelist (optional - leave empty to allow all authenticated users)
+const IP_WHITELIST = process.env.DASHBOARD_IP_WHITELIST
+  ? process.env.DASHBOARD_IP_WHITELIST.split(",").map(ip => ip.trim())
+  : [];
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SECURITY MIDDLEWARE
+// ═══════════════════════════════════════════════════════════════════════════
+
+function checkBasicAuth(req) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Basic ")) return false;
+
+  const base64Credentials = authHeader.slice(6);
+  const credentials = Buffer.from(base64Credentials, "base64").toString("utf-8");
+  const [username, password] = credentials.split(":");
+
+  // Constant-time comparison to prevent timing attacks
+  const usernameMatch = crypto.timingSafeEqual(
+    Buffer.from(username || ""),
+    Buffer.from(AUTH_USERNAME)
+  );
+  const passwordMatch = crypto.timingSafeEqual(
+    Buffer.from(password || ""),
+    Buffer.from(AUTH_PASSWORD)
+  );
+
+  return usernameMatch && passwordMatch;
+}
+
+function checkIPWhitelist(req) {
+  if (IP_WHITELIST.length === 0) return true; // No whitelist = allow all
+
+  const clientIP = req.socket.remoteAddress ||
+                   req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
+                   "unknown";
+
+  // Normalize IPv6-mapped IPv4 addresses
+  const normalizedIP = clientIP.replace(/^::ffff:/, "");
+
+  return IP_WHITELIST.includes(normalizedIP) ||
+         IP_WHITELIST.includes(clientIP) ||
+         normalizedIP === "127.0.0.1" ||
+         normalizedIP === "::1";
+}
+
+function checkRateLimit(req) {
+  const clientIP = req.socket.remoteAddress || "unknown";
+  const now = Date.now();
+
+  const clientData = rateLimitMap.get(clientIP) || { count: 0, resetTime: now + RATE_LIMIT_WINDOW };
+
+  if (now > clientData.resetTime) {
+    clientData.count = 1;
+    clientData.resetTime = now + RATE_LIMIT_WINDOW;
+  } else {
+    clientData.count++;
+  }
+
+  rateLimitMap.set(clientIP, clientData);
+
+  // Clean up old entries periodically
+  if (rateLimitMap.size > 1000) {
+    for (const [ip, data] of rateLimitMap) {
+      if (now > data.resetTime) rateLimitMap.delete(ip);
+    }
+  }
+
+  return clientData.count <= RATE_LIMIT_MAX;
+}
+
+function sendUnauthorized(res) {
+  res.writeHead(401, {
+    "Content-Type": "text/plain",
+    "WWW-Authenticate": 'Basic realm="MVP Factory Dashboard"'
+  });
+  res.end("Unauthorized - Please provide valid credentials");
+}
+
+function sendForbidden(res, reason) {
+  res.writeHead(403, { "Content-Type": "text/plain" });
+  res.end("Forbidden: " + reason);
+}
+
+function sendTooManyRequests(res) {
+  res.writeHead(429, { "Content-Type": "text/plain" });
+  res.end("Too Many Requests - Please slow down");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+
 const PATHS = {
   ideas: "/root/mvp-projects/ideas",
   validated: "/root/mvp-projects/validated",
@@ -327,6 +432,29 @@ function getHTML() {
 const server = http.createServer((req, res) => {
   const url = req.url.split("?")[0];
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // SECURITY CHECKS (in order: rate limit → IP whitelist → basic auth)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  // 1. Rate limiting
+  if (!checkRateLimit(req)) {
+    return sendTooManyRequests(res);
+  }
+
+  // 2. IP whitelist (if configured)
+  if (!checkIPWhitelist(req)) {
+    const clientIP = req.socket.remoteAddress || "unknown";
+    console.log(`[SECURITY] Blocked request from non-whitelisted IP: ${clientIP}`);
+    return sendForbidden(res, "IP not whitelisted");
+  }
+
+  // 3. Basic authentication
+  if (!checkBasicAuth(req)) {
+    return sendUnauthorized(res);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+
   if (req.method === "POST" && (url === "/api/skills/install" || url === "/api/skills/uninstall")) {
     let body = "";
     req.on("data", chunk => { body += chunk; });
@@ -356,5 +484,15 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, "0.0.0.0", () => {
-  console.log("MVP Factory v11 Multi-Agent Dashboard on http://0.0.0.0:" + PORT);
+  console.log("═══════════════════════════════════════════════════════════════");
+  console.log("MVP Factory v11 Multi-Agent Dashboard");
+  console.log("═══════════════════════════════════════════════════════════════");
+  console.log("URL:           http://0.0.0.0:" + PORT);
+  console.log("Auth:          Basic Auth ENABLED (user: " + AUTH_USERNAME + ")");
+  console.log("Rate Limit:    " + RATE_LIMIT_MAX + " requests per minute");
+  console.log("IP Whitelist:  " + (IP_WHITELIST.length > 0 ? IP_WHITELIST.join(", ") : "DISABLED (all IPs allowed)"));
+  console.log("═══════════════════════════════════════════════════════════════");
+  console.log("To change credentials, set environment variables:");
+  console.log("  DASHBOARD_USER, DASHBOARD_PASS, DASHBOARD_PORT, DASHBOARD_IP_WHITELIST");
+  console.log("═══════════════════════════════════════════════════════════════");
 });
