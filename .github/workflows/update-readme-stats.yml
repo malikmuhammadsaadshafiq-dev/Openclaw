@@ -1,0 +1,91 @@
+name: Update README Stats
+
+on:
+  schedule:
+    # Run every 6 hours
+    - cron: '0 */6 * * *'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  update-stats:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Fetch stats from server
+        id: stats
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_PASSWORD: ${{ secrets.SERVER_PASSWORD }}
+        run: |
+          # Install sshpass for non-interactive SSH
+          sudo apt-get update && sudo apt-get install -y sshpass jq
+
+          # Fetch health stats from server
+          HEALTH=$(sshpass -p "$SERVER_PASSWORD" ssh -o StrictHostKeyChecking=no root@$SERVER_HOST "cat /root/.openclaw/logs/health-v11.json 2>/dev/null || echo '{}'")
+
+          # Parse stats
+          QUEUE_SIZE=$(echo "$HEALTH" | jq -r '.validatedQueue // 0')
+          TOTAL_BUILT=$(echo "$HEALTH" | jq -r '.totalBuilt // 0')
+          DAILY_BUILDS=$(echo "$HEALTH" | jq -r '.dailyBuildCount // 0')
+          UPTIME_SEC=$(echo "$HEALTH" | jq -r '.uptime // 0')
+          UPTIME_HOURS=$(echo "scale=1; $UPTIME_SEC / 3600" | bc)
+
+          # Count actual built files
+          BUILT_COUNT=$(sshpass -p "$SERVER_PASSWORD" ssh -o StrictHostKeyChecking=no root@$SERVER_HOST "ls /root/mvp-projects/built/*.json 2>/dev/null | wc -l || echo 0")
+          if [ "$BUILT_COUNT" -gt "$TOTAL_BUILT" ]; then
+            TOTAL_BUILT=$BUILT_COUNT
+          fi
+
+          # Export for next step
+          echo "queue_size=$QUEUE_SIZE" >> $GITHUB_OUTPUT
+          echo "total_built=$TOTAL_BUILT" >> $GITHUB_OUTPUT
+          echo "daily_builds=$DAILY_BUILDS" >> $GITHUB_OUTPUT
+          echo "uptime_hours=$UPTIME_HOURS" >> $GITHUB_OUTPUT
+          echo "timestamp=$(date -u +'%Y-%m-%d %H:%M UTC')" >> $GITHUB_OUTPUT
+
+      - name: Update README.md
+        run: |
+          QUEUE_SIZE="${{ steps.stats.outputs.queue_size }}"
+          TOTAL_BUILT="${{ steps.stats.outputs.total_built }}"
+          DAILY_BUILDS="${{ steps.stats.outputs.daily_builds }}"
+          UPTIME_HOURS="${{ steps.stats.outputs.uptime_hours }}"
+          TIMESTAMP="${{ steps.stats.outputs.timestamp }}"
+
+          # Create new stats content
+          cat > /tmp/stats.md << EOF
+          <!-- STATS-START -->
+          | Metric | Value |
+          |--------|-------|
+          | **Queue Size** | $QUEUE_SIZE ideas waiting |
+          | **Total Built** | $TOTAL_BUILT products |
+          | **Daily Builds** | $DAILY_BUILDS / 10 |
+          | **Uptime** | ${UPTIME_HOURS} hours |
+          | **Last Updated** | $TIMESTAMP |
+          <!-- STATS-END -->
+          EOF
+
+          # Replace stats section in README
+          awk '
+            /<!-- STATS-START -->/{
+              while((getline line < "/tmp/stats.md") > 0) print line
+              skip=1
+              next
+            }
+            /<!-- STATS-END -->/{skip=0; next}
+            !skip
+          ' README.md > README.md.tmp
+          mv README.md.tmp README.md
+
+      - name: Commit and push changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add README.md
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: auto-update README stats (${{ steps.stats.outputs.timestamp }})"
+            git push
+          fi
